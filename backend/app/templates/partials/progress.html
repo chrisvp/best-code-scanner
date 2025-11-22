@@ -1,0 +1,76 @@
+<!-- Three-Phase Pipeline Progress -->
+<div class="space-y-4">
+    <!-- Phase 1: Scanning -->
+    <div>
+        <div class="flex justify-between items-center mb-1">
+            <span class="text-sm font-medium text-gray-300 flex items-center gap-2">
+                <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                </svg>
+                Phase 1: Scanning
+            </span>
+            <span class="text-xs text-gray-400">{{ progress.chunks.scanned }}/{{ progress.chunks.total }} chunks</span>
+        </div>
+        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div class="h-full bg-blue-500 transition-all duration-500" style="width: {{ progress.chunks.percent }}%"></div>
+        </div>
+    </div>
+
+    <!-- Phase 2: Verification -->
+    <div>
+        <div class="flex justify-between items-center mb-1">
+            <span class="text-sm font-medium text-gray-300 flex items-center gap-2">
+                <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                Phase 2: Verification
+            </span>
+            <span class="text-xs text-gray-400">
+                {{ progress.drafts.verified }} verified / {{ progress.drafts.rejected }} rejected
+            </span>
+        </div>
+        {% set verified_percent = ((progress.drafts.verified + progress.drafts.rejected) / progress.drafts.total * 100) if progress.drafts.total > 0 else 0 %}
+        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div class="h-full bg-purple-500 transition-all duration-500" style="width: {{ verified_percent }}%"></div>
+        </div>
+        <div class="flex justify-between text-xs text-gray-500 mt-1">
+            <span>{{ progress.drafts.total }} drafts found</span>
+            <span>{{ progress.drafts.pending }} pending</span>
+        </div>
+    </div>
+
+    <!-- Phase 3: Enrichment -->
+    <div>
+        <div class="flex justify-between items-center mb-1">
+            <span class="text-sm font-medium text-gray-300 flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                Phase 3: Enrichment
+            </span>
+            <span class="text-xs text-gray-400">{{ progress.findings.total }} findings</span>
+        </div>
+        {% set enrich_percent = (progress.findings.total / progress.drafts.verified * 100) if progress.drafts.verified > 0 else 0 %}
+        <div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div class="h-full bg-green-500 transition-all duration-500" style="width: {{ enrich_percent }}%"></div>
+        </div>
+    </div>
+
+    <!-- Severity Summary -->
+    {% if progress.findings.total > 0 %}
+    <div class="flex gap-3 pt-2 border-t border-gray-700/50">
+        {% if progress.findings.by_severity.critical > 0 %}
+        <span class="px-2 py-1 bg-red-900/50 text-red-300 text-xs rounded">{{ progress.findings.by_severity.critical }} Critical</span>
+        {% endif %}
+        {% if progress.findings.by_severity.high > 0 %}
+        <span class="px-2 py-1 bg-orange-900/50 text-orange-300 text-xs rounded">{{ progress.findings.by_severity.high }} High</span>
+        {% endif %}
+        {% if progress.findings.by_severity.medium > 0 %}
+        <span class="px-2 py-1 bg-yellow-900/50 text-yellow-300 text-xs rounded">{{ progress.findings.by_severity.medium }} Medium</span>
+        {% endif %}
+        {% if progress.findings.by_severity.low > 0 %}
+        <span class="px-2 py-1 bg-blue-900/50 text-blue-300 text-xs rounded">{{ progress.findings.by_severity.low }} Low</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
