@@ -1,0 +1,22 @@
+{% for scan in scans %}
+<div class="p-4 border-b border-gray-700 hover:bg-gray-700/50 cursor-pointer transition-colors group"
+    hx-get="/scan/{{ scan.id }}" hx-target="#scan-details">
+    <div class="flex justify-between items-start mb-1">
+        <span class="font-medium text-gray-200 truncate pr-4" title="{{ scan.target_url }}">{{ scan.target_url }}</span>
+        <span class="text-xs px-2 py-0.5 rounded-full 
+            {% if scan.status == 'completed' %}bg-green-900 text-green-300
+            {% elif scan.status == 'running' %}bg-blue-900 text-blue-300
+            {% elif scan.status == 'failed' %}bg-red-900 text-red-300
+            {% else %}bg-gray-700 text-gray-400{% endif %}">
+            {{ scan.status }}
+        </span>
+    </div>
+    <div class="text-xs text-gray-500">
+        ID: #{{ scan.id }} &bull; {{ scan.created_at.strftime('%Y-%m-%d %H:%M') if scan.created_at else 'Just now' }}
+    </div>
+</div>
+{% else %}
+<div class="p-8 text-center text-gray-500">
+    No scans yet.
+</div>
+{% endfor %}

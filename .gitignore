@@ -1,0 +1,28 @@
+# Virtual environments
+venv/
+.venv/
+
+# Sandbox directories
+sandbox/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Database files
+*.db
+*.db-journal
+
+# Environment files
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Test artifacts
+vulnerable_test/
+json2cpp-test/
+*.zip

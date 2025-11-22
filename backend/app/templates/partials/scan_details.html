@@ -1,0 +1,195 @@
+<div class="h-full flex flex-col overflow-hidden">
+    <!-- Header -->
+    <div class="p-6 border-b border-gray-700 bg-gray-800/50">
+        <div class="flex justify-between items-start mb-4">
+            <div>
+                <h2 class="text-xl font-bold text-white mb-1">Scan #{{ scan.id }}</h2>
+                <p class="text-sm text-gray-400 font-mono truncate max-w-md" title="{{ scan.target_url }}">
+                    {{ scan.target_url }}
+                </p>
+            </div>
+            <span class="px-3 py-1 rounded-full text-sm font-medium
+                {% if scan.status == 'completed' %}bg-green-900/50 text-green-300 border border-green-700
+                {% elif scan.status == 'running' %}bg-blue-900/50 text-blue-300 border border-blue-700
+                {% elif scan.status == 'failed' %}bg-red-900/50 text-red-300 border border-red-700
+                {% else %}bg-gray-700 text-gray-300{% endif %}">
+                {{ scan.status }}
+            </span>
+        </div>
+
+        <!-- Pipeline Progress -->
+        {% if scan.status == 'running' %}
+        <div id="progress-container"
+             hx-get="/scan/{{ scan.id }}/progress"
+             hx-trigger="every 3s"
+             hx-swap="innerHTML"
+             class="bg-gray-900 rounded-lg p-4 border border-gray-700">
+            <div class="text-center text-gray-400 text-sm">Loading progress...</div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Findings Summary -->
+    <div class="p-4 border-b border-gray-700 bg-gray-800/30">
+        <div class="flex gap-4 justify-center">
+            {% set critical = scan.findings|selectattr('severity', 'equalto', 'Critical')|list|length %}
+            {% set high = scan.findings|selectattr('severity', 'equalto', 'High')|list|length %}
+            {% set medium = scan.findings|selectattr('severity', 'equalto', 'Medium')|list|length %}
+            {% set low = scan.findings|selectattr('severity', 'equalto', 'Low')|list|length %}
+
+            <div class="text-center px-4">
+                <div class="text-2xl font-bold text-red-400">{{ critical }}</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Critical</div>
+            </div>
+            <div class="text-center px-4 border-l border-gray-700">
+                <div class="text-2xl font-bold text-orange-400">{{ high }}</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">High</div>
+            </div>
+            <div class="text-center px-4 border-l border-gray-700">
+                <div class="text-2xl font-bold text-yellow-400">{{ medium }}</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Medium</div>
+            </div>
+            <div class="text-center px-4 border-l border-gray-700">
+                <div class="text-2xl font-bold text-blue-400">{{ low }}</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Low</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Findings List -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar">
+        {% if scan.findings %}
+        <div class="divide-y divide-gray-700/50">
+            {% for finding in scan.findings %}
+            <div class="p-5 hover:bg-gray-800/30 transition-colors">
+                <!-- Finding Header -->
+                <div class="flex items-start justify-between mb-3">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider
+                                {% if finding.severity == 'Critical' %}bg-red-900/80 text-red-200
+                                {% elif finding.severity == 'High' %}bg-orange-900/80 text-orange-200
+                                {% elif finding.severity == 'Medium' %}bg-yellow-900/80 text-yellow-200
+                                {% else %}bg-blue-900/80 text-blue-200{% endif %}">
+                                {{ finding.severity }}
+                            </span>
+                            {% if finding.cvss_score %}
+                            <span class="text-xs text-gray-400">CVSS: {{ finding.cvss_score }}</span>
+                            {% endif %}
+                        </div>
+                        <h3 class="text-white font-medium mb-1">{{ finding.description[:100] }}{% if finding.description|length > 100 %}...{% endif %}</h3>
+                        <p class="text-sm text-gray-400 font-mono">
+                            {{ finding.file_path.split('/')[-1] }}:{{ finding.line_number }}
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Category Badge -->
+                {% if finding.category %}
+                <div class="mb-3">
+                    <span class="inline-flex items-center px-2 py-1 rounded bg-purple-900/50 text-purple-300 text-xs border border-purple-700/50">
+                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+                        </svg>
+                        {{ finding.category }}
+                    </span>
+                </div>
+                {% endif %}
+
+                <!-- Code Snippet -->
+                {% if finding.snippet %}
+                <div class="bg-gray-950 rounded-lg p-3 font-mono text-sm text-gray-300 overflow-x-auto border border-gray-800 mb-3">
+                    <pre class="whitespace-pre-wrap"><code>{{ finding.snippet|strip_code }}</code></pre>
+                </div>
+                {% endif %}
+
+                <!-- Expandable Details -->
+                <details class="group">
+                    <summary class="cursor-pointer text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1">
+                        <svg class="w-4 h-4 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                        </svg>
+                        View Details & Remediation
+                    </summary>
+                    <div class="mt-3 pl-5 space-y-3">
+                        {% if finding.vulnerability_details %}
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Vulnerability Details</h4>
+                            <p class="text-sm text-gray-300">{{ finding.vulnerability_details }}</p>
+                        </div>
+                        {% endif %}
+
+                        {% if finding.proof_of_concept %}
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Proof of Concept</h4>
+                            <div class="bg-gray-950 rounded p-2 font-mono text-xs text-gray-300 border border-gray-800">
+                                <pre class="whitespace-pre-wrap">{{ finding.proof_of_concept|strip_code }}</pre>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <div id="fix-container-{{ finding.id }}">
+                            <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Corrected Code</h4>
+                            {% if finding.corrected_code %}
+                            <div class="bg-green-950/30 rounded p-2 font-mono text-xs text-green-300 border border-green-900/50 mb-2">
+                                <pre class="whitespace-pre-wrap">{{ finding.corrected_code|strip_code }}</pre>
+                            </div>
+                            <button hx-post="/finding/{{ finding.id }}/generate-fix"
+                                    hx-target="#fix-container-{{ finding.id }}"
+                                    hx-swap="innerHTML"
+                                    class="text-xs px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
+                                Regenerate Fix
+                            </button>
+                            {% else %}
+                            <button hx-post="/finding/{{ finding.id }}/generate-fix"
+                                    hx-target="#fix-container-{{ finding.id }}"
+                                    hx-swap="innerHTML"
+                                    hx-indicator="#fix-loading-{{ finding.id }}"
+                                    class="text-xs px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white rounded transition-colors flex items-center gap-2">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                </svg>
+                                Generate Fix
+                            </button>
+                            <div id="fix-loading-{{ finding.id }}" class="htmx-indicator text-xs text-gray-400 mt-2">
+                                Generating fix...
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if finding.remediation or finding.remediation_steps %}
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Remediation Steps</h4>
+                            <p class="text-sm text-gray-300">{{ finding.remediation_steps or finding.remediation }}</p>
+                        </div>
+                        {% endif %}
+
+                        {% if finding.references %}
+                        <div>
+                            <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">References</h4>
+                            <p class="text-sm text-blue-400">{{ finding.references }}</p>
+                        </div>
+                        {% endif %}
+                    </div>
+                </details>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="flex flex-col items-center justify-center h-full text-gray-500 p-8">
+            <svg class="w-12 h-12 mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <p class="text-center">
+                {% if scan.status == 'running' %}
+                Scan in progress. Findings will appear here as they are verified.
+                {% elif scan.status == 'completed' %}
+                No vulnerabilities found!
+                {% else %}
+                No findings recorded yet.
+                {% endif %}
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>

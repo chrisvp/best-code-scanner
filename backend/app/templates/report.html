@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Security Scan Report #{{ scan.id }}</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            color: #333;
+        }
+
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+
+        .meta {
+            color: #7f8c8d;
+            font-size: 0.9em;
+            margin-bottom: 30px;
+        }
+
+        .finding {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            page-break-inside: avoid;
+        }
+
+        .severity {
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.8em;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: white;
+        }
+
+        .severity.Critical {
+            background-color: #c0392b;
+        }
+
+        .severity.High {
+            background-color: #e67e22;
+        }
+
+        .severity.Medium {
+            background-color: #f1c40f;
+            color: #333;
+        }
+
+        .severity.Low {
+            background-color: #3498db;
+        }
+
+        .path {
+            font-family: monospace;
+            color: #555;
+        }
+
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border: 1px solid #eee;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Security Scan Report</h1>
+    <div class="meta">
+        <p><strong>Target:</strong> {{ scan.target_url }}</p>
+        <p><strong>Scan ID:</strong> #{{ scan.id }}</p>
+        <p><strong>Date:</strong> {{ scan.created_at.strftime('%Y-%m-%d %H:%M') }}</p>
+        <p><strong>Status:</strong> {{ scan.status }}</p>
+    </div>
+
+    <h2>Findings ({{ scan.findings|length }})</h2>
+
+    {% for finding in scan.findings %}
+    <div class="finding">
+        <div style="margin-bottom: 10px;">
+            <span class="severity {{ finding.severity }}">{{ finding.severity }}</span>
+            <span class="path">{{ finding.file_path }}:{{ finding.line_number }}</span>
+        </div>
+        <p><strong>Description:</strong> {{ finding.description }}</p>
+        {% if finding.snippet %}
+        <pre>{{ finding.snippet }}</pre>
+        {% endif %}
+        {% if finding.remediation %}
+        <p><strong>Remediation:</strong> {{ finding.remediation }}</p>
+        {% endif %}
+    </div>
+    {% else %}
+    <p>No findings detected.</p>
+    {% endfor %}
+</body>
+
+</html>

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex h-screen overflow-hidden">
+    <!-- Sidebar / Scan List -->
+    <div class="w-1/3 bg-gray-800 border-r border-gray-700 flex flex-col">
+        <!-- New Scan Form -->
+        <div class="p-6 border-b border-gray-700 bg-gray-800 z-10 shadow-md">
+            <h2 class="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+                New Scan
+            </h2>
+            <form hx-post="/scan/start" hx-target="#scan-list" hx-swap="innerHTML" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Repository URL or File Path</label>
+                    <input type="text" name="target_url" placeholder="https://github.com/user/repo.git" required
+                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                </div>
+
+                <div class="flex items-center gap-3 p-2 bg-gray-900/50 rounded border border-gray-700/50">
+                    <input type="checkbox" name="consensus_enabled" id="consensus" value="true"
+                        class="w-4 h-4 rounded bg-gray-800 border-gray-600 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900">
+                    <label for="consensus" class="text-sm font-medium text-gray-300 cursor-pointer select-none">
+                        Enable Multi-Model Consensus
+                        <span class="block text-xs text-gray-500 font-normal">Verifies findings with secondary
+                            models</span>
+                    </label>
+                </div>
+
+                <button type="submit"
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/20">
+                    <span>Start Security Scan</span>
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                </button>
+            </form>
+        </div>
+
+        <!-- Scan List -->
+        <div id="scan-list" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+            {% include "partials/scan_list.html" %}
+        </div>
+    </div>
+
+    <!-- Main Content / Details -->
+    <div class="flex-1 bg-gray-900 overflow-hidden relative" id="scan-details">
+        <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
+            <div class="bg-gray-800/50 p-8 rounded-2xl border border-gray-700/50 text-center max-w-md">
+                <svg class="w-16 h-16 mb-4 mx-auto text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
+                    </path>
+                </svg>
+                <h3 class="text-lg font-medium text-gray-300 mb-2">No Scan Selected</h3>
+                <p class="text-sm">Select a scan from the sidebar to view detailed findings, logs, and remediation
+                    steps.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

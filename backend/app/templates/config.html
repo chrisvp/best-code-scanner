@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto p-8">
+    <h2 class="text-2xl font-bold mb-6">System Configuration</h2>
+
+    {% if message %}
+    <div class="bg-green-900 text-green-200 p-4 rounded mb-6 border border-green-700">
+        {{ message }}
+    </div>
+    {% endif %}
+
+    <form method="POST" class="space-y-6 bg-gray-800 p-6 rounded-lg border border-gray-700">
+        <div>
+            <label class="block text-sm font-medium text-gray-400 mb-2">LLM Base URL</label>
+            <input type="text" name="llm_base_url" value="{{ settings.LLM_BASE_URL }}"
+                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
+        </div>
+
+        <div>
+            <label class="block text-sm font-medium text-gray-400 mb-2">LLM API Key</label>
+            <input type="password" name="llm_api_key" value="{{ settings.LLM_API_KEY }}"
+                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
+        </div>
+
+        <div>
+            <label class="block text-sm font-medium text-gray-400 mb-2">Primary Model</label>
+            <input type="text" name="llm_model" value="{{ settings.LLM_MODEL }}"
+                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
+            <p class="text-xs text-gray-500 mt-1">The main model used for initial scanning (e.g., llama3.3-70b-instruct)
+            </p>
+        </div>
+
+        <div>
+            <label class="block text-sm font-medium text-gray-400 mb-2">Verification Models</label>
+            <input type="text" name="llm_verification_models" value="{{ settings.LLM_VERIFICATION_MODELS|join(', ') }}"
+                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
+            <p class="text-xs text-gray-500 mt-1">Comma-separated list of models for consensus verification (e.g.,
+                mistral-small, gemma-3-27b-it)</p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <input type="checkbox" name="llm_verify_ssl" id="ssl" {% if settings.LLM_VERIFY_SSL %}checked{% endif %}
+                class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
+            <label for="ssl" class="text-sm font-medium text-gray-400">Verify SSL Certificates</label>
+        </div>
+
+        <div class="pt-4">
+            <button type="submit" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-medium transition-colors">
+                Save Configuration
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
