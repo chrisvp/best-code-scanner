@@ -13,16 +13,42 @@ from app.core.database import SessionLocal
 class DraftScanner:
     """Scans chunks for draft findings with multi-model voting support"""
 
-    SCAN_PROMPT = """Scan this code for potential security vulnerabilities.
+    SCAN_PROMPT = """Scan this code for security vulnerabilities. Be thorough - flag anything suspicious.
 
-Be fast - flag anything suspicious. We'll verify later with more context.
-Focus on: injection, buffer overflows, authentication issues, data exposure.
+CRITICAL PATTERNS TO CHECK:
+
+**Memory Safety (C/C++):**
+- Buffer overflow: strcpy, sprintf, gets without bounds
+- Use-after-free: pointer used after free/delete without nulling
+- Double-free: same pointer freed twice
+- Uninitialized memory: structs/buffers sent without full initialization
+- Integer overflow: size calculations that can wrap (a + b, a * b)
+
+**Injection:**
+- Command injection: system(), popen(), exec() with user data
+- SQL injection: string concatenation in queries
+- Format string: printf/sprintf with user-controlled format
+
+**Authentication/Crypto:**
+- Hardcoded credentials: passwords, API keys, tokens in source
+- Timing attacks: early return or byte-by-byte comparison in auth
+- Weak crypto: MD5, SHA1, DES, hardcoded IVs/keys
+
+**Race Conditions:**
+- TOCTOU: check then use (access() then open())
+- Shared state without locks
+- Dangling pointers after free in class members
+
+**Other:**
+- Path traversal: file operations with user paths
+- Information disclosure: detailed errors, uninitialized data in responses
+- Off-by-one: loop bounds, null terminator handling
 
 {code}
 
 Format each finding as:
 *DRAFT: short title
-*TYPE: vulnerability type (e.g., SQL Injection, Buffer Overflow)
+*TYPE: vulnerability type
 *SEVERITY: Critical/High/Medium/Low
 *LINE: line number
 *SNIPPET: the suspicious code
@@ -161,12 +187,13 @@ Multiple findings are OK. If nothing suspicious, respond with *DRAFT:NONE"""
                 finding_votes[sig]['models'].append(model_name)
                 finding_votes[sig]['severities'].append(f.get('severity', 'Medium'))
 
-        # Filter by majority vote (more than half)
-        threshold = num_models / 2
+        # Filter by vote threshold (at least 1 model must report)
+        # Lower threshold to catch more findings - verifiers will filter
+        threshold = 0.5  # Any model can report (was num_models / 2)
         voted_findings = []
 
         for sig, data in finding_votes.items():
-            if data['votes'] > threshold:
+            if data['votes'] >= threshold:
                 finding = data['finding'].copy()
                 # Use most common severity
                 finding['severity'] = max(set(data['severities']), key=data['severities'].count)

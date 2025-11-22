@@ -14,12 +14,20 @@ class StaticPatternDetector:
             (r'system\s*\(\s*argv', 'Command Injection', 'Critical', 'Direct argv to system()'),
             (r'scanf\s*\(\s*"%s"', 'Buffer Overflow', 'High', 'scanf %s without width limit'),
             (r'strcat\s*\([^,]+,\s*argv', 'Buffer Overflow', 'High', 'Unbounded strcat from argv'),
+            # Hardcoded credentials
+            (r'(password|passwd|pwd|secret|api_key|apikey|token)\s*=\s*["\'][^"\']{4,}["\']', 'Hardcoded Credentials', 'High', 'Hardcoded secret in source'),
+            # TOCTOU
+            (r'access\s*\([^)]+\)\s*[^{]*\bfopen\s*\(', 'TOCTOU Race Condition', 'Medium', 'access() check before fopen()'),
         ],
         'cpp': [
             (r'gets\s*\(', 'Buffer Overflow', 'Critical', 'gets() has no bounds checking'),
             (r'strcpy\s*\([^,]+,\s*argv', 'Buffer Overflow', 'High', 'Unbounded copy from argv'),
             (r'sprintf\s*\([^,]+,\s*[^,]*%s', 'Format String', 'High', 'sprintf with %s, no bounds'),
             (r'system\s*\(\s*argv', 'Command Injection', 'Critical', 'Direct argv to system()'),
+            # Hardcoded credentials
+            (r'(password|passwd|pwd|secret|api_key|apikey|token)\s*=\s*["\'][^"\']{4,}["\']', 'Hardcoded Credentials', 'High', 'Hardcoded secret in source'),
+            # TOCTOU
+            (r'access\s*\([^)]+\)\s*[^{]*\bfopen\s*\(', 'TOCTOU Race Condition', 'Medium', 'access() check before fopen()'),
         ],
         'py': [
             (r'eval\s*\(\s*request\.', 'Code Injection', 'Critical', 'eval() on request data'),
@@ -29,6 +37,8 @@ class StaticPatternDetector:
             (r'subprocess.*shell\s*=\s*True.*request\.', 'Command Injection', 'Critical', 'Shell=True with user input'),
             (r'os\.system\s*\(\s*request\.', 'Command Injection', 'Critical', 'os.system with request data'),
             (r'__import__\s*\(\s*request\.', 'Code Injection', 'Critical', '__import__ with user input'),
+            # Hardcoded credentials
+            (r'(password|passwd|pwd|secret|api_key|apikey|token)\s*=\s*["\'][^"\']{4,}["\']', 'Hardcoded Credentials', 'High', 'Hardcoded secret in source'),
         ],
         'h': [],
         'hpp': [],
@@ -37,14 +47,17 @@ class StaticPatternDetector:
     # Dangerous patterns that warrant LLM analysis
     DANGEROUS_PATTERNS = {
         'c': ['system', 'exec', 'popen', 'strcpy', 'strcat', 'sprintf', 'scanf', 'gets',
-              'malloc', 'free', 'memcpy', 'recv', 'send', 'fopen', 'fread', 'fwrite'],
+              'malloc', 'free', 'memcpy', 'recv', 'send', 'fopen', 'fread', 'fwrite',
+              'access', 'strlen', 'password', 'secret', 'token', 'credential', 'auth'],
         'cpp': ['system', 'exec', 'popen', 'strcpy', 'strcat', 'sprintf', 'scanf', 'gets',
-                'new', 'delete', 'memcpy', 'recv', 'send'],
+                'new', 'delete', 'memcpy', 'recv', 'send', 'access', 'strlen',
+                'password', 'secret', 'token', 'credential', 'auth', 'nullptr', 'NULL'],
         'py': ['eval', 'exec', 'system', 'popen', 'subprocess', 'pickle', 'marshal',
                'yaml.load', 'execute', 'shell', 'open', 'input', 'os.', 'importlib',
-               '__import__', 'compile', 'globals', 'locals', 'setattr', 'getattr'],
-        'h': [],
-        'hpp': [],
+               '__import__', 'compile', 'globals', 'locals', 'setattr', 'getattr',
+               'password', 'secret', 'token', 'credential', 'auth'],
+        'h': ['password', 'secret', 'token', 'auth', 'credential'],
+        'hpp': ['password', 'secret', 'token', 'auth', 'credential', 'delete', 'new'],
     }
 
     def scan_fast(self, chunk, language: str) -> Tuple[List[dict], bool]:
