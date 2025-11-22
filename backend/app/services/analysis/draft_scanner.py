@@ -1,5 +1,6 @@
 from typing import List, Dict
 import os
+import asyncio
 
 from app.models.scanner_models import ScanFileChunk, ScanFile
 from app.services.analysis.static_detector import StaticPatternDetector
@@ -10,7 +11,7 @@ from app.core.database import SessionLocal
 
 
 class DraftScanner:
-    """Scans chunks for draft findings with batching support"""
+    """Scans chunks for draft findings with multi-model voting support"""
 
     SCAN_PROMPT = """Scan this code for potential security vulnerabilities.
 
@@ -30,16 +31,24 @@ Format each finding as:
 
 Multiple findings are OK. If nothing suspicious, respond with *DRAFT:NONE"""
 
-    def __init__(self, scan_id: int, model_pool: ModelPool, cache: AnalysisCache):
+    def __init__(self, scan_id: int, model_pools: List[ModelPool], cache: AnalysisCache):
+        """
+        Initialize scanner with multiple model pools for voting.
+
+        Args:
+            scan_id: The scan ID
+            model_pools: List of model pools to use for voting (minimum 1)
+            cache: Analysis cache for deduplication
+        """
         self.scan_id = scan_id
-        self.model_pool = model_pool
+        self.model_pools = model_pools if isinstance(model_pools, list) else [model_pools]
         self.cache = cache
         self.static_detector = StaticPatternDetector()
         self.parser = DraftParser()
 
     async def scan_batch(self, chunks: List[ScanFileChunk]) -> Dict[int, List[dict]]:
         """
-        Scan multiple chunks in one batch.
+        Scan multiple chunks using multi-model voting.
         Returns dict mapping chunk_id to list of findings.
         """
         results = {}
@@ -73,30 +82,108 @@ Multiple findings are OK. If nothing suspicious, respond with *DRAFT:NONE"""
             to_llm.append(prompt)
             to_llm_meta.append((chunk.id, content_hash, static_findings))
 
-        # Batch LLM call
+        # Multi-model batch LLM calls
         if to_llm:
             try:
-                responses = await self.model_pool.call_batch(to_llm)
+                # Send to all models in parallel
+                async def get_model_responses(pool: ModelPool):
+                    try:
+                        responses = await pool.call_batch(to_llm)
+                        return (pool.config.name, responses)
+                    except Exception as e:
+                        print(f"Model {pool.config.name} failed: {e}")
+                        return (pool.config.name, ["" for _ in to_llm])
 
-                for (chunk_id, content_hash, static_findings), response in zip(to_llm_meta, responses):
-                    llm_findings = self.parser.parse(response)
+                model_tasks = [get_model_responses(pool) for pool in self.model_pools]
+                all_model_results = await asyncio.gather(*model_tasks)
 
-                    if llm_findings is None:
-                        # Parsing failed - try correction
-                        llm_findings = await self._try_correction(response)
+                # Process each chunk's responses from all models
+                for idx, (chunk_id, content_hash, static_findings) in enumerate(to_llm_meta):
+                    # Collect findings from each model
+                    model_findings = []
+                    for model_name, responses in all_model_results:
+                        response = responses[idx] if idx < len(responses) else ""
+                        findings = self.parser.parse(response)
+                        if findings is None:
+                            findings = await self._try_correction(response)
+                        if findings:
+                            for f in findings:
+                                f['_model'] = model_name
+                            model_findings.append((model_name, findings))
 
-                    all_findings = static_findings + (llm_findings or [])
+                    # Aggregate findings using voting
+                    voted_findings = self._aggregate_findings(model_findings)
+                    all_findings = static_findings + voted_findings
                     results[chunk_id] = all_findings
                     self.cache.set_analysis(content_hash, all_findings)
 
             except Exception as e:
-                print(f"LLM batch call failed: {e}")
+                print(f"Multi-model scan failed: {e}")
                 # Return static findings for all
                 for chunk_id, content_hash, static_findings in to_llm_meta:
                     results[chunk_id] = static_findings
                     self.cache.set_analysis(content_hash, static_findings)
 
         return results
+
+    def _aggregate_findings(self, model_findings: List[tuple]) -> List[dict]:
+        """
+        Aggregate findings from multiple models using voting.
+        A finding is included if it appears in majority of models (2+ out of 3).
+        Similar findings are merged based on line number and type.
+        """
+        if not model_findings:
+            return []
+
+        num_models = len(self.model_pools)
+
+        # If only one model, return its findings directly
+        if num_models == 1:
+            return model_findings[0][1] if model_findings else []
+
+        # Group findings by signature (line + type)
+        finding_votes = {}  # signature -> {finding, votes, models}
+
+        for model_name, findings in model_findings:
+            for f in findings:
+                # Create signature for matching
+                sig = self._finding_signature(f)
+
+                if sig not in finding_votes:
+                    finding_votes[sig] = {
+                        'finding': f,
+                        'votes': 0,
+                        'models': [],
+                        'severities': []
+                    }
+
+                finding_votes[sig]['votes'] += 1
+                finding_votes[sig]['models'].append(model_name)
+                finding_votes[sig]['severities'].append(f.get('severity', 'Medium'))
+
+        # Filter by majority vote (more than half)
+        threshold = num_models / 2
+        voted_findings = []
+
+        for sig, data in finding_votes.items():
+            if data['votes'] > threshold:
+                finding = data['finding'].copy()
+                # Use most common severity
+                finding['severity'] = max(set(data['severities']), key=data['severities'].count)
+                # Add voting metadata
+                finding['_votes'] = data['votes']
+                finding['_models'] = data['models']
+                voted_findings.append(finding)
+
+        return voted_findings
+
+    def _finding_signature(self, finding: dict) -> str:
+        """Create a signature for matching similar findings across models."""
+        line = finding.get('line', finding.get('line_number', 0))
+        vuln_type = finding.get('type', finding.get('vulnerability_type', '')).lower()
+        # Normalize common type variations
+        vuln_type = vuln_type.replace(' ', '_').replace('-', '_')
+        return f"{line}:{vuln_type}"
 
     async def _try_correction(self, response: str) -> List[dict]:
         """Try to correct a malformed response"""
@@ -117,7 +204,8 @@ Previous response:
 {response[:2000]}"""
 
         try:
-            corrected = await self.model_pool.call(correction_prompt)
+            # Use first model pool for correction
+            corrected = await self.model_pools[0].call(correction_prompt)
             return self.parser.parse(corrected) or []
         except Exception:
             return []

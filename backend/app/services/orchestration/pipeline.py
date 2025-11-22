@@ -161,15 +161,16 @@ class ScanPipeline:
         return "normal"
 
     async def _run_scanner_phase(self):
-        """Phase 1: Scan chunks for draft findings"""
+        """Phase 1: Scan chunks for draft findings using multi-model voting"""
         from app.services.analysis.draft_scanner import DraftScanner
 
-        analyzer = self.model_orchestrator.get_primary_analyzer()
-        if not analyzer:
+        analyzers = self.model_orchestrator.get_analyzers()
+        if not analyzers:
             self._scanner_complete = True
             return
 
-        scanner = DraftScanner(self.scan_id, analyzer, self.cache)
+        # Pass all analyzers for multi-model voting
+        scanner = DraftScanner(self.scan_id, analyzers, self.cache)
         batch_size = 10
 
         while True:
