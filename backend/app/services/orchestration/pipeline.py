@@ -1,14 +1,43 @@
 import asyncio
 import os
 import hashlib
+import re
 import time
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func
 
+
+def parse_cvss_score(cvss_value) -> Optional[float]:
+    """Extract numeric CVSS score from various formats"""
+    if not cvss_value:
+        return None
+
+    cvss_str = str(cvss_value).strip()
+
+    # Try direct float conversion first
+    try:
+        score = float(cvss_str)
+        if 0.0 <= score <= 10.0:
+            return score
+    except ValueError:
+        pass
+
+    # Extract score from CVSS vector (e.g., "CVSS:3.1/AV:N/..." or "9.8 (Critical)")
+    match = re.search(r'(\d+\.?\d*)', cvss_str)
+    if match:
+        try:
+            score = float(match.group(1))
+            if 0.0 <= score <= 10.0:
+                return score
+        except ValueError:
+            pass
+
+    return None
+
 from app.models.models import Scan, Finding
 from app.models.scanner_models import (
-    ScanConfig, ScanFile, ScanFileChunk, DraftFinding, VerifiedFinding
+    ScanConfig, ScanFile, ScanFileChunk, DraftFinding, VerifiedFinding, LLMCallMetric, ScanMetrics
 )
 from app.services.orchestration.model_orchestrator import ModelOrchestrator
 from app.services.orchestration.cache import AnalysisCache
@@ -38,6 +67,18 @@ class ScanPipeline:
         scan.logs = (scan.logs or "") + f"\n{timing_log}"
         self.db.commit()
         print(f"[Scan {self.scan_id}] {timing_log}")
+
+    def _record_metric(self, model_name: str, phase: str, call_count: int, time_ms: float):
+        """Record LLM call metrics to database"""
+        metric = LLMCallMetric(
+            scan_id=self.scan_id,
+            model_name=model_name,
+            phase=phase,
+            call_count=call_count,
+            total_time_ms=time_ms
+        )
+        self.db.add(metric)
+        self.db.commit()
 
     async def run(self):
         """Run the full scanning pipeline"""
@@ -91,8 +132,13 @@ class ScanPipeline:
         """Discover files and create chunks for scanning"""
         from app.services.analysis.file_chunker import FileChunker
 
-        chunker = FileChunker()
+        # Use configured chunk size
+        chunk_size = self.config.chunk_size or 3000
+        chunker = FileChunker(max_tokens=chunk_size)
         supported_extensions = {'.py', '.c', '.cpp', '.h', '.hpp'}
+
+        # Track chunk sizes for metrics
+        chunk_token_sizes = []
 
         for root, _, files in os.walk(root_dir):
             for filename in files:
@@ -124,7 +170,14 @@ class ScanPipeline:
 
                     # Create chunks
                     chunks = chunker.chunk_file(file_path, content)
+                    lines = content.split('\n')
                     for chunk_data in chunks:
+                        # Calculate chunk token size
+                        chunk_lines = lines[chunk_data['start_line'] - 1:chunk_data['end_line']]
+                        chunk_content = '\n'.join(chunk_lines)
+                        chunk_tokens = len(chunk_content) // 4  # Rough estimate
+                        chunk_token_sizes.append(chunk_tokens)
+
                         chunk = ScanFileChunk(
                             scan_file_id=scan_file.id,
                             chunk_index=chunk_data['chunk_index'],
@@ -142,6 +195,20 @@ class ScanPipeline:
                     continue
 
         self.db.commit()
+
+        # Save chunk metrics
+        if chunk_token_sizes:
+            scan_metrics = ScanMetrics(
+                scan_id=self.scan_id,
+                total_chunks=len(chunk_token_sizes),
+                avg_chunk_tokens=sum(chunk_token_sizes) / len(chunk_token_sizes),
+                min_chunk_tokens=min(chunk_token_sizes),
+                max_chunk_tokens=max(chunk_token_sizes),
+                chunk_size_setting=chunk_size
+            )
+            self.db.add(scan_metrics)
+            self.db.commit()
+            print(f"[Scan {self.scan_id}] Chunks: {len(chunk_token_sizes)}, avg tokens: {scan_metrics.avg_chunk_tokens:.0f}")
 
     def _assess_risk(self, file_path: str) -> str:
         """Assess risk level of a file based on path patterns"""
@@ -161,7 +228,7 @@ class ScanPipeline:
         return "normal"
 
     async def _run_scanner_phase(self):
-        """Phase 1: Scan chunks for draft findings using multi-model voting"""
+        """Phase 1: Scan chunks for draft findings"""
         from app.services.analysis.draft_scanner import DraftScanner
 
         analyzers = self.model_orchestrator.get_analyzers()
@@ -169,9 +236,19 @@ class ScanPipeline:
             self._scanner_complete = True
             return
 
-        # Pass all analyzers for multi-model voting
-        scanner = DraftScanner(self.scan_id, analyzers, self.cache)
-        batch_size = 10
+        # Use single model or all analyzers based on config
+        if self.config.multi_model_scan:
+            scan_models = analyzers
+        else:
+            # Use just the primary analyzer (first one)
+            scan_models = [analyzers[0]] if analyzers else []
+
+        scanner = DraftScanner(self.scan_id, scan_models, self.cache)
+        batch_size = self.config.batch_size or 10
+
+        # Track timing per model
+        model_times = {pool.name: 0.0 for pool in scan_models}
+        model_calls = {pool.name: 0 for pool in scan_models}
 
         while True:
             # Check for pause
@@ -196,24 +273,47 @@ class ScanPipeline:
                 chunk.status = "scanning"
             self.db.commit()
 
-            # Scan batch
+            # Scan batch with timing
             try:
+                batch_start = time.time()
                 results = await scanner.scan_batch(chunks)
+                batch_time = (time.time() - batch_start) * 1000  # ms
 
-                # Save draft findings
+                # Attribute time to each model (split evenly for now)
+                for pool in scan_models:
+                    model_times[pool.name] += batch_time / len(scan_models)
+                    model_calls[pool.name] += len(chunks)
+
+                # Save draft findings with dedup keys
                 for chunk in chunks:
+                    # Get file path for dedup key
+                    scan_file = self.db.query(ScanFile).filter(
+                        ScanFile.id == chunk.scan_file_id
+                    ).first()
+                    file_path = scan_file.file_path if scan_file else "unknown"
+
                     findings = results.get(chunk.id, [])
                     for f in findings:
+                        line_num = int(f.get('line', f.get('line_number', 0))) if f.get('line') or f.get('line_number') else 0
+                        vuln_type = f.get('type', f.get('vulnerability_type', 'Unknown'))
+
+                        # Create dedup key: file + line + type
+                        dedup_key = hashlib.md5(
+                            f"{file_path}:{line_num}:{vuln_type}".encode()
+                        ).hexdigest()
+
                         draft = DraftFinding(
                             scan_id=self.scan_id,
                             chunk_id=chunk.id,
                             title=f.get('title', 'Unknown'),
-                            vulnerability_type=f.get('type', f.get('vulnerability_type', 'Unknown')),
+                            vulnerability_type=vuln_type,
                             severity=f.get('severity', 'Medium'),
-                            line_number=int(f.get('line', f.get('line_number', 0))) if f.get('line') or f.get('line_number') else 0,
+                            line_number=line_num,
                             snippet=f.get('snippet', ''),
                             reason=f.get('reason', ''),
                             auto_detected=f.get('auto_detected', False),
+                            initial_votes=f.get('votes', 1),
+                            dedup_key=dedup_key,
                             status="pending"
                         )
                         self.db.add(draft)
@@ -233,7 +333,53 @@ class ScanPipeline:
                 except Exception:
                     self.db.rollback()
 
+        # Deduplicate drafts if enabled
+        if self.config.deduplicate_drafts:
+            self._deduplicate_drafts()
+
+        # Record scanner metrics
+        for model_name, total_time in model_times.items():
+            if model_calls.get(model_name, 0) > 0:
+                self._record_metric(model_name, "scanner", model_calls[model_name], total_time)
+
         self._scanner_complete = True
+
+    def _deduplicate_drafts(self):
+        """Merge duplicate drafts based on dedup_key, combining votes"""
+        from sqlalchemy import func as sqla_func
+
+        # Find all dedup_keys with multiple drafts
+        duplicates = self.db.query(
+            DraftFinding.dedup_key,
+            sqla_func.count(DraftFinding.id).label('count')
+        ).filter(
+            DraftFinding.scan_id == self.scan_id,
+            DraftFinding.dedup_key.isnot(None)
+        ).group_by(DraftFinding.dedup_key).having(
+            sqla_func.count(DraftFinding.id) > 1
+        ).all()
+
+        merged_count = 0
+        for dedup_key, count in duplicates:
+            # Get all drafts with this key
+            drafts = self.db.query(DraftFinding).filter(
+                DraftFinding.scan_id == self.scan_id,
+                DraftFinding.dedup_key == dedup_key
+            ).order_by(DraftFinding.id).all()
+
+            if len(drafts) > 1:
+                # Keep first, merge votes, delete rest
+                primary = drafts[0]
+                total_votes = sum(d.initial_votes or 1 for d in drafts)
+                primary.initial_votes = total_votes
+
+                for dup in drafts[1:]:
+                    self.db.delete(dup)
+                    merged_count += 1
+
+        if merged_count > 0:
+            self.db.commit()
+            print(f"[Scan {self.scan_id}] Deduplicated {merged_count} duplicate drafts")
 
     async def _run_verifier_phase(self):
         """Phase 2: Verify draft findings with context"""
@@ -250,7 +396,24 @@ class ScanPipeline:
         context_retriever = ContextRetriever(self.scan_id, self.db)
         # Pass orchestrator so verifier can use ALL verifier models for voting
         verifier = FindingVerifier(self.scan_id, self.model_orchestrator, context_retriever)
-        batch_size = 5
+        batch_size = self.config.batch_size or 10
+        min_votes = self.config.min_votes_to_verify or 1
+
+        # Track timing per verifier model
+        verifier_models = self.model_orchestrator.get_verifiers() or self.model_orchestrator.get_analyzers()
+        model_times = {pool.name: 0.0 for pool in verifier_models}
+        model_calls = {pool.name: 0 for pool in verifier_models}
+
+        # Skip low-vote drafts if min_votes > 1
+        if min_votes > 1:
+            skipped = self.db.query(DraftFinding).filter(
+                DraftFinding.scan_id == self.scan_id,
+                DraftFinding.status == "pending",
+                DraftFinding.initial_votes < min_votes
+            ).update({DraftFinding.status: "skipped"})
+            if skipped > 0:
+                self.db.commit()
+                print(f"[Scan {self.scan_id}] Skipped {skipped} drafts with < {min_votes} votes")
 
         while True:
             # Check for pause
@@ -259,12 +422,14 @@ class ScanPipeline:
                 await asyncio.sleep(1)
                 continue
 
-            # Get batch of pending drafts, prioritized by severity
+            # Get batch of pending drafts with sufficient votes, prioritized by severity
             drafts = self.db.query(DraftFinding).filter(
                 DraftFinding.scan_id == self.scan_id,
-                DraftFinding.status == "pending"
+                DraftFinding.status == "pending",
+                DraftFinding.initial_votes >= min_votes
             ).order_by(
                 case({'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}, value=DraftFinding.severity),
+                DraftFinding.initial_votes.desc(),  # Higher votes first
                 DraftFinding.created_at
             ).limit(batch_size).all()
 
@@ -273,7 +438,8 @@ class ScanPipeline:
                     # Double-check no more pending
                     remaining = self.db.query(DraftFinding).filter(
                         DraftFinding.scan_id == self.scan_id,
-                        DraftFinding.status == "pending"
+                        DraftFinding.status == "pending",
+                        DraftFinding.initial_votes >= min_votes
                     ).count()
                     if remaining == 0:
                         break
@@ -285,11 +451,24 @@ class ScanPipeline:
                 draft.status = "verifying"
             self.db.commit()
 
-            # Verify batch
+            # Verify batch with timing
             try:
+                batch_start = time.time()
                 results = await verifier.verify_batch(drafts)
+                batch_time = (time.time() - batch_start) * 1000  # ms
+
+                # Attribute time to each verifier model
+                for pool in verifier_models:
+                    model_times[pool.name] += batch_time / len(verifier_models)
+                    model_calls[pool.name] += len(drafts)
 
                 for draft, result in zip(drafts, results):
+                    # Calculate total votes
+                    votes = result.get('votes', [])
+                    verify_count = sum(1 for v in votes if v.get('decision') == 'VERIFY')
+                    weakness_count = sum(1 for v in votes if v.get('decision') == 'WEAKNESS')
+                    reject_count = sum(1 for v in votes if v.get('decision') == 'REJECT')
+
                     if result.get('verified'):
                         verified = VerifiedFinding(
                             draft_id=draft.id,
@@ -303,8 +482,12 @@ class ScanPipeline:
                         )
                         self.db.add(verified)
                         draft.status = "verified"
+                        draft.verification_votes = verify_count + weakness_count
+                        draft.verification_notes = result.get('reasoning', '')[:500]
                     else:
                         draft.status = "rejected"
+                        draft.verification_votes = reject_count
+                        draft.verification_notes = result.get('reason', '')[:500]
 
                 self.db.commit()
 
@@ -313,6 +496,11 @@ class ScanPipeline:
                 for draft in drafts:
                     draft.status = "pending"
                 self.db.commit()
+
+        # Record verifier metrics
+        for model_name, total_time in model_times.items():
+            if model_calls.get(model_name, 0) > 0:
+                self._record_metric(model_name, "verifier", model_calls[model_name], total_time)
 
         self._verifier_complete = True
 
@@ -326,6 +514,10 @@ class ScanPipeline:
 
         enricher = FindingEnricher(enricher_pool, self.db)
         batch_size = 3
+
+        # Track timing for enricher model
+        enricher_time = 0.0
+        enricher_calls = 0
 
         while True:
             # Check for pause
@@ -356,9 +548,13 @@ class ScanPipeline:
                 v.status = "enriching"
             self.db.commit()
 
-            # Enrich batch
+            # Enrich batch with timing
             try:
+                batch_start = time.time()
                 results = await enricher.enrich_batch(verified_list)
+                batch_time = (time.time() - batch_start) * 1000  # ms
+                enricher_time += batch_time
+                enricher_calls += len(verified_list)
 
                 for v, result in zip(verified_list, results):
                     # Get the draft to find file info
@@ -384,7 +580,7 @@ class ScanPipeline:
                         snippet=result.get('impacted_code', draft.snippet if draft else ''),
                         remediation=result.get('remediation_steps', ''),
                         category=result.get('category', ''),
-                        cvss_score=float(result.get('cvss', 0)) if result.get('cvss') else None,
+                        cvss_score=parse_cvss_score(result.get('cvss')),
                         vulnerability_details=result.get('vulnerability_details', ''),
                         proof_of_concept=result.get('proof_of_concept', ''),
                         corrected_code=result.get('corrected_code', ''),
@@ -401,3 +597,7 @@ class ScanPipeline:
                 for v in verified_list:
                     v.status = "pending"
                 self.db.commit()
+
+        # Record enricher metrics
+        if enricher_calls > 0:
+            self._record_metric(enricher_pool.name, "enricher", enricher_calls, enricher_time)

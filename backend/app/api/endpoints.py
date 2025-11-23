@@ -93,6 +93,12 @@ async def start_scan(
     scanner_concurrency: int = Form(20),
     verifier_concurrency: int = Form(10),
     enricher_concurrency: int = Form(5),
+    # Performance optimization options
+    multi_model_scan: bool = Form(False),  # Use single model for faster initial scan
+    min_votes_to_verify: int = Form(1),  # Skip drafts with fewer votes
+    deduplicate_drafts: bool = Form(True),  # Merge duplicate findings
+    batch_size: int = Form(10),  # Batch size for LLM calls
+    chunk_size: int = Form(3000),  # Max tokens per chunk (larger for long-context models)
     db: Session = Depends(get_db)
 ):
     # Create Scan Record
@@ -107,7 +113,12 @@ async def start_scan(
         scope=scope,
         scanner_concurrency=scanner_concurrency,
         verifier_concurrency=verifier_concurrency,
-        enricher_concurrency=enricher_concurrency
+        enricher_concurrency=enricher_concurrency,
+        multi_model_scan=multi_model_scan,
+        min_votes_to_verify=min_votes_to_verify,
+        deduplicate_drafts=deduplicate_drafts,
+        batch_size=batch_size,
+        chunk_size=chunk_size
     )
     db.add(config)
     db.commit()

@@ -35,9 +35,16 @@ class ScanConfig(Base):
     primary_analyzer_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)
     scope = Column(String, default="full")  # "full" or "incremental"
 
+    # Performance optimizations
+    multi_model_scan = Column(Boolean, default=False)  # Use all analyzers or just primary for initial scan
+    min_votes_to_verify = Column(Integer, default=1)  # Min votes from initial scan to proceed to verification
+    deduplicate_drafts = Column(Boolean, default=True)  # Deduplicate similar drafts before verification
+
     scanner_concurrency = Column(Integer, default=20)
     verifier_concurrency = Column(Integer, default=10)
     enricher_concurrency = Column(Integer, default=5)
+    batch_size = Column(Integer, default=10)  # Batch size for LLM calls
+    chunk_size = Column(Integer, default=3000)  # Max tokens per chunk
 
 
 class ScanFile(Base):
@@ -155,7 +162,12 @@ class DraftFinding(Base):
     reason = Column(Text)
 
     auto_detected = Column(Boolean, default=False)  # Static detection vs LLM
+    initial_votes = Column(Integer, default=1)  # Number of models that detected this during initial scan
+    dedup_key = Column(String, index=True)  # Key for deduplication (file+line+type hash)
+
     status = Column(String, default="pending")  # pending/verifying/verified/rejected
+    verification_notes = Column(Text)  # Verifier reasoning for verify/reject decision
+    verification_votes = Column(Integer)  # Number of verifiers that agreed
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -175,4 +187,51 @@ class VerifiedFinding(Base):
     adjusted_severity = Column(String, nullable=True)
 
     status = Column(String, default="pending")  # pending/enriching/complete
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LLMCallMetric(Base):
+    """Track individual LLM calls for performance analysis"""
+    __tablename__ = "llm_call_metrics"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), index=True)
+
+    model_name = Column(String, index=True)
+    phase = Column(String, index=True)  # "scanner", "verifier", "enricher"
+
+    call_count = Column(Integer, default=1)
+    total_time_ms = Column(Float)  # milliseconds
+    tokens_in = Column(Integer, nullable=True)
+    tokens_out = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScanMetrics(Base):
+    """Scan-level metrics for benchmarking and tuning"""
+    __tablename__ = "scan_metrics"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), index=True, unique=True)
+
+    # Chunk metrics
+    total_chunks = Column(Integer, default=0)
+    avg_chunk_tokens = Column(Float, nullable=True)
+    min_chunk_tokens = Column(Integer, nullable=True)
+    max_chunk_tokens = Column(Integer, nullable=True)
+    chunk_size_setting = Column(Integer)  # The configured chunk_size
+
+    # Timing metrics
+    total_time_ms = Column(Float, nullable=True)
+    ingestion_time_ms = Column(Float, nullable=True)
+    indexing_time_ms = Column(Float, nullable=True)
+    chunking_time_ms = Column(Float, nullable=True)
+    analysis_time_ms = Column(Float, nullable=True)
+
+    # Token throughput
+    total_tokens_in = Column(Integer, nullable=True)
+    total_tokens_out = Column(Integer, nullable=True)
+    tokens_per_second = Column(Float, nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
