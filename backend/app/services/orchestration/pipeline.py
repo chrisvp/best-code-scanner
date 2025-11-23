@@ -68,14 +68,15 @@ class ScanPipeline:
         self.db.commit()
         print(f"[Scan {self.scan_id}] {timing_log}")
 
-    def _record_metric(self, model_name: str, phase: str, call_count: int, time_ms: float):
+    def _record_metric(self, model_name: str, phase: str, call_count: int, time_ms: float, tokens_in: int = 0):
         """Record LLM call metrics to database"""
         metric = LLMCallMetric(
             scan_id=self.scan_id,
             model_name=model_name,
             phase=phase,
             call_count=call_count,
-            total_time_ms=time_ms
+            total_time_ms=time_ms,
+            tokens_in=tokens_in
         )
         self.db.add(metric)
         self.db.commit()
@@ -246,9 +247,10 @@ class ScanPipeline:
         scanner = DraftScanner(self.scan_id, scan_models, self.cache)
         batch_size = self.config.batch_size or 10
 
-        # Track timing per model
+        # Track timing and tokens per model
         model_times = {pool.name: 0.0 for pool in scan_models}
         model_calls = {pool.name: 0 for pool in scan_models}
+        model_tokens = {pool.name: 0 for pool in scan_models}
 
         while True:
             # Check for pause
@@ -279,10 +281,14 @@ class ScanPipeline:
                 results = await scanner.scan_batch(chunks)
                 batch_time = (time.time() - batch_start) * 1000  # ms
 
-                # Attribute time to each model (split evenly for now)
+                # Estimate tokens for this batch (chunk content)
+                batch_tokens = sum(len(chunk.content) // 4 for chunk in chunks)
+
+                # Attribute time and tokens to each model (split evenly for now)
                 for pool in scan_models:
                     model_times[pool.name] += batch_time / len(scan_models)
                     model_calls[pool.name] += len(chunks)
+                    model_tokens[pool.name] += batch_tokens
 
                 # Save draft findings with dedup keys
                 for chunk in chunks:
@@ -340,7 +346,7 @@ class ScanPipeline:
         # Record scanner metrics
         for model_name, total_time in model_times.items():
             if model_calls.get(model_name, 0) > 0:
-                self._record_metric(model_name, "scanner", model_calls[model_name], total_time)
+                self._record_metric(model_name, "scanner", model_calls[model_name], total_time, model_tokens.get(model_name, 0))
 
         self._scanner_complete = True
 
@@ -399,10 +405,11 @@ class ScanPipeline:
         batch_size = self.config.batch_size or 10
         min_votes = self.config.min_votes_to_verify or 1
 
-        # Track timing per verifier model
+        # Track timing and tokens per verifier model
         verifier_models = self.model_orchestrator.get_verifiers() or self.model_orchestrator.get_analyzers()
         model_times = {pool.name: 0.0 for pool in verifier_models}
         model_calls = {pool.name: 0 for pool in verifier_models}
+        model_tokens = {pool.name: 0 for pool in verifier_models}
 
         # Skip low-vote drafts if min_votes > 1
         if min_votes > 1:
@@ -457,10 +464,17 @@ class ScanPipeline:
                 results = await verifier.verify_batch(drafts)
                 batch_time = (time.time() - batch_start) * 1000  # ms
 
-                # Attribute time to each verifier model
+                # Estimate tokens for this batch (draft snippet + reason)
+                batch_tokens = sum(
+                    (len(draft.snippet or '') + len(draft.reason or '')) // 4
+                    for draft in drafts
+                )
+
+                # Attribute time and tokens to each verifier model
                 for pool in verifier_models:
                     model_times[pool.name] += batch_time / len(verifier_models)
                     model_calls[pool.name] += len(drafts)
+                    model_tokens[pool.name] += batch_tokens
 
                 for draft, result in zip(drafts, results):
                     # Calculate total votes
@@ -500,7 +514,7 @@ class ScanPipeline:
         # Record verifier metrics
         for model_name, total_time in model_times.items():
             if model_calls.get(model_name, 0) > 0:
-                self._record_metric(model_name, "verifier", model_calls[model_name], total_time)
+                self._record_metric(model_name, "verifier", model_calls[model_name], total_time, model_tokens.get(model_name, 0))
 
         self._verifier_complete = True
 
@@ -515,9 +529,10 @@ class ScanPipeline:
         enricher = FindingEnricher(enricher_pool, self.db)
         batch_size = 3
 
-        # Track timing for enricher model
+        # Track timing and tokens for enricher model
         enricher_time = 0.0
         enricher_calls = 0
+        enricher_tokens = 0
 
         while True:
             # Check for pause
@@ -555,6 +570,13 @@ class ScanPipeline:
                 batch_time = (time.time() - batch_start) * 1000  # ms
                 enricher_time += batch_time
                 enricher_calls += len(verified_list)
+
+                # Estimate tokens for this batch
+                batch_tokens = sum(
+                    (len(v.title or '') + len(v.attack_vector or '') + len(v.data_flow or '')) // 4
+                    for v in verified_list
+                )
+                enricher_tokens += batch_tokens
 
                 for v, result in zip(verified_list, results):
                     # Get the draft to find file info
@@ -600,4 +622,4 @@ class ScanPipeline:
 
         # Record enricher metrics
         if enricher_calls > 0:
-            self._record_metric(enricher_pool.name, "enricher", enricher_calls, enricher_time)
+            self._record_metric(enricher_pool.name, "enricher", enricher_calls, enricher_time, enricher_tokens)

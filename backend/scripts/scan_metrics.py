@@ -134,12 +134,13 @@ def get_scan_metrics(scan_id: int = None):
             print("ACTUAL METRICS (from LLMCallMetric table)")
             print(f"{'='*60}")
 
-            # Group by phase and model
+            # Group by phase and model with tokens
             by_phase = db.query(
                 LLMCallMetric.phase,
                 LLMCallMetric.model_name,
                 func.sum(LLMCallMetric.call_count).label('calls'),
-                func.sum(LLMCallMetric.total_time_ms).label('time_ms')
+                func.sum(LLMCallMetric.total_time_ms).label('time_ms'),
+                func.sum(LLMCallMetric.tokens_in).label('tokens_in')
             ).filter(
                 LLMCallMetric.scan_id == scan_id
             ).group_by(
@@ -148,12 +149,13 @@ def get_scan_metrics(scan_id: int = None):
             ).all()
 
             current_phase = None
-            for phase, model, calls, time_ms in by_phase:
+            for phase, model, calls, time_ms, tokens_in in by_phase:
                 if phase != current_phase:
                     print(f"\n{phase.upper()}:")
                     current_phase = phase
                 time_s = (time_ms or 0) / 1000
-                print(f"  {model}: {calls} calls, {time_s:.1f}s")
+                tokens = tokens_in or 0
+                print(f"  {model}: {calls} calls, {time_s:.1f}s, {tokens:,} tokens")
 
         # Severity breakdown
         print(f"\n{'='*60}")
