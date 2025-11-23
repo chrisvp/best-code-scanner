@@ -263,11 +263,129 @@ Use these to benchmark scanner accuracy before scanning production repos.
 | `/models` | GET/POST | Manage models |
 | `/config` | GET/POST | Runtime configuration |
 
+## Known Issues & Improvement Plan
+
+### Observed Issues (Nov 2024 Benchmarks)
+
+Testing with 4 files containing single buried vulnerabilities revealed critical accuracy problems:
+
+**Expected Findings**:
+- `network_client.cpp:331` - Buffer overflow (CWE-120)
+- `firmware_updater.cpp:332` - Command injection (CWE-78)
+- `memory_pool.cpp:411` - Use-after-free (CWE-416)
+- `logger_service.cpp:313` - Format string (CWE-134)
+
+**Actual Results** (all chunk sizes 8k-48k):
+- ❌ Line numbers reported as `:0` instead of actual lines
+- ❌ All findings reported as CWE-78 regardless of actual type
+- ❌ Buffer overflow, use-after-free, format string vulnerabilities missed
+- ❌ False positives on non-vulnerable code sections
+
+### Root Causes
+
+1. **No Line Numbers in Code Sent to LLM**
+   - Chunks contain raw code without line number prefixes
+   - LLM cannot reference specific lines it analyzed
+
+2. **No Structured Output Enforcement**
+   - LLM response parsing is lenient
+   - No JSON schema validation
+   - Model hallucinates CWE types when unsure
+
+3. **Prompts Lack Specificity**
+   - Scanner prompts don't enforce line number extraction
+   - No examples showing expected output format
+   - Missing guidance on CWE classification
+
+4. **No Output Validation**
+   - Line numbers not verified against actual file
+   - CWE types not validated against known patterns
+   - No sanity checks on findings
+
+### Improvement Plan
+
+#### Phase 1: Line Number Injection (High Priority)
+```python
+# Before sending to LLM, prefix each line with number:
+def format_code_with_lines(code: str, start_line: int) -> str:
+    lines = code.split('\n')
+    return '\n'.join(f"{start_line + i:4d} | {line}"
+                     for i, line in enumerate(lines))
+```
+
+**Files to modify**:
+- `app/services/orchestration/pipeline.py` - Add line formatting in `_run_scanner_phase`
+- `app/prompts/scanner.py` - Update prompt to reference numbered lines
+
+#### Phase 2: Structured Output Schema (High Priority)
+```python
+FINDING_SCHEMA = {
+    "type": "object",
+    "required": ["title", "type", "severity", "line", "snippet", "reason"],
+    "properties": {
+        "line": {"type": "integer", "minimum": 1},
+        "type": {"type": "string", "pattern": "^CWE-\\d+$"},
+        "severity": {"enum": ["Critical", "High", "Medium", "Low", "Info"]}
+    }
+}
+```
+
+**Files to modify**:
+- `app/services/analysis/scanner.py` - Add JSON schema validation
+- `app/services/orchestration/pipeline.py` - Reject invalid responses
+
+#### Phase 3: Prompt Engineering (Medium Priority)
+
+Update scanner prompt with:
+- Explicit instruction to extract line numbers from numbered code
+- Few-shot examples for each CWE class
+- Clear guidance: "Only report CWE-78 for actual command injection"
+
+Example prompt addition:
+```
+CRITICAL: Each finding MUST include the exact line number from the numbered code.
+If you see "  42 | strcpy(buf, input);", report line: 42.
+Do NOT report line 0 or omit line numbers.
+```
+
+#### Phase 4: Output Validation (Medium Priority)
+
+Post-processing validation:
+1. Verify reported line exists in the chunk's line range
+2. Verify snippet appears in the actual code
+3. Flag findings with line=0 as invalid
+4. Log warnings for suspicious CWE patterns
+
+#### Phase 5: CWE-Specific Detection (Lower Priority)
+
+Add pattern hints to prompts based on vulnerability type:
+- CWE-120: Look for `strcpy`, `sprintf`, `gets` without bounds
+- CWE-416: Track `free()` followed by dereference
+- CWE-134: User input as format string in `printf`
+
+### Test Samples (Updated)
+
+`test_samples/vulnerable_cpp/` now contains 4 large files with single buried vulnerabilities for accuracy testing:
+
+| File | Lines | Vulnerability | Line | CWE |
+|------|-------|--------------|------|-----|
+| `network_client.cpp` | 400+ | Buffer overflow | 331 | CWE-120 |
+| `firmware_updater.cpp` | 400+ | Command injection | 332 | CWE-78 |
+| `memory_pool.cpp` | 450+ | Use-after-free | 411 | CWE-416 |
+| `logger_service.cpp` | 400+ | Format string | 313 | CWE-134 |
+
+### Benchmark Protocol
+
+1. Run scans at chunk sizes: 8k, 16k, 32k, 48k
+2. Record for each: time, findings count, correct detections
+3. Score accuracy: `correct_findings / expected_findings`
+4. Target: 100% recall on planted vulnerabilities
+
 ## Next Steps
 
-1. **Accuracy Benchmarking**: Run test samples with different model configs
-2. **Prompt Optimization**: Tune scanner prompts for specific CWE classes
-3. **Chunk Size Testing**: Evaluate larger chunks with long-context models
+1. **Implement Line Number Injection**: Highest impact fix for accuracy
+2. **Add JSON Schema Validation**: Enforce structured output
+3. **Update Scanner Prompts**: Include few-shot examples
 4. **Production Hardening**: Add rate limiting, auth, logging
 
 ## Usage

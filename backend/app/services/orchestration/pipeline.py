@@ -248,9 +248,9 @@ class ScanPipeline:
         batch_size = self.config.batch_size or 10
 
         # Track timing and tokens per model
-        model_times = {pool.name: 0.0 for pool in scan_models}
-        model_calls = {pool.name: 0 for pool in scan_models}
-        model_tokens = {pool.name: 0 for pool in scan_models}
+        model_times = {pool.config.name: 0.0 for pool in scan_models}
+        model_calls = {pool.config.name: 0 for pool in scan_models}
+        model_tokens = {pool.config.name: 0 for pool in scan_models}
 
         while True:
             # Check for pause
@@ -281,14 +281,14 @@ class ScanPipeline:
                 results = await scanner.scan_batch(chunks)
                 batch_time = (time.time() - batch_start) * 1000  # ms
 
-                # Estimate tokens for this batch (chunk content)
-                batch_tokens = sum(len(chunk.content) // 4 for chunk in chunks)
+                # Estimate tokens for this batch (based on line count)
+                batch_tokens = sum((chunk.end_line - chunk.start_line + 1) * 40 for chunk in chunks)
 
                 # Attribute time and tokens to each model (split evenly for now)
                 for pool in scan_models:
-                    model_times[pool.name] += batch_time / len(scan_models)
-                    model_calls[pool.name] += len(chunks)
-                    model_tokens[pool.name] += batch_tokens
+                    model_times[pool.config.name] += batch_time / len(scan_models)
+                    model_calls[pool.config.name] += len(chunks)
+                    model_tokens[pool.config.name] += batch_tokens
 
                 # Save draft findings with dedup keys
                 for chunk in chunks:
@@ -407,9 +407,9 @@ class ScanPipeline:
 
         # Track timing and tokens per verifier model
         verifier_models = self.model_orchestrator.get_verifiers() or self.model_orchestrator.get_analyzers()
-        model_times = {pool.name: 0.0 for pool in verifier_models}
-        model_calls = {pool.name: 0 for pool in verifier_models}
-        model_tokens = {pool.name: 0 for pool in verifier_models}
+        model_times = {pool.config.name: 0.0 for pool in verifier_models}
+        model_calls = {pool.config.name: 0 for pool in verifier_models}
+        model_tokens = {pool.config.name: 0 for pool in verifier_models}
 
         # Skip low-vote drafts if min_votes > 1
         if min_votes > 1:
@@ -472,9 +472,9 @@ class ScanPipeline:
 
                 # Attribute time and tokens to each verifier model
                 for pool in verifier_models:
-                    model_times[pool.name] += batch_time / len(verifier_models)
-                    model_calls[pool.name] += len(drafts)
-                    model_tokens[pool.name] += batch_tokens
+                    model_times[pool.config.name] += batch_time / len(verifier_models)
+                    model_calls[pool.config.name] += len(drafts)
+                    model_tokens[pool.config.name] += batch_tokens
 
                 for draft, result in zip(drafts, results):
                     # Calculate total votes
@@ -622,4 +622,4 @@ class ScanPipeline:
 
         # Record enricher metrics
         if enricher_calls > 0:
-            self._record_metric(enricher_pool.name, "enricher", enricher_calls, enricher_time, enricher_tokens)
+            self._record_metric(enricher_pool.config.name, "enricher", enricher_calls, enricher_time, enricher_tokens)
