@@ -1,4 +1,4 @@
-# Agentic Firmware Security Scanner - Architecture & Design
+# Davy Code Scanner - Architecture & Design
 
 ## Overview
 

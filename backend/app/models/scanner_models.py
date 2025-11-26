@@ -277,7 +277,10 @@ class ProfileAnalyzer(Base):
     description = Column(Text, nullable=True)
 
     # Model configuration
-    model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)  # If null, use default
+    model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=False)
+
+    # Chunk size for this analyzer (tokens)
+    chunk_size = Column(Integer, default=6000)
 
     # Prompt template - supports {code}, {language}, {file_path} placeholders
     prompt_template = Column(Text)

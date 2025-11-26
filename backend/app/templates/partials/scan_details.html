@@ -744,6 +744,12 @@
 
     function stripCodeFences(code) {
         if (!code) return '';
+        // Strip thinking tags first (handles <thinking>...</thinking> and <think>...</think>)
+        code = code.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+        code = code.replace(/<\/?thinking>/gi, '');
+        code = code.replace(/<think>[\s\S]*?<\/think>/gi, '');
+        code = code.replace(/<\/?think>/gi, '');
+        // Then strip markdown code fences
         return code.replace(/^```[\w]*\n?/gm, '').replace(/```$/gm, '').trim();
     }
 

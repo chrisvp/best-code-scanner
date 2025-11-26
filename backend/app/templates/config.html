@@ -170,12 +170,6 @@
                                         </svg>
                                         {{ model.votes }} vote{{ 's' if model.votes != 1 else '' }}
                                     </span>
-                                    <span class="flex items-center gap-1">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
-                                        </svg>
-                                        ~{{ model.chunk_size }} chunk
-                                    </span>
                                 </div>
                             </div>
                             <div class="flex gap-1 ml-4">
@@ -279,8 +273,8 @@
                                     <div>
                                         <div class="font-medium text-white text-sm">{{ analyzer.name }}</div>
                                         <div class="text-[11px] text-gray-500">
-                                            {% if analyzer.file_filter %}{{ analyzer.file_filter }}{% else %}All files{% endif %}
-                                            {% if analyzer.model %} | {{ analyzer.model.name }}{% endif %}
+                                            {{ analyzer.model.name }} | {{ analyzer.chunk_size }} tokens
+                                            {% if analyzer.file_filter %} | {{ analyzer.file_filter }}{% endif %}
                                         </div>
                                     </div>
                                 </div>
@@ -474,17 +468,10 @@
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Votes Weight</label>
-                        <input type="number" name="votes" value="1" min="1" max="5"
-                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
-                        <input type="number" name="chunk_size" value="3000" min="500"
-                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Votes Weight</label>
+                    <input type="number" name="votes" value="1" min="1" max="5"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div class="flex flex-wrap gap-4">
                     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
@@ -553,15 +540,9 @@
                         <input type="number" name="max_concurrent" id="edit-model-max-concurrent" min="1" max="20" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Votes</label>
-                        <input type="number" name="votes" id="edit-model-votes" min="1" max="5" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
-                        <input type="number" name="chunk_size" id="edit-model-chunk-size" min="500" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Votes</label>
+                    <input type="number" name="votes" id="edit-model-votes" min="1" max="5" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
                 <div class="flex flex-wrap gap-4">
                     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
@@ -644,12 +625,17 @@
                     <label class="block text-sm font-medium text-gray-300 mb-1">Analyzer Name</label>
                     <input type="text" name="name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Memory Safety Check">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
-                    <select name="model_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Use Default</option>
-                        {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
-                    </select>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Model *</label>
+                        <select name="model_id" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
+                        <input type="number" name="chunk_size" value="6000" min="1000" max="32000" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
@@ -704,12 +690,17 @@ If none found: []</textarea>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Analyzer Name</label>
                     <input type="text" name="name" id="edit-analyzer-name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
-                    <select name="model_id" id="edit-analyzer-model" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">Use Default</option>
-                        {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
-                    </select>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Model *</label>
+                        <select name="model_id" id="edit-analyzer-model" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
+                        <input type="number" name="chunk_size" id="edit-analyzer-chunk-size" value="6000" min="1000" max="32000" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
@@ -787,7 +778,7 @@ If none found: []</textarea>
 
 <script>
 const modelsData = {
-    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, chunk_size: {{ model.chunk_size }}, is_analyzer: {{ 'true' if model.is_analyzer else 'false' }}, is_verifier: {{ 'true' if model.is_verifier else 'false' }}, is_cleanup: {{ 'true' if model.is_cleanup else 'false' }}, is_chat: {{ 'true' if model.is_chat else 'false' }} },{% endfor %}
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, is_analyzer: {{ 'true' if model.is_analyzer else 'false' }}, is_verifier: {{ 'true' if model.is_verifier else 'false' }}, is_cleanup: {{ 'true' if model.is_cleanup else 'false' }}, is_chat: {{ 'true' if model.is_chat else 'false' }} },{% endfor %}
 };
 
 function switchTab(tab) {
@@ -796,13 +787,22 @@ function switchTab(tab) {
     document.getElementById('tab-' + tab).classList.add('active', 'text-white', 'border-blue-500');
     document.getElementById('tab-' + tab).classList.remove('text-gray-400', 'border-transparent');
     document.getElementById('panel-' + tab).classList.remove('hidden');
+    localStorage.setItem('config_active_tab', tab);
 }
+
+// Restore saved tab on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const savedTab = localStorage.getItem('config_active_tab');
+    if (savedTab && document.getElementById('tab-' + savedTab)) {
+        switchTab(savedTab);
+    }
+});
 
 async function submitModelForm(event) {
     event.preventDefault();
     const form = event.target;
     const formData = new FormData(form);
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true', is_chat: formData.get('is_chat') === 'true' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true', is_chat: formData.get('is_chat') === 'true' };
     const response = await fetch('/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
 }
@@ -815,7 +815,6 @@ function editModel(id) {
     document.getElementById('edit-model-max-tokens').value = m.max_tokens;
     document.getElementById('edit-model-max-concurrent').value = m.max_concurrent;
     document.getElementById('edit-model-votes').value = m.votes;
-    document.getElementById('edit-model-chunk-size').value = m.chunk_size;
     document.getElementById('edit-model-is-analyzer').checked = m.is_analyzer;
     document.getElementById('edit-model-is-verifier').checked = m.is_verifier;
     document.getElementById('edit-model-is-cleanup').checked = m.is_cleanup;
@@ -828,7 +827,7 @@ async function submitEditModelForm(event) {
     const form = event.target;
     const formData = new FormData(form);
     const id = formData.get('model_id');
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true', is_chat: formData.get('is_chat') === 'true' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true', is_chat: formData.get('is_chat') === 'true' };
     if (formData.get('api_key')) data.api_key = formData.get('api_key');
     const response = await fetch(`/models/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
@@ -862,6 +861,7 @@ async function editAnalyzer(profileId, analyzerId) {
         document.getElementById('edit-analyzer-id').value = analyzerId;
         document.getElementById('edit-analyzer-name').value = analyzer.name || '';
         document.getElementById('edit-analyzer-model').value = analyzer.model_id || '';
+        document.getElementById('edit-analyzer-chunk-size').value = analyzer.chunk_size || 6000;
         document.getElementById('edit-analyzer-file-filter').value = analyzer.file_filter || '';
         document.getElementById('edit-analyzer-run-order').value = analyzer.run_order || 1;
         document.getElementById('edit-analyzer-prompt').value = analyzer.prompt_template || '';
@@ -883,7 +883,8 @@ async function submitEditAnalyzerForm(event) {
     const params = new URLSearchParams();
     params.append('name', formData.get('name'));
     params.append('prompt_template', formData.get('prompt_template'));
-    if (formData.get('model_id')) params.append('model_id', formData.get('model_id'));
+    params.append('model_id', formData.get('model_id'));
+    params.append('chunk_size', formData.get('chunk_size'));
     if (formData.get('file_filter')) params.append('file_filter', formData.get('file_filter'));
     params.append('run_order', formData.get('run_order'));
 

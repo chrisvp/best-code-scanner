@@ -1523,6 +1523,7 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
                 "description": a.description,
                 "model_id": a.model_id,
                 "model_name": a.model.name if a.model else None,
+                "chunk_size": a.chunk_size,
                 "prompt_template": a.prompt_template,
                 "file_filter": a.file_filter,
                 "language_filter": a.language_filter,
@@ -1621,7 +1622,8 @@ async def add_analyzer(
     profile_id: int,
     name: str = Form(...),
     prompt_template: str = Form(...),
-    model_id: int = Form(None),
+    model_id: int = Form(...),
+    chunk_size: int = Form(6000),
     description: str = Form(None),
     file_filter: str = Form(None),
     language_filter: str = Form(None),  # Comma-separated
@@ -1646,6 +1648,7 @@ async def add_analyzer(
         name=name,
         description=description,
         model_id=model_id,
+        chunk_size=chunk_size,
         prompt_template=prompt_template,
         file_filter=file_filter,
         language_filter=lang_list,
@@ -1669,6 +1672,7 @@ async def update_analyzer(
     name: str = Form(None),
     prompt_template: str = Form(None),
     model_id: int = Form(None),
+    chunk_size: int = Form(None),
     description: str = Form(None),
     file_filter: str = Form(None),
     language_filter: str = Form(None),
@@ -1693,6 +1697,8 @@ async def update_analyzer(
         analyzer.prompt_template = prompt_template
     if model_id is not None:
         analyzer.model_id = model_id
+    if chunk_size is not None:
+        analyzer.chunk_size = chunk_size
     if description is not None:
         analyzer.description = description
     if file_filter is not None:

@@ -271,11 +271,22 @@ The fix should address the security issue while maintaining the original functio
         return enriched_results
 
     def _clean_fix_response(self, response: str) -> str:
-        """Clean the fix response, removing any markdown formatting"""
+        """Clean the fix response, removing thinking tags and markdown formatting"""
+        import re
         if not response:
             return ''
 
         text = response.strip()
+
+        # Remove thinking tags and their content (multiple formats)
+        text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'</thinking>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<thinking>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'</think>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<think>', '', text, flags=re.IGNORECASE)
+
+        text = text.strip()
 
         # Remove markdown code blocks
         if text.startswith('```'):

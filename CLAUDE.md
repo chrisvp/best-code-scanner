@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Agentic Firmware Security Scanner - A FastAPI-based web application that uses LLMs to analyze code for security vulnerabilities. Supports scanning Git repositories or uploaded archives (.zip/.tar.gz) containing Python, C, and C++ code.
+Davy Code Scanner - A FastAPI-based web application that uses LLMs to analyze code for security vulnerabilities. Supports scanning Git repositories or uploaded archives (.zip/.tar.gz) containing Python, C, and C++ code.
 
 ## Commands
 
