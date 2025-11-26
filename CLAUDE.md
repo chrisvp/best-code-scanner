@@ -1,116 +1,232 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working with this repository.
 
 ## Project Overview
 
-Davy Code Scanner - A FastAPI-based web application that uses LLMs to analyze code for security vulnerabilities. Supports scanning Git repositories or uploaded archives (.zip/.tar.gz) containing Python, C, and C++ code.
+**Davy Code Scanner** - An LLM-powered security vulnerability scanner that analyzes code repositories using multi-model voting and a three-phase pipeline. Supports scanning Git repositories or uploaded archives containing Python, C, and C++ code.
 
-## Commands
+## Quick Start
 
-### Run the server
 ```bash
-cd backend
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# Start the server
+cd backend && source venv/bin/activate
+python start.py
+# Or manually: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+# Run tests
+cd backend && pytest tests/
+
+# Install dependencies
+cd backend && pip install -r requirements.txt
 ```
 
-### Run tests
-```bash
-cd backend
-pytest tests/
-```
+**Server URL**: http://localhost:8000
+**Database**: `/tmp/scans.db` (SQLite)
 
-### Run a single test
-```bash
-cd backend
-pytest tests/test_api.py::test_health_check -v
-```
+## Tech Stack
 
-### Install dependencies
-```bash
-cd backend
-pip install -r requirements.txt
-```
+- **Backend**: FastAPI (Python 3.11+)
+- **Database**: SQLite with SQLAlchemy ORM
+- **LLM Integration**: AsyncOpenAI client (vLLM-compatible)
+- **Code Intelligence**: tree-sitter for AST parsing
+- **Frontend**: HTMX + Jinja2 templates + Tailwind CSS
+- **Inference**: vLLM batch inference for high throughput
 
 ## Architecture
 
-### Core Flow
-1. **Ingestion** (`app/services/ingestion.py`): Clones Git repos or extracts archives into `sandbox/` directory
-2. **Code Navigation** (`app/services/code_navigator.py`): Uses tree-sitter to parse files and extract imports/functions for context
-3. **Scan Engine** (`app/services/scan_engine.py`): Orchestrates the scan workflow - walks files, sends to LLM for analysis, stores findings
-4. **LLM Provider** (`app/services/llm_provider.py`): AsyncOpenAI client wrapper that connects to configurable LLM endpoint
-
-### Key Components
-- **Scan**: Database model tracking scan status (queued/running/completed/failed) and logs
-- **Finding**: Security vulnerability with file_path, line_number, severity, description, snippet, remediation
-- **Consensus Mode**: Optional verification step that uses additional LLMs to validate findings as true/false positives
-
-### Web Interface
-- HTMX-based dashboard with Jinja2 templates in `app/templates/`
-- Endpoints in `app/api/endpoints.py` serve both UI and API
-- Runtime LLM configuration via `/config` endpoint
-
-### Configuration
-Settings in `app/core/config.py` - configurable via `.env` file:
-- `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`: Primary analysis model
-- `LLM_VERIFICATION_MODELS`: List of models for consensus verification
-- `DATABASE_URL`: SQLite database path (default: `./scans.db`)
-
-### Runtime Paths (WSL Environment)
-- **Database**: `/tmp/scans.db` (SQLite - configured in `app/core/config.py`)
-- **Sandbox Directory**: `backend/sandbox/` - where extracted code is stored during scans
-- **Server**: http://localhost:8000
-- **vLLM Backend**: https://192.168.33.158:5000 (multi-model inference server)
-
-### Database Tables
-Key tables for the scanning pipeline:
-- `scans`: Scan metadata and status (queued/running/completed/failed)
-- `scan_files`: Files within a scan
-- `scan_file_chunks`: Code chunks for analysis
-- `draft_findings`: Initial vulnerability candidates (with `source_models` JSON column for tracking)
-- `verified_findings`: Confirmed vulnerabilities after verification
-- `model_configs`: LLM model configurations (5 analyzers: gpt-oss-120b, llama3.3-70b-instruct, mistral-small, mistral-nemo-instruct, gemma-3-27b-it)
-- `static_rules`: Regex-based static detection patterns
-
-### File Support
-Analyzes: `.py`, `.c`, `.cpp` files
-Tree-sitter parsers initialized for C and Python
-
-## Slash Commands for Implementation
-
-Use these commands to implement the refactored scanner architecture:
-
-- `/build-all` - Implement entire scanner from scratch (master command)
-- `/implement-models` - Create database models (Phase 1)
-- `/implement-pipeline` - Create orchestration layer with vLLM batching (Phase 2)
-- `/implement-intelligence` - Create code intelligence system (Phase 3)
-- `/implement-analysis` - Create analysis components (Phase 4-6)
-- `/implement-api` - Update API endpoints (Phase 7)
-- `/test-scanner` - Create and run tests
-
-## Refactored Architecture (In Progress)
-
-See `IMPLEMENTATION_PLAN.md` for full details.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        API Layer                            │
+│                   (FastAPI endpoints)                       │
+└─────────────────┬───────────────────────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────────────────────────┐
+│                   Scan Pipeline                             │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
+│  │ Scanner  │→ │ Verifier │→ │ Enricher │                   │
+│  │ (Draft)  │  │ (Verify) │  │ (Report) │                   │
+│  └──────────┘  └──────────┘  └──────────┘                   │
+└─────────────────┬───────────────────────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────────────────────────┐
+│              Model Orchestrator                             │
+│         (vLLM batch inference, multi-model)                 │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ### Three-Phase Pipeline
-1. **Draft Scanning**: Fast LLM scan, lightweight format
-2. **Verification**: Context-aware validation with code intelligence
-3. **Enrichment**: Full reports for verified findings only
 
-### Key Features
-- vLLM batch inference (list of prompts per request)
-- Configurable concurrency per model (default: 2)
-- Tree-sitter code intelligence for context retrieval
-- Static pattern detection for obvious vulnerabilities
-- Pause/resume with checkpoint recovery
-- **Multi-model voting**: All 5 models scan in parallel, findings are aggregated by signature (line+type)
+1. **Draft Scanning**: Fast initial scan using lightweight marker format
+2. **Verification**: Context-aware validation with code intelligence and multi-model voting
+3. **Enrichment**: Full security reports with CVSS, PoC, and remediation for verified findings
+
+### Service Structure
+
+```
+backend/app/
+├── api/endpoints.py         # FastAPI routes (UI + API)
+├── core/config.py           # Settings (env vars)
+├── models/
+│   ├── models.py            # Scan, Finding models
+│   └── scanner_models.py    # Pipeline models (Draft, Verified, etc.)
+├── services/
+│   ├── orchestration/
+│   │   ├── pipeline.py      # Main scan orchestrator
+│   │   ├── model_orchestrator.py  # LLM pool management
+│   │   └── cache.py         # Response caching
+│   ├── intelligence/
+│   │   ├── ast_parser.py    # Tree-sitter parsing
+│   │   └── context_retriever.py   # Code context for verification
+│   └── analysis/
+│       ├── draft_scanner.py # Phase 1: Initial scanning
+│       ├── verifier.py      # Phase 2: Verification
+│       ├── enricher.py      # Phase 3: Report generation
+│       └── parsers.py       # LLM response parsing
+└── templates/               # Jinja2 + HTMX UI
+```
+
+## Database Schema
+
+### Core Tables
+
+| Table | Purpose |
+|-------|---------|
+| `scans` | Scan metadata and status |
+| `scan_files` | Files discovered in scan |
+| `scan_file_chunks` | Code chunks for analysis |
+| `draft_findings` | Initial vulnerability candidates |
+| `verified_findings` | Confirmed vulnerabilities |
+| `findings` | Final enriched reports |
+| `model_configs` | LLM model configurations |
+| `scan_profiles` | Reusable scan configurations |
+| `profile_analyzers` | Analyzer configs per profile |
+| `static_rules` | Regex-based detection patterns |
+
+## Configuration
+
+### Scan Profiles
+
+Profiles define how scans run with multiple analyzers:
+- Each analyzer has: model, chunk_size, prompt_template, file_filter
+- Analyzers run in order (run_order)
+- Profiles can be enabled/disabled
+
+### Model Roles
+
+| Role | Description |
+|------|-------------|
+| `is_analyzer` | Can scan for vulnerabilities |
+| `is_verifier` | Can vote on findings |
+| `is_cleanup` | Reformats malformed responses |
+| `is_chat` | Default for chat interface |
+
+### Environment Variables
+
+```
+LLM_BASE_URL=https://192.168.33.158:5000/v1
+LLM_API_KEY=your-api-key
+LLM_VERIFY_SSL=false
+DATABASE_URL=sqlite:////tmp/scans.db
+MAX_CONCURRENT_REQUESTS=5
+```
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Dashboard UI |
+| `/config` | GET | Settings page |
+| `/scan/start` | POST | Start new scan |
+| `/scan/{id}/progress` | GET | Get scan progress |
+| `/scan/{id}/findings` | GET | Get findings |
+| `/models` | GET/POST | Manage models |
+| `/profiles` | GET/POST | Manage scan profiles |
+| `/profiles/{id}/analyzers` | POST | Add analyzer to profile |
+| `/rules` | GET/POST | Manage static rules |
+| `/chat` | POST | Chat with AI about findings |
+
+## LLM Response Formats
+
+### Draft Finding (Phase 1)
+```
+*DRAFT: Buffer Overflow in parse_input
+*TYPE: CWE-120
+*SEVERITY: High
+*LINE: 42
+*SNIPPET: strcpy(buffer, input);
+*REASON: No bounds checking on input
+*END_DRAFT
+```
+
+### Verification (Phase 2)
+```
+*VOTE: VERIFY
+*CONFIDENCE: 92
+*REASONING: User input flows directly to strcpy without bounds check
+*END_VERIFIED
+```
+
+### Enrichment (Phase 3)
+```
+*FINDING: Buffer Overflow via Unbounded strcpy
+*CATEGORY: CWE-120 Buffer Copy without Checking Size
+*SEVERITY: High
+*CVSS: 8.1
+*IMPACTED_CODE: ...
+*VULNERABILITY_DETAILS: ...
+*PROOF_OF_CONCEPT: ...
+*CORRECTED_CODE: ...
+*REMEDIATION_STEPS: ...
+*REFERENCES: ...
+*END_FINDING
+```
+
+## Key Features
+
+- **Multi-model voting**: Multiple models scan in parallel, findings aggregated by signature
 - **Per-model tracking**: `source_models` column tracks which models detected each finding
-- **Smart chunking**: 8k soft / 12k hard token limits with function-aware splitting
+- **Thinking tag stripping**: Automatically removes `<thinking>` and `<think>` tags from model outputs
+- **Fuzzy parsing**: Handles variations in LLM response formats
+- **Code intelligence**: Tree-sitter AST parsing for context retrieval
+- **Static rules**: Regex patterns for instant detection of common vulnerabilities
+- **Tab persistence**: Config page remembers active tab via localStorage
 
-### New Service Structure
+## Test Samples
+
+`test_samples/vulnerable_cpp/` contains test files with intentional vulnerabilities:
+- `network_client.cpp` - Buffer overflow (CWE-120)
+- `firmware_updater.cpp` - Command injection (CWE-78)
+- `memory_pool.cpp` - Use-after-free (CWE-416)
+- `logger_service.cpp` - Format string (CWE-134)
+
+## Development Notes
+
+### Adding a New Model Role
+1. Add column to `ModelConfig` in `scanner_models.py`
+2. Add checkbox to model forms in `config.html`
+3. Update `modelsData` JS object and form handlers
+4. Add migration if needed: `ALTER TABLE model_configs ADD COLUMN is_xxx BOOLEAN DEFAULT 0`
+
+### Adding a New Analyzer Field
+1. Add column to `ProfileAnalyzer` in `scanner_models.py`
+2. Update forms in `config.html`
+3. Update `add_analyzer` and `update_analyzer` endpoints
+4. Update profile API response
+
+### Debugging Scans
+```bash
+# Check scan progress
+curl http://localhost:8000/scan/{id}/progress | python3 -m json.tool
+
+# Check database
+sqlite3 /tmp/scans.db "SELECT * FROM scans ORDER BY id DESC LIMIT 5;"
+sqlite3 /tmp/scans.db "SELECT * FROM draft_findings WHERE scan_id=X;"
 ```
-backend/app/services/
-├── orchestration/    # Pipeline, model pools, caching
-├── intelligence/     # AST parser, indexer, context
-└── analysis/         # Scanner, verifier, enricher
-```
+
+## Future Features
+
+See `backend/docs/FEATURE_ROADMAP.md` for planned features:
+- GitLab Merge Request reviewer
+- Findings analysis & prioritization
+- Webhook security alerts
