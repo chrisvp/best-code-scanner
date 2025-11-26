@@ -1,10 +1,8 @@
 import os
 import shutil
 import subprocess
-import tempfile
 import zipfile
 import tarfile
-import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -19,10 +17,10 @@ class IngestionService:
         func(path)
 
     def create_sandbox(self, scan_id: str) -> Path:
+        """Create sandbox directory for extracted archives or cloned repos."""
         import time
         scan_dir = self.sandbox_root / scan_id
         if scan_dir.exists():
-            # Handle read-only files and retry for locked files
             max_retries = 3
             for attempt in range(max_retries):
                 try:
@@ -30,15 +28,29 @@ class IngestionService:
                     break
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        time.sleep(1)  # Wait for file locks to release
+                        time.sleep(1)
                     else:
                         raise e
         scan_dir.mkdir(parents=True)
         return scan_dir
 
+    async def use_local_dir(self, source_path: str) -> Path:
+        """Use local directory directly without copying - read-only scanning."""
+        source = Path(source_path).resolve()
+        if not source.exists():
+            raise Exception(f"Source directory does not exist: {source_path}")
+        if not source.is_dir():
+            raise Exception(f"Source is not a directory: {source_path}")
+        return source
+
     async def clone_repo(self, repo_url: str, scan_id: str, token: Optional[str] = None) -> Path:
+        # Local directory - use directly without copying
+        if os.path.isdir(repo_url):
+            return await self.use_local_dir(repo_url)
+
+        # Git URL - clone to sandbox
         target_dir = self.create_sandbox(scan_id)
-        
+
         final_url = repo_url
         # TODO: Token handling
 
@@ -49,11 +61,11 @@ class IngestionService:
                 capture_output=True,
                 text=True
             )
-            
+
             if result.returncode != 0:
                 error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
                 raise Exception(f"Git clone failed (Code {result.returncode}): {error_msg}")
-                
+
             return target_dir
         except Exception as e:
             raise Exception(f"Git clone failed: {str(e)}")

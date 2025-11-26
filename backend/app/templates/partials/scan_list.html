@@ -1,22 +1,47 @@
 {% for scan in scans %}
-<div class="p-4 border-b border-gray-700 hover:bg-gray-700/50 cursor-pointer transition-colors group"
-    hx-get="/scan/{{ scan.id }}" hx-target="#scan-details">
+<div class="scan-item p-3 border-b border-gray-700 hover:bg-gray-700/50 cursor-pointer transition-colors group"
+    hx-get="/scan/{{ scan.id }}" hx-target="#scan-details"
+    data-target="{{ scan.target_url }}"
+    data-status="{{ scan.status }}">
     <div class="flex justify-between items-start mb-1">
-        <span class="font-medium text-gray-200 truncate pr-4" title="{{ scan.target_url }}">{{ scan.target_url }}</span>
-        <span class="text-xs px-2 py-0.5 rounded-full 
+        <span class="font-medium text-gray-200 truncate pr-4 text-sm" title="{{ scan.target_url }}">
+            {{ scan.target_url.split('/')[-1] if '/' in scan.target_url else scan.target_url }}
+        </span>
+        <span class="text-xs px-2 py-0.5 rounded-full shrink-0
             {% if scan.status == 'completed' %}bg-green-900 text-green-300
-            {% elif scan.status == 'running' %}bg-blue-900 text-blue-300
+            {% elif scan.status == 'running' %}bg-blue-900 text-blue-300 animate-pulse
             {% elif scan.status == 'failed' %}bg-red-900 text-red-300
             {% else %}bg-gray-700 text-gray-400{% endif %}">
             {{ scan.status }}
         </span>
     </div>
-    <div class="text-xs text-gray-500">
-        ID: #{{ scan.id }} &bull; {{ scan.created_at.strftime('%Y-%m-%d %H:%M') if scan.created_at else 'Just now' }}
+    <div class="flex justify-between items-center text-xs text-gray-500">
+        <span>#{{ scan.id }}</span>
+        <span>{{ scan.created_at.strftime('%m/%d %H:%M') if scan.created_at else 'Just now' }}</span>
     </div>
+    {% if scan.findings %}
+    <div class="flex gap-2 mt-1.5">
+        {% set critical = scan.findings|selectattr('severity', 'equalto', 'Critical')|list|length %}
+        {% set high = scan.findings|selectattr('severity', 'equalto', 'High')|list|length %}
+        {% set medium = scan.findings|selectattr('severity', 'equalto', 'Medium')|list|length %}
+        {% if critical > 0 %}
+        <span class="text-[10px] px-1.5 py-0.5 bg-red-900/50 text-red-300 rounded">{{ critical }} Critical</span>
+        {% endif %}
+        {% if high > 0 %}
+        <span class="text-[10px] px-1.5 py-0.5 bg-orange-900/50 text-orange-300 rounded">{{ high }} High</span>
+        {% endif %}
+        {% if medium > 0 %}
+        <span class="text-[10px] px-1.5 py-0.5 bg-yellow-900/50 text-yellow-300 rounded">{{ medium }} Med</span>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 {% else %}
 <div class="p-8 text-center text-gray-500">
-    No scans yet.
+    <svg class="w-10 h-10 mx-auto mb-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+    </svg>
+    <p class="text-sm">No scans yet</p>
+    <p class="text-xs mt-1">Start a scan to analyze code</p>
 </div>
 {% endfor %}

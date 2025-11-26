@@ -56,6 +56,22 @@ Settings in `app/core/config.py` - configurable via `.env` file:
 - `LLM_VERIFICATION_MODELS`: List of models for consensus verification
 - `DATABASE_URL`: SQLite database path (default: `./scans.db`)
 
+### Runtime Paths (WSL Environment)
+- **Database**: `/tmp/scans.db` (SQLite - configured in `app/core/config.py`)
+- **Sandbox Directory**: `backend/sandbox/` - where extracted code is stored during scans
+- **Server**: http://localhost:8000
+- **vLLM Backend**: https://192.168.33.158:5000 (multi-model inference server)
+
+### Database Tables
+Key tables for the scanning pipeline:
+- `scans`: Scan metadata and status (queued/running/completed/failed)
+- `scan_files`: Files within a scan
+- `scan_file_chunks`: Code chunks for analysis
+- `draft_findings`: Initial vulnerability candidates (with `source_models` JSON column for tracking)
+- `verified_findings`: Confirmed vulnerabilities after verification
+- `model_configs`: LLM model configurations (5 analyzers: gpt-oss-120b, llama3.3-70b-instruct, mistral-small, mistral-nemo-instruct, gemma-3-27b-it)
+- `static_rules`: Regex-based static detection patterns
+
 ### File Support
 Analyzes: `.py`, `.c`, `.cpp` files
 Tree-sitter parsers initialized for C and Python
@@ -87,6 +103,9 @@ See `IMPLEMENTATION_PLAN.md` for full details.
 - Tree-sitter code intelligence for context retrieval
 - Static pattern detection for obvious vulnerabilities
 - Pause/resume with checkpoint recovery
+- **Multi-model voting**: All 5 models scan in parallel, findings are aggregated by signature (line+type)
+- **Per-model tracking**: `source_models` column tracks which models detected each finding
+- **Smart chunking**: 8k soft / 12k hard token limits with function-aware splitting
 
 ### New Service Structure
 ```

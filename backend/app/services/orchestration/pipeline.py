@@ -3,6 +3,7 @@ import os
 import hashlib
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func
@@ -37,12 +38,34 @@ def parse_cvss_score(cvss_value) -> Optional[float]:
 
 from app.models.models import Scan, Finding
 from app.models.scanner_models import (
-    ScanConfig, ScanFile, ScanFileChunk, DraftFinding, VerifiedFinding, LLMCallMetric, ScanMetrics
+    ScanConfig, ScanFile, ScanFileChunk, DraftFinding, VerifiedFinding, LLMCallMetric, ScanMetrics, ScanErrorLog,
+    ScanProfile
 )
 from app.services.orchestration.model_orchestrator import ModelOrchestrator
 from app.services.orchestration.cache import AnalysisCache
 from app.services.orchestration.checkpoint import ScanCheckpoint
 from app.services.ingestion import ingestion_service
+
+# Error handling constants
+MAX_CONSECUTIVE_ERRORS = 5  # Auto-pause after this many consecutive errors
+MAX_RETRY_COUNT = 3  # Maximum retries per chunk
+BASE_RETRY_DELAY = 2.0  # Base delay in seconds for exponential backoff
+
+
+def classify_error(error: Exception) -> str:
+    """Classify error type for logging and handling"""
+    error_str = str(error).lower()
+    if 'timeout' in error_str or 'timed out' in error_str:
+        return 'timeout'
+    if 'rate limit' in error_str or '429' in error_str:
+        return 'rate_limit'
+    if 'model' in error_str or 'inference' in error_str:
+        return 'model_error'
+    if 'parse' in error_str or 'json' in error_str:
+        return 'parse_error'
+    if 'connection' in error_str or 'network' in error_str:
+        return 'connection_error'
+    return 'unknown'
 
 
 class ScanPipeline:
@@ -54,11 +77,84 @@ class ScanPipeline:
         self.db = db
 
         self.model_orchestrator: Optional[ModelOrchestrator] = None
-        self.cache = AnalysisCache()
+        # Use scan-specific cache to avoid cross-contamination between scans
+        self.cache = AnalysisCache.for_scan(scan_id)
         self.checkpoint = ScanCheckpoint(scan_id, db)
 
         self._scanner_complete = False
         self._verifier_complete = False
+
+        # Error tracking for auto-pause
+        self._consecutive_errors = 0
+        self._is_auto_paused = False
+
+    def _log_error(self, phase: str, error: Exception, chunk_id: int = None,
+                   model_name: str = None, file_path: str = None, chunk_index: int = None):
+        """Log error to database for tracking and recovery"""
+        error_type = classify_error(error)
+        error_log = ScanErrorLog(
+            scan_id=self.scan_id,
+            chunk_id=chunk_id,
+            phase=phase,
+            error_type=error_type,
+            error_message=str(error)[:1000],  # Truncate long errors
+            model_name=model_name,
+            file_path=file_path,
+            chunk_index=chunk_index
+        )
+        try:
+            self.db.add(error_log)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+
+        return error_type
+
+    def _calculate_retry_delay(self, retry_count: int) -> float:
+        """Calculate exponential backoff delay: 2s, 4s, 8s, ..."""
+        return BASE_RETRY_DELAY * (2 ** retry_count)
+
+    def _schedule_retry(self, chunk: ScanFileChunk, error: Exception, file_path: str = None):
+        """Schedule a chunk for retry with exponential backoff"""
+        chunk.retry_count += 1
+        chunk.last_error = str(error)[:500]
+
+        if chunk.retry_count <= MAX_RETRY_COUNT:
+            # Calculate next retry time with exponential backoff
+            delay = self._calculate_retry_delay(chunk.retry_count)
+            chunk.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            chunk.status = "pending"
+            print(f"[Scan {self.scan_id}] Chunk {chunk.id} scheduled for retry #{chunk.retry_count} in {delay:.0f}s")
+        else:
+            # Max retries exceeded, mark as failed
+            chunk.status = "failed"
+            print(f"[Scan {self.scan_id}] Chunk {chunk.id} failed after {MAX_RETRY_COUNT} retries")
+
+    def _check_auto_pause(self, error_occurred: bool) -> bool:
+        """Check if scan should be auto-paused due to too many consecutive errors"""
+        if error_occurred:
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+                if scan.status == "running":
+                    scan.status = "paused"
+                    scan.logs = (scan.logs or "") + f"\n[AUTO-PAUSED] {self._consecutive_errors} consecutive errors"
+                    self.db.commit()
+                    self._is_auto_paused = True
+                    print(f"[Scan {self.scan_id}] AUTO-PAUSED after {self._consecutive_errors} consecutive errors")
+                return True
+        else:
+            # Reset error counter on success
+            self._consecutive_errors = 0
+        return False
+
+    def _get_retry_ready_chunks(self, base_query):
+        """Filter chunks that are ready for retry (past their next_retry_at time)"""
+        now = datetime.now(timezone.utc)
+        return base_query.filter(
+            (ScanFileChunk.next_retry_at.is_(None)) |
+            (ScanFileChunk.next_retry_at <= now)
+        )
 
     def _log_timing(self, phase: str, duration: float):
         """Log timing to scan record"""
@@ -128,15 +224,28 @@ class ScanPipeline:
 
         finally:
             await self.model_orchestrator.shutdown()
+            # Clean up scan-specific cache to free memory
+            AnalysisCache.cleanup_scan(self.scan_id)
+            print(f"[Scan {self.scan_id}] Cache cleaned up")
 
     async def _discover_and_chunk_files(self, root_dir: str):
         """Discover files and create chunks for scanning"""
         from app.services.analysis.file_chunker import FileChunker
+        import fnmatch
 
-        # Use configured chunk size
+        # Use configured chunk size and strategy
         chunk_size = self.config.chunk_size or 3000
-        chunker = FileChunker(max_tokens=chunk_size)
+        chunk_strategy = getattr(self.config, 'chunk_strategy', 'smart') or 'smart'
+        chunker = FileChunker(max_tokens=chunk_size, strategy=chunk_strategy)
         supported_extensions = {'.py', '.c', '.cpp', '.h', '.hpp'}
+
+        # Get file filter pattern(s) from config
+        file_filter = getattr(self.config, 'file_filter', None)
+        filter_patterns = []
+        if file_filter:
+            # Support comma-separated patterns: "sshd.c,auth.c" or single: "*.c"
+            filter_patterns = [p.strip() for p in file_filter.split(',') if p.strip()]
+            print(f"[Scan {self.scan_id}] File filter active: {filter_patterns}")
 
         # Track chunk sizes for metrics
         chunk_token_sizes = []
@@ -148,6 +257,19 @@ class ScanPipeline:
                     continue
 
                 file_path = os.path.join(root, filename)
+
+                # Apply file filter if specified
+                if filter_patterns:
+                    # Get relative path from root_dir for matching
+                    rel_path = os.path.relpath(file_path, root_dir)
+                    matched = False
+                    for pattern in filter_patterns:
+                        # Match against filename or relative path
+                        if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(rel_path, pattern):
+                            matched = True
+                            break
+                    if not matched:
+                        continue
 
                 try:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -230,27 +352,59 @@ class ScanPipeline:
 
     async def _run_scanner_phase(self):
         """Phase 1: Scan chunks for draft findings"""
-        from app.services.analysis.draft_scanner import DraftScanner
+        from app.services.analysis.draft_scanner import DraftScanner, ProfileAwareScanner
+        from app.services.analysis.static_detector import StaticPatternDetector
 
-        analyzers = self.model_orchestrator.get_analyzers()
-        if not analyzers:
-            self._scanner_complete = True
-            return
+        # Load static detection rules from database (once per scan)
+        static_detector = StaticPatternDetector.load_from_db(self.db)
+        print(f"Loaded {len(static_detector._rules)} static detection rules")
 
-        # Use single model or all analyzers based on config
-        if self.config.multi_model_scan:
-            scan_models = analyzers
+        # Check if a scan profile is configured
+        profile = None
+        if self.config.profile_id:
+            profile = self.db.query(ScanProfile).filter(
+                ScanProfile.id == self.config.profile_id,
+                ScanProfile.enabled == True
+            ).first()
+
+        # Use profile-aware scanner if profile is configured
+        if profile:
+            print(f"[Scan {self.scan_id}] Using scan profile: {profile.name}")
+            scanner = ProfileAwareScanner(
+                self.scan_id, profile, self.model_orchestrator,
+                self.cache, static_detector=static_detector
+            )
+            use_profile_scanning = True
         else:
-            # Use just the primary analyzer (first one)
-            scan_models = [analyzers[0]] if analyzers else []
+            # Fall back to standard multi-model scanning
+            analyzers = self.model_orchestrator.get_analyzers()
+            if not analyzers:
+                self._scanner_complete = True
+                return
 
-        scanner = DraftScanner(self.scan_id, scan_models, self.cache)
+            # Use single model or all analyzers based on config
+            if self.config.multi_model_scan:
+                scan_models = analyzers
+            else:
+                # Use just the primary analyzer (first one)
+                scan_models = [analyzers[0]] if analyzers else []
+
+            scanner = DraftScanner(self.scan_id, scan_models, self.cache, static_detector=static_detector)
+            use_profile_scanning = False
+
         batch_size = self.config.batch_size or 10
 
-        # Track timing and tokens per model
-        model_times = {pool.config.name: 0.0 for pool in scan_models}
-        model_calls = {pool.config.name: 0 for pool in scan_models}
-        model_tokens = {pool.config.name: 0 for pool in scan_models}
+        # Track timing and tokens per model (for non-profile scanning)
+        if use_profile_scanning:
+            # Profile scanning tracks metrics internally
+            model_times = {}
+            model_calls = {}
+            model_tokens = {}
+            scan_models = []
+        else:
+            model_times = {pool.config.name: 0.0 for pool in scan_models}
+            model_calls = {pool.config.name: 0 for pool in scan_models}
+            model_tokens = {pool.config.name: 0 for pool in scan_models}
 
         while True:
             # Check for pause
@@ -259,11 +413,14 @@ class ScanPipeline:
                 await asyncio.sleep(1)
                 continue
 
-            # Get batch of pending chunks
-            chunks = self.db.query(ScanFileChunk).join(ScanFile).filter(
+            # Get batch of pending chunks that are ready for retry
+            base_query = self.db.query(ScanFileChunk).join(ScanFile).filter(
                 ScanFile.scan_id == self.scan_id,
-                ScanFileChunk.status == "pending"
-            ).order_by(
+                ScanFileChunk.status == "pending",
+                ScanFileChunk.retry_count <= MAX_RETRY_COUNT
+            )
+            # Filter out chunks that are waiting for retry backoff
+            chunks = self._get_retry_ready_chunks(base_query).order_by(
                 case({'high': 0, 'normal': 1, 'low': 2}, value=ScanFile.risk_level)
             ).limit(batch_size).all()
 
@@ -278,17 +435,23 @@ class ScanPipeline:
             # Scan batch with timing
             try:
                 batch_start = time.time()
-                results = await scanner.scan_batch(chunks)
+                # Use profile-aware method or standard scan_batch
+                if use_profile_scanning:
+                    results = await scanner.scan_batch_with_profile(chunks)
+                else:
+                    results = await scanner.scan_batch(chunks)
                 batch_time = (time.time() - batch_start) * 1000  # ms
 
                 # Estimate tokens for this batch (based on line count)
                 batch_tokens = sum((chunk.end_line - chunk.start_line + 1) * 40 for chunk in chunks)
 
                 # Attribute time and tokens to each model (split evenly for now)
-                for pool in scan_models:
-                    model_times[pool.config.name] += batch_time / len(scan_models)
-                    model_calls[pool.config.name] += len(chunks)
-                    model_tokens[pool.config.name] += batch_tokens
+                # Skip metric tracking for profile scanning (tracked per-analyzer internally)
+                if not use_profile_scanning:
+                    for pool in scan_models:
+                        model_times[pool.config.name] += batch_time / len(scan_models)
+                        model_calls[pool.config.name] += len(chunks)
+                        model_tokens[pool.config.name] += batch_tokens
 
                 # Save draft findings with dedup keys
                 for chunk in chunks:
@@ -308,6 +471,14 @@ class ScanPipeline:
                             f"{file_path}:{line_num}:{vuln_type}".encode()
                         ).hexdigest()
 
+                        # Track source - either model list or analyzer name
+                        if use_profile_scanning:
+                            analyzer_name = f.get('_analyzer', 'unknown')
+                            model_name = f.get('_model', 'unknown')
+                            source_info = [f"{analyzer_name}:{model_name}"]
+                        else:
+                            source_info = f.get('_models')
+
                         draft = DraftFinding(
                             scan_id=self.scan_id,
                             chunk_id=chunk.id,
@@ -318,7 +489,8 @@ class ScanPipeline:
                             snippet=f.get('snippet', ''),
                             reason=f.get('reason', ''),
                             auto_detected=f.get('auto_detected', False),
-                            initial_votes=f.get('votes', 1),
+                            initial_votes=f.get('_votes', f.get('votes', 1)),
+                            source_models=source_info,  # Track which models/analyzers detected this
                             dedup_key=dedup_key,
                             status="pending"
                         )
@@ -328,16 +500,45 @@ class ScanPipeline:
 
                 self.db.commit()
 
+                # Success - reset error counter
+                self._check_auto_pause(error_occurred=False)
+
             except Exception as e:
                 print(f"Scanner error: {e}")
                 self.db.rollback()
+
+                # Log error to database
+                for chunk in chunks:
+                    scan_file = self.db.query(ScanFile).filter(
+                        ScanFile.id == chunk.scan_file_id
+                    ).first()
+                    file_path = scan_file.file_path if scan_file else None
+
+                    self._log_error(
+                        phase="scanner",
+                        error=e,
+                        chunk_id=chunk.id,
+                        file_path=file_path,
+                        chunk_index=chunk.chunk_index
+                    )
+
+                    # Schedule for retry with exponential backoff
+                    self._schedule_retry(chunk, e, file_path)
+
                 try:
-                    for chunk in chunks:
-                        chunk.status = "pending"
-                        chunk.retry_count += 1
                     self.db.commit()
                 except Exception:
                     self.db.rollback()
+
+                # Check if we should auto-pause
+                if self._check_auto_pause(error_occurred=True):
+                    # Wait for resume
+                    while True:
+                        await asyncio.sleep(2)
+                        scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+                        if scan.status != "paused":
+                            self._consecutive_errors = 0  # Reset on resume
+                            break
 
         # Deduplicate drafts if enabled
         if self.config.deduplicate_drafts:
@@ -374,10 +575,18 @@ class ScanPipeline:
             ).order_by(DraftFinding.id).all()
 
             if len(drafts) > 1:
-                # Keep first, merge votes, delete rest
+                # Keep first, merge votes and source models, delete rest
                 primary = drafts[0]
                 total_votes = sum(d.initial_votes or 1 for d in drafts)
                 primary.initial_votes = total_votes
+
+                # Merge source_models from all duplicates
+                all_models = set()
+                for d in drafts:
+                    if d.source_models:
+                        all_models.update(d.source_models)
+                if all_models:
+                    primary.source_models = list(all_models)
 
                 for dup in drafts[1:]:
                     self.db.delete(dup)

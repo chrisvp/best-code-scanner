@@ -1,0 +1,357 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Scan Profiles</h1>
+                <p class="text-gray-400 text-sm mt-1">Configure analysis profiles with custom analyzers and prompts</p>
+            </div>
+            <button onclick="document.getElementById('add-profile-modal').classList.remove('hidden')"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+                New Profile
+            </button>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-3 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-white">{{ profiles|length }}</div>
+                <div class="text-sm text-gray-400">Total Profiles</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-green-400">{{ profiles|selectattr('enabled')|list|length }}</div>
+                <div class="text-sm text-gray-400">Enabled</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-blue-400">{{ profiles|sum(attribute='analyzers'|length) if profiles else 0 }}</div>
+                <div class="text-sm text-gray-400">Total Analyzers</div>
+            </div>
+        </div>
+
+        <!-- Profiles Grid -->
+        <div class="grid gap-6">
+            {% for profile in profiles %}
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <!-- Profile Header -->
+                <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                    <div>
+                        <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                            {{ profile.name }}
+                            {% if profile.is_default %}
+                            <span class="px-2 py-0.5 text-xs bg-blue-600 text-white rounded">Default</span>
+                            {% endif %}
+                            {% if not profile.enabled %}
+                            <span class="px-2 py-0.5 text-xs bg-gray-600 text-gray-300 rounded">Disabled</span>
+                            {% endif %}
+                        </h2>
+                        <p class="text-sm text-gray-400">{{ profile.description or 'No description' }}</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <span class="text-xs text-gray-500">
+                            Chunk: {{ profile.chunk_size }} | Strategy: {{ profile.chunk_strategy }}
+                        </span>
+                        <button onclick="editProfile({{ profile.id }})"
+                            class="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                            </svg>
+                        </button>
+                        <button onclick="deleteProfile({{ profile.id }}, '{{ profile.name }}')"
+                            class="p-2 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Analyzers -->
+                <div class="p-4">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="text-sm font-medium text-gray-300">Analyzers ({{ profile.analyzers|length }})</h3>
+                        <button onclick="addAnalyzer({{ profile.id }})"
+                            class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
+                            + Add Analyzer
+                        </button>
+                    </div>
+
+                    {% if profile.analyzers %}
+                    <div class="space-y-2">
+                        {% for analyzer in profile.analyzers %}
+                        <div class="bg-gray-900/50 rounded-lg p-3 flex items-center justify-between {% if not analyzer.enabled %}opacity-50{% endif %}">
+                            <div class="flex items-center gap-3">
+                                <span class="w-6 h-6 flex items-center justify-center text-xs font-bold text-gray-500 bg-gray-700 rounded">
+                                    {{ analyzer.run_order }}
+                                </span>
+                                <div>
+                                    <div class="font-medium text-white text-sm">{{ analyzer.name }}</div>
+                                    <div class="text-xs text-gray-500">
+                                        {% if analyzer.file_filter %}Files: {{ analyzer.file_filter }}{% else %}All files{% endif %}
+                                        {% if analyzer.model %}| Model: {{ analyzer.model.name }}{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex gap-1">
+                                <button onclick="editAnalyzer({{ profile.id }}, {{ analyzer.id }})"
+                                    class="p-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                    </svg>
+                                </button>
+                                <button hx-post="/profiles/{{ profile.id }}/analyzers/{{ analyzer.id }}/toggle"
+                                    hx-swap="none"
+                                    hx-on::after-request="location.reload()"
+                                    class="p-1 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="Toggle enabled">
+                                    {% if analyzer.enabled %}
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                    </svg>
+                                    {% else %}
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                                    </svg>
+                                    {% endif %}
+                                </button>
+                                <button onclick="deleteAnalyzer({{ profile.id }}, {{ analyzer.id }}, '{{ analyzer.name }}')"
+                                    class="p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4 text-gray-500 text-sm">
+                        No analyzers configured. Add one to start scanning with this profile.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if not profiles %}
+        <div class="text-center py-12 text-gray-500">
+            No scan profiles configured. Create one to get started.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Add Profile Modal -->
+<div id="add-profile-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">New Scan Profile</h2>
+            <button onclick="document.getElementById('add-profile-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <form hx-post="/profiles" hx-swap="none"
+              hx-on::after-request="if(event.detail.successful) location.reload()">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Profile Name</label>
+                    <input type="text" name="name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., Deep C Audit">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                    <textarea name="description" rows="2"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Describe what this profile does"></textarea>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
+                        <input type="number" name="chunk_size" value="6000"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Strategy</label>
+                        <select name="chunk_strategy"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="smart">Smart</option>
+                            <option value="functions">Functions</option>
+                            <option value="lines">Lines</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-profile-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                    Cancel
+                </button>
+                <button type="submit"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                    Create Profile
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Analyzer Modal -->
+<div id="add-analyzer-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add Analyzer</h2>
+            <button onclick="document.getElementById('add-analyzer-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <form id="add-analyzer-form" hx-swap="none" hx-on::after-request="if(event.detail.successful) location.reload()">
+            <input type="hidden" name="profile_id" id="analyzer-profile-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Analyzer Name</label>
+                    <input type="text" name="name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., Memory Safety Check">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
+                    <select name="model_id"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Use Default</option>
+                        {% for model in models %}
+                        <option value="{{ model.id }}">{{ model.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">File Filter (glob pattern)</label>
+                        <input type="text" name="file_filter"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="e.g., *.c,*.h">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Run Order</label>
+                        <input type="number" name="run_order" value="1" min="1"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
+                    <textarea name="prompt_template" rows="12" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Use {code}, {language}, {file_path} as placeholders">Analyze this {language} code for security vulnerabilities.
+
+File: {file_path}
+
+```{language}
+{code}
+```
+
+Look for:
+- Security vulnerabilities
+- Memory safety issues
+
+For each vulnerability found, respond with JSON:
+```json
+[
+  {{
+    "title": "Brief title",
+    "vulnerability_type": "CWE-XXX",
+    "severity": "Critical|High|Medium|Low",
+    "line_number": 123,
+    "snippet": "vulnerable code",
+    "reason": "explanation"
+  }}
+]
+```
+
+If no vulnerabilities found, respond with: []</textarea>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" name="stop_on_findings" id="stop_on_findings" value="true"
+                        class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">
+                    <label for="stop_on_findings" class="text-sm text-gray-300">Stop remaining analyzers if this one finds issues</label>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-analyzer-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                    Cancel
+                </button>
+                <button type="submit"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                    Add Analyzer
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function addAnalyzer(profileId) {
+    document.getElementById('analyzer-profile-id').value = profileId;
+    document.getElementById('add-analyzer-form').setAttribute('hx-post', `/profiles/${profileId}/analyzers`);
+    htmx.process(document.getElementById('add-analyzer-form'));
+    document.getElementById('add-analyzer-modal').classList.remove('hidden');
+}
+
+function editProfile(profileId) {
+    // For now, just alert - could expand to full edit modal
+    alert('Edit profile: ' + profileId + ' (Use API for now)');
+}
+
+function editAnalyzer(profileId, analyzerId) {
+    // For now, just alert - could expand to full edit modal
+    alert('Edit analyzer: ' + analyzerId + ' (Use API for now)');
+}
+
+async function deleteProfile(profileId, name) {
+    if (!confirm(`Delete profile "${name}" and all its analyzers?`)) return;
+
+    const response = await fetch(`/profiles/${profileId}`, { method: 'DELETE' });
+    if (response.ok) {
+        location.reload();
+    } else {
+        const result = await response.json();
+        alert(result.error || 'Failed to delete profile');
+    }
+}
+
+async function deleteAnalyzer(profileId, analyzerId, name) {
+    if (!confirm(`Delete analyzer "${name}"?`)) return;
+
+    const response = await fetch(`/profiles/${profileId}/analyzers/${analyzerId}`, { method: 'DELETE' });
+    if (response.ok) {
+        location.reload();
+    } else {
+        const result = await response.json();
+        alert(result.error || 'Failed to delete analyzer');
+    }
+}
+</script>
+{% endblock %}

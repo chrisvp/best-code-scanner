@@ -30,6 +30,7 @@ class ScanConfig(Base):
 
     id = Column(Integer, primary_key=True)
     scan_id = Column(Integer, ForeignKey("scans.id"))
+    profile_id = Column(Integer, ForeignKey("scan_profiles.id"), nullable=True)  # Link to scan profile
 
     analysis_mode = Column(String, default="primary_verifiers")  # or "multi_consensus"
     primary_analyzer_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)
@@ -43,8 +44,10 @@ class ScanConfig(Base):
     scanner_concurrency = Column(Integer, default=20)
     verifier_concurrency = Column(Integer, default=10)
     enricher_concurrency = Column(Integer, default=5)
-    batch_size = Column(Integer, default=10)  # Batch size for LLM calls
-    chunk_size = Column(Integer, default=3000)  # Max tokens per chunk
+    batch_size = Column(Integer, default=5)  # Batch size for LLM calls
+    chunk_size = Column(Integer, default=6000)  # Max tokens per chunk
+    chunk_strategy = Column(String, default="smart")  # lines, functions, or smart
+    file_filter = Column(String, nullable=True)  # Glob pattern to filter files (e.g., "*.c", "src/*.py", "sshd.c")
 
 
 class ScanFile(Base):
@@ -80,6 +83,8 @@ class ScanFileChunk(Base):
 
     status = Column(String, default="pending")  # pending/scanning/scanned/failed
     retry_count = Column(Integer, default=0)
+    last_error = Column(Text, nullable=True)  # Last error message
+    next_retry_at = Column(DateTime(timezone=True), nullable=True)  # For exponential backoff
 
     scan_file = relationship("ScanFile", back_populates="chunks")
 
@@ -163,6 +168,7 @@ class DraftFinding(Base):
 
     auto_detected = Column(Boolean, default=False)  # Static detection vs LLM
     initial_votes = Column(Integer, default=1)  # Number of models that detected this during initial scan
+    source_models = Column(JSON, nullable=True)  # List of model names that detected this finding
     dedup_key = Column(String, index=True)  # Key for deduplication (file+line+type hash)
 
     status = Column(String, default="pending")  # pending/verifying/verified/rejected
@@ -206,6 +212,113 @@ class LLMCallMetric(Base):
     tokens_out = Column(Integer, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class StaticRule(Base):
+    """Static detection rules - regex patterns for known vulnerabilities"""
+    __tablename__ = "static_rules"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, index=True)  # Human-readable name
+    description = Column(Text, nullable=True)
+
+    # Matching criteria
+    pattern = Column(String)  # Regex pattern
+    languages = Column(JSON)  # List of languages: ["c", "cpp", "py"]
+
+    # Classification
+    cwe_id = Column(String, nullable=True)  # e.g., "CWE-78"
+    vulnerability_type = Column(String)  # e.g., "Command Injection"
+    severity = Column(String, default="High")  # Critical/High/Medium/Low
+
+    # Behavior
+    is_definite = Column(Boolean, default=True)  # True = auto-create finding, False = flag for LLM
+    requires_llm_verification = Column(Boolean, default=False)  # Skip verification phase
+
+    # Metadata
+    enabled = Column(Boolean, default=True)
+    built_in = Column(Boolean, default=True)  # False for user-created rules
+    match_count = Column(Integer, default=0)  # Track how often this rule matches
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class ScanProfile(Base):
+    """Reusable scan configuration profiles"""
+    __tablename__ = "scan_profiles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, index=True)  # e.g., "Quick Scan", "Deep C Audit"
+    description = Column(Text, nullable=True)
+    is_default = Column(Boolean, default=False)
+
+    # Default scan settings
+    chunk_size = Column(Integer, default=6000)
+    chunk_strategy = Column(String, default="smart")
+
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    analyzers = relationship("ProfileAnalyzer", back_populates="profile", order_by="ProfileAnalyzer.run_order")
+
+
+class ProfileAnalyzer(Base):
+    """Configurable analyzer within a profile - pairs prompt with model"""
+    __tablename__ = "profile_analyzers"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("scan_profiles.id"), index=True)
+
+    name = Column(String)  # e.g., "General Security", "C Memory Safety", "Signal Handler Audit"
+    description = Column(Text, nullable=True)
+
+    # Model configuration
+    model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)  # If null, use default
+
+    # Prompt template - supports {code}, {language}, {file_path} placeholders
+    prompt_template = Column(Text)
+
+    # Filtering
+    file_filter = Column(String, nullable=True)  # Glob pattern: "*.c,*.h" or null for all
+    language_filter = Column(JSON, nullable=True)  # ["c", "cpp"] or null for all
+
+    # Role and ordering
+    role = Column(String, default="analyzer")  # analyzer, verifier, enricher
+    run_order = Column(Integer, default=1)  # Order within the profile
+
+    # Behavior
+    enabled = Column(Boolean, default=True)
+    stop_on_findings = Column(Boolean, default=False)  # Stop subsequent analyzers if this finds issues
+    min_severity_to_report = Column(String, nullable=True)  # Only report findings >= this severity
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    profile = relationship("ScanProfile", back_populates="analyzers")
+    model = relationship("ModelConfig")
+
+
+class ScanErrorLog(Base):
+    """Detailed error log for tracking failures and enabling recovery"""
+    __tablename__ = "scan_error_logs"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), index=True)
+    chunk_id = Column(Integer, ForeignKey("scan_file_chunks.id"), nullable=True)
+
+    phase = Column(String, index=True)  # "scanner", "verifier", "enricher"
+    error_type = Column(String)  # "timeout", "rate_limit", "model_error", "parse_error", "unknown"
+    error_message = Column(Text)
+    retry_count = Column(Integer, default=0)
+
+    # Context for debugging
+    model_name = Column(String, nullable=True)
+    file_path = Column(String, nullable=True)
+    chunk_index = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    resolved_at = Column(DateTime(timezone=True), nullable=True)  # When successfully retried
 
 
 class ScanMetrics(Base):

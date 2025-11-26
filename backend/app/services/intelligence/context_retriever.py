@@ -15,10 +15,10 @@ class ContextRetriever:
         self._app_type_cache = None
         self._entry_points_cache = None
 
-    async def get_context(self, chunk: ScanFileChunk, max_tokens: int = 6000) -> str:
+    async def get_context(self, chunk: ScanFileChunk, max_tokens: int = 8000) -> str:
         """
-        Get deep context for analyzing a chunk - Claude Code style.
-        Returns formatted context string with application type, entry points, data flow, and threat model.
+        Get deep context for analyzing a chunk - pre-fetched spoon-fed style.
+        Returns formatted context string with full file content, callers, and codebase structure.
         """
         sections = []
 
@@ -29,15 +29,49 @@ class ContextRetriever:
 
         chunk_content = self._get_chunk_content(chunk)
 
-        # 1. Application Type Detection
+        # 1. List all files in codebase (so model knows what exists)
+        all_files = self.db.query(ScanFile).filter(
+            ScanFile.scan_id == self.scan_id
+        ).all()
+        sections.append("=== FILES IN CODEBASE ===")
+        for f in all_files[:20]:  # Limit to 20 files
+            sections.append(f"- {os.path.basename(f.file_path)}")
+        if len(all_files) > 20:
+            sections.append(f"... and {len(all_files) - 20} more files")
+        sections.append("")
+
+        # 2. FULL file content (this is key - model sees everything)
+        if scan_file:
+            sections.append(f"=== FULL FILE: {os.path.basename(scan_file.file_path)} ===")
+            try:
+                with open(scan_file.file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    file_content = f.read()
+                # If file is huge, show context around the chunk
+                if len(file_content) > 15000:
+                    lines = file_content.split('\n')
+                    start = max(0, chunk.start_line - 100)
+                    end = min(len(lines), chunk.end_line + 100)
+                    sections.append(f"(Showing lines {start+1}-{end} of {len(lines)})")
+                    for i in range(start, end):
+                        prefix = ">>> " if chunk.start_line - 1 <= i < chunk.end_line else "    "
+                        sections.append(f"{prefix}{i+1}: {lines[i]}")
+                else:
+                    lines = file_content.split('\n')
+                    for i, line in enumerate(lines):
+                        prefix = ">>> " if chunk.start_line - 1 <= i < chunk.end_line else "    "
+                        sections.append(f"{prefix}{i+1}: {line}")
+            except Exception as e:
+                sections.append(f"(Error reading file: {e})")
+            sections.append("")
+
+        # 3. Application Type Detection
         app_type = self._detect_application_type()
         sections.append("=== APPLICATION CONTEXT ===")
         sections.append(f"Type: {app_type['type']}")
-        sections.append(f"Evidence: {app_type['evidence']}")
         sections.append(f"Threat Model: {app_type['threat_model']}")
         sections.append("")
 
-        # 2. Entry Points Analysis
+        # 4. Entry Points Analysis
         entry_points = self._find_entry_points()
         if entry_points:
             sections.append("=== ENTRY POINTS (where external input enters) ===")

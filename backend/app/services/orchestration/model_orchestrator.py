@@ -39,8 +39,7 @@ class ModelPool:
 
     async def call_batch(self, prompts: List[str]) -> List[str]:
         """Direct batch call - bypasses queue"""
-        async with self.semaphore:
-            return await self._send_batch(prompts)
+        return await self._send_batch(prompts)
 
     async def _batch_processor(self):
         """Collects prompts and sends in batches"""
@@ -78,8 +77,7 @@ class ModelPool:
 
                 # Send batch
                 try:
-                    async with self.semaphore:
-                        results = await self._send_batch(batch)
+                    results = await self._send_batch(batch)
 
                     # Resolve futures
                     for future, result in zip(futures, results):
@@ -100,13 +98,19 @@ class ModelPool:
 
     async def _send_batch(self, prompts: List[str]) -> List[str]:
         """Send batch to vLLM using chat completions"""
-        async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
+        async with httpx.AsyncClient(timeout=600.0, verify=False) as client:
             # Rate-limited concurrent requests
             async def send_one(prompt: str) -> str:
                 async with self.semaphore:
                     try:
+                        base = self.config.base_url.rstrip('/')
+                        if base.endswith('/v1'):
+                            url = f"{base}/chat/completions"
+                        else:
+                            url = f"{base}/v1/chat/completions"
+
                         response = await client.post(
-                            f"{self.config.base_url}/v1/chat/completions",
+                            url,
                             json={
                                 "model": self.config.name,
                                 "messages": [{"role": "user", "content": prompt}],
@@ -119,10 +123,25 @@ class ModelPool:
                         data = response.json()
                         choices = data.get("choices", [])
                         if choices:
-                            return choices[0].get("message", {}).get("content", "")
+                            message = choices[0].get("message", {})
+                            content = message.get("content", "")
+
+                            # Handle reasoning models that return thinking in separate field
+                            # API returns this format when model name contains "thinking" or "reasoning"
+                            thinking = message.get("thinking", "")
+                            reasoning_content = message.get("reasoning_content", "")
+
+                            # Use whichever field is present
+                            reasoning = thinking or reasoning_content
+                            if reasoning:
+                                # Wrap reasoning in tags for parser consistency
+                                return f"<thinking>{reasoning}</thinking>\n{content}"
+                            return content
                         return ""
                     except Exception as e:
-                        print(f"Request failed: {e}")
+                        import traceback
+                        print(f"Request failed for {self.config.name}: {type(e).__name__}: {e}")
+                        traceback.print_exc()
                         return ""
 
             tasks = [send_one(prompt) for prompt in prompts]

@@ -1,8 +1,9 @@
 import re
+import os
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from app.models.scanner_models import VerifiedFinding, VulnerabilityCategory
+from app.models.scanner_models import VerifiedFinding, VulnerabilityCategory, DraftFinding, ScanFileChunk, ScanFile
 from app.services.analysis.parsers import EnrichmentParser
 from app.services.orchestration.model_orchestrator import ModelPool
 
@@ -88,25 +89,43 @@ class FindingEnricher:
 
 === VERIFIED FINDING ===
 Title: {title}
+Type: {vuln_type}
 Severity: {severity}
+File: {file_name}
+Line: {line_number}
 Attack Vector: {attack_vector}
 Data Flow: {data_flow}
 Confidence: {confidence}%
 
+=== VULNERABLE CODE SNIPPET ===
+{snippet}
+
+=== PRE-FETCHED CONTEXT (already gathered for you) ===
+
+--- Full File Content ---
+{full_file}
+
+--- Other Files in Codebase ---
+{file_list}
+
+--- Function Callers ---
+{callers}
+
 === INSTRUCTIONS ===
-Provide a complete security report with:
+Using the pre-fetched context above, generate a complete security report.
+You have all the code you need - do NOT ask for more context.
 
 *FINDING: detailed vulnerability title
 *CATEGORY: CWE category (e.g., CWE-78 OS Command Injection)
 *SEVERITY: {severity}
 *CVSS: score 0.0-10.0
 *IMPACTED_CODE:
-(paste the vulnerable code here)
+(paste the exact vulnerable code lines from the full file content)
 *VULNERABILITY_DETAILS:
 Detailed explanation including:
 - What the vulnerability is
 - Why it's dangerous
-- Specific attack scenario
+- Specific attack scenario with data flow from entry point to sink
 - Potential impact
 *PROOF_OF_CONCEPT:
 Example attack or curl command showing exploitation
@@ -143,17 +162,64 @@ The fix should address the security issue while maintaining the original functio
     async def enrich_batch(self, verified_list: List[VerifiedFinding]) -> List[dict]:
         """
         Enrich multiple verified findings in batch.
-        Returns list of enriched finding dicts.
+        Returns list of enriched finding dicts with pre-fetched context.
         """
         prompts = []
 
         for v in verified_list:
+            # Fetch draft and chunk info
+            snippet = ""
+            vuln_type = ""
+            file_name = ""
+            line_number = 0
+            full_file = "(File content not available)"
+            file_list = "(No files)"
+            callers = "(No caller info)"
+
+            if self.db:
+                draft = self.db.query(DraftFinding).filter(
+                    DraftFinding.id == v.draft_id
+                ).first()
+                if draft:
+                    snippet = draft.snippet or ""
+                    vuln_type = draft.vulnerability_type or ""
+                    line_number = draft.line_number or 0
+
+                    # Get chunk and file info for pre-fetched context
+                    chunk = self.db.query(ScanFileChunk).filter(
+                        ScanFileChunk.id == draft.chunk_id
+                    ).first()
+
+                    if chunk:
+                        scan_file = self.db.query(ScanFile).filter(
+                            ScanFile.id == chunk.scan_file_id
+                        ).first()
+
+                        if scan_file:
+                            file_name = os.path.basename(scan_file.file_path)
+
+                            # Pre-fetch full file content
+                            full_file = self._get_full_file_content(scan_file, line_number)
+
+                            # Pre-fetch file list
+                            file_list = self._get_codebase_files(scan_file.scan_id)
+
+                            # Pre-fetch callers (search for function calls)
+                            callers = self._get_function_callers(scan_file.scan_id, file_name, line_number)
+
             prompt = self.ENRICH_PROMPT.format(
                 title=v.title,
+                vuln_type=vuln_type,
                 severity=v.adjusted_severity or 'High',
+                file_name=file_name,
+                line_number=line_number,
                 attack_vector=v.attack_vector or 'Unknown',
                 data_flow=v.data_flow or 'Unknown',
-                confidence=v.confidence or 50
+                snippet=snippet,
+                confidence=v.confidence or 50,
+                full_file=full_file,
+                file_list=file_list,
+                callers=callers
             )
             prompts.append(prompt)
 
@@ -260,3 +326,100 @@ The fix should address the security issue while maintaining the original functio
             print(f"Fix generation failed: {e}")
 
         return ''
+
+    def _get_full_file_content(self, scan_file: ScanFile, focus_line: int) -> str:
+        """Get full file content with line numbers, focusing around the vulnerable line"""
+        try:
+            with open(scan_file.file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+
+            total_lines = len(lines)
+
+            # For smaller files, show everything
+            if total_lines <= 200:
+                result = []
+                for i, line in enumerate(lines):
+                    line_num = i + 1
+                    # Highlight vulnerable line region
+                    marker = ">>>" if abs(line_num - focus_line) <= 3 else "   "
+                    result.append(f"{marker} {line_num:4d} | {line.rstrip()}")
+                return "\n".join(result)
+
+            # For larger files, show 50 lines before and after focus line
+            start = max(0, focus_line - 50)
+            end = min(total_lines, focus_line + 50)
+
+            result = [f"(Showing lines {start+1}-{end} of {total_lines} total)"]
+            for i in range(start, end):
+                line_num = i + 1
+                marker = ">>>" if abs(line_num - focus_line) <= 3 else "   "
+                result.append(f"{marker} {line_num:4d} | {lines[i].rstrip()}")
+
+            return "\n".join(result)
+
+        except Exception as e:
+            return f"(Error reading file: {e})"
+
+    def _get_codebase_files(self, scan_id: int) -> str:
+        """Get list of all files in the codebase for context"""
+        if not self.db:
+            return "(No database connection)"
+
+        all_files = self.db.query(ScanFile).filter(
+            ScanFile.scan_id == scan_id
+        ).all()
+
+        if not all_files:
+            return "(No files found)"
+
+        file_names = [os.path.basename(f.file_path) for f in all_files]
+
+        if len(file_names) <= 20:
+            return "\n".join(f"- {name}" for name in file_names)
+        else:
+            return "\n".join(f"- {name}" for name in file_names[:20]) + f"\n... and {len(file_names) - 20} more files"
+
+    def _get_function_callers(self, scan_id: int, file_name: str, line_number: int) -> str:
+        """Search for potential callers of the vulnerable function across the codebase"""
+        if not self.db:
+            return "(No database connection)"
+
+        # Get all files in scan
+        all_files = self.db.query(ScanFile).filter(
+            ScanFile.scan_id == scan_id
+        ).all()
+
+        callers = []
+
+        # Search each file for references to the target file/function
+        for scan_file in all_files:
+            # Skip the file itself
+            if os.path.basename(scan_file.file_path) == file_name:
+                continue
+
+            try:
+                with open(scan_file.file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    lines = content.split('\n')
+
+                # Look for includes/imports of the target file
+                base_name = os.path.splitext(file_name)[0]
+                for i, line in enumerate(lines):
+                    # Check for include statements or function calls
+                    if base_name in line or f'#include' in line and file_name in line:
+                        caller_file = os.path.basename(scan_file.file_path)
+                        callers.append(f"- {caller_file}:{i+1}: {line.strip()[:80]}")
+
+                        if len(callers) >= 10:
+                            break
+
+            except Exception:
+                continue
+
+            if len(callers) >= 10:
+                break
+
+        if not callers:
+            return "(No direct callers found in codebase)"
+
+        return "\n".join(callers)
