@@ -86,7 +86,21 @@ async def run_pipeline(scan_id: int):
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     scans = db.query(Scan).order_by(Scan.created_at.desc()).all()
-    return templates.TemplateResponse("dashboard.html", {"request": request, "scans": scans})
+
+    # Get MR reviews with their findings
+    mr_reviews = db.query(MRReview).order_by(MRReview.created_at.desc()).all()
+    for review in mr_reviews:
+        review.findings = db.query(Finding).filter(Finding.mr_review_id == review.id).all()
+
+    # Get all findings from both sources
+    all_findings = db.query(Finding).order_by(Finding.id.desc()).all()
+
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "scans": scans,
+        "mr_reviews": mr_reviews,
+        "all_findings": all_findings
+    })
 
 
 @router.post("/scan/start")
@@ -941,6 +955,7 @@ async def analyze_findings(scan_id: int, db: Session = Depends(get_db)):
 async def get_config(request: Request, db: Session = Depends(get_db)):
     from app.core.config import settings
     from app.services.analysis.static_detector import StaticPatternDetector
+    from app.models.scanner_models import GitLabRepo
 
     # Ensure defaults are seeded
     seed_default_profiles(db)
@@ -949,13 +964,15 @@ async def get_config(request: Request, db: Session = Depends(get_db)):
     models = db.query(ModelConfig).all()
     profiles = db.query(ScanProfile).order_by(ScanProfile.name).all()
     rules = db.query(StaticRule).order_by(StaticRule.severity, StaticRule.name).all()
+    gitlab_repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
 
     return templates.TemplateResponse("config.html", {
         "request": request,
         "settings": settings,
         "models": models,
         "profiles": profiles,
-        "rules": rules
+        "rules": rules,
+        "gitlab_repos": gitlab_repos
     })
 
 
@@ -2086,40 +2103,83 @@ async def send_scan_completion_alert(scan_id: int, db: Session = Depends(get_db)
 @router.get("/mr-review", response_class=HTMLResponse)
 async def mr_review_page(request: Request, db: Session = Depends(get_db)):
     """Manual MR review page"""
-    models = db.query(ModelConfig).all()
+    from app.models.scanner_models import GitLabRepo
+    profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+    gitlab_repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
     return templates.TemplateResponse("mr_review.html", {
         "request": request,
-        "models": models
+        "profiles": profiles,
+        "gitlab_repos": gitlab_repos
     })
 
 
 @router.post("/mr-review/analyze")
 async def analyze_mr(
-    gitlab_url: str = Form("https://gitlab.com"),
-    gitlab_token: str = Form(...),
-    project_id: str = Form(...),
+    gitlab_repo_id: int = Form(None),
+    gitlab_url: str = Form(None),
+    gitlab_token: str = Form(None),
+    project_id: str = Form(None),
     mr_iid: int = Form(...),
-    model_id: int = Form(None),
+    scan_profile_id: int = Form(None),
     post_comments: bool = Form(False),
     db: Session = Depends(get_db)
 ):
     """
     Analyze a specific MR for security vulnerabilities.
     Returns generated comments without requiring a watcher.
+    Can use a saved GitLab repo or manual credentials.
+    Logs all reviews to mr_reviews table and findings to findings table.
     """
     from app.services.gitlab_service import GitLabService, GitLabError
     from app.services.mr_reviewer_service import MRReviewerService
+    from app.models.scanner_models import GitLabRepo, MRReview
+    from app.models.models import Finding
+    from datetime import datetime, timezone
+    import json
 
     try:
+        # Get credentials from saved repo or manual entry
+        if gitlab_repo_id:
+            repo = db.query(GitLabRepo).filter(GitLabRepo.id == gitlab_repo_id).first()
+            if not repo:
+                return JSONResponse({"error": "Saved repo not found"}, status_code=404)
+            use_url = repo.gitlab_url
+            use_token = repo.gitlab_token
+            use_project = repo.project_id
+            use_verify_ssl = repo.verify_ssl if repo.verify_ssl is not None else False
+        else:
+            if not gitlab_token or not project_id:
+                return JSONResponse({"error": "Either select a saved repo or provide GitLab token and project ID"}, status_code=400)
+            use_url = gitlab_url or "https://192.168.33.158"
+            use_token = gitlab_token
+            use_project = project_id
+            use_verify_ssl = False
+
         # Create GitLab client
         gitlab = GitLabService(
-            gitlab_url=gitlab_url.rstrip('/'),
-            token=gitlab_token
+            gitlab_url=use_url.rstrip('/'),
+            token=use_token,
+            verify_ssl=use_verify_ssl
         )
 
         # Get MR details
-        mr_details = await gitlab.get_mr_details(project_id, mr_iid)
-        diff_data = await gitlab.get_mr_diff(project_id, mr_iid)
+        mr_details = await gitlab.get_merge_request(use_project, mr_iid)
+        diff_data = await gitlab.get_mr_diff(use_project, mr_iid)
+
+        # Create MR Review record in database
+        mr_review = MRReview(
+            gitlab_repo_id=gitlab_repo_id,  # Will be None for manual entry
+            mr_iid=mr_iid,
+            mr_title=mr_details.get("title"),
+            mr_url=mr_details.get("web_url"),
+            mr_author=mr_details.get("author", {}).get("username"),
+            source_branch=mr_details.get("source_branch"),
+            target_branch=mr_details.get("target_branch"),
+            status="reviewing",
+            post_comments=post_comments,
+        )
+        db.add(mr_review)
+        db.flush()  # Get the ID
 
         # Create a temporary reviewer service instance
         reviewer = MRReviewerService(db)
@@ -2182,7 +2242,7 @@ async def analyze_mr(
             for gen_comment in generated_comments["inline_comments"]:
                 try:
                     result = await gitlab.post_inline_comment(
-                        project_id=project_id,
+                        project_id=use_project,
                         mr_iid=mr_iid,
                         file_path=gen_comment["file_path"],
                         new_line=gen_comment["line"],
@@ -2198,7 +2258,7 @@ async def analyze_mr(
             # Post summary
             try:
                 result = await gitlab.post_mr_comment(
-                    project_id=project_id,
+                    project_id=use_project,
                     mr_iid=mr_iid,
                     comment=generated_comments["summary_comment"],
                 )
@@ -2208,8 +2268,35 @@ async def analyze_mr(
 
         await gitlab.close()
 
+        # Store findings in the unified findings table
+        for finding_data in all_findings:
+            finding = Finding(
+                mr_review_id=mr_review.id,
+                file_path=finding_data.get("file_path", ""),
+                line_number=finding_data.get("line", 1),
+                severity=finding_data.get("severity", "MEDIUM"),
+                description=finding_data.get("description", ""),
+                snippet=finding_data.get("snippet", ""),
+                remediation=finding_data.get("recommendation", ""),
+                category=finding_data.get("type", ""),  # CWE type
+            )
+            db.add(finding)
+
+        # Update MR Review record with results
+        mr_review.files_reviewed = files_reviewed
+        mr_review.diff_findings = json.dumps(all_findings)
+        mr_review.diff_summary = summary
+        mr_review.diff_reviewed_at = datetime.now(timezone.utc)
+        mr_review.generated_comments = json.dumps(generated_comments)
+        mr_review.comments_posted = json.dumps(comments_posted)
+        mr_review.status = "completed"
+        mr_review.approval_status = reviewer._determine_approval_status(all_findings)
+
+        db.commit()
+
         return {
             "mr_iid": mr_iid,
+            "mr_review_id": mr_review.id,
             "mr_title": mr_details.get("title"),
             "mr_url": mr_details.get("web_url"),
             "source_branch": mr_details.get("source_branch"),
@@ -2233,19 +2320,195 @@ async def analyze_mr(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ============== MR Reviews List ==============
+
+@router.get("/mr-reviews", response_class=HTMLResponse)
+async def mr_reviews_list_page(request: Request, db: Session = Depends(get_db)):
+    """List all MR reviews with their findings"""
+    from app.models.models import Finding
+
+    # Get all MR reviews with their findings eagerly loaded
+    reviews = db.query(MRReview).order_by(MRReview.created_at.desc()).all()
+
+    # For each review, attach the findings from the findings table
+    for review in reviews:
+        review.findings = db.query(Finding).filter(Finding.mr_review_id == review.id).all()
+
+    return templates.TemplateResponse("mr_reviews.html", {
+        "request": request,
+        "reviews": reviews
+    })
+
+
+@router.get("/mr-reviews/{review_id}/details", response_class=HTMLResponse)
+async def mr_review_details(request: Request, review_id: int, db: Session = Depends(get_db)):
+    """Get detailed view of a specific MR review including findings"""
+    from app.models.models import Finding
+    import json
+
+    review = db.query(MRReview).filter(MRReview.id == review_id).first()
+    if not review:
+        return HTMLResponse("<div class='text-red-400 p-4'>Review not found</div>", status_code=404)
+
+    # Get findings from database
+    findings = db.query(Finding).filter(Finding.mr_review_id == review_id).all()
+
+    # Parse stored JSON data if available
+    generated_comments = []
+    if review.generated_comments:
+        try:
+            comments_data = json.loads(review.generated_comments)
+            generated_comments = comments_data.get("inline_comments", [])
+        except:
+            pass
+
+    return templates.TemplateResponse("partials/mr_review_details.html", {
+        "request": request,
+        "review": review,
+        "findings": findings,
+        "generated_comments": generated_comments
+    })
+
+
+# ============== Saved GitLab Repos ==============
+
+@router.get("/gitlab-repos")
+async def list_gitlab_repos(db: Session = Depends(get_db)):
+    """List all saved GitLab repos"""
+    from app.models.scanner_models import GitLabRepo
+    repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "gitlab_url": r.gitlab_url,
+            "project_id": r.project_id,
+            "description": r.description,
+            "verify_ssl": r.verify_ssl,
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        }
+        for r in repos
+    ]
+
+
+@router.post("/gitlab-repos")
+async def create_gitlab_repo(
+    name: str = Form(...),
+    gitlab_url: str = Form("https://192.168.33.158"),
+    gitlab_token: str = Form(...),
+    project_id: str = Form(...),
+    description: str = Form(None),
+    verify_ssl: bool = Form(False),
+    db: Session = Depends(get_db)
+):
+    """Create a new saved GitLab repo"""
+    from app.models.scanner_models import GitLabRepo
+
+    repo = GitLabRepo(
+        name=name,
+        gitlab_url=gitlab_url.rstrip('/'),
+        gitlab_token=gitlab_token,
+        project_id=project_id,
+        description=description,
+        verify_ssl=verify_ssl
+    )
+    db.add(repo)
+    db.commit()
+    db.refresh(repo)
+
+    return {
+        "id": repo.id,
+        "name": repo.name,
+        "gitlab_url": repo.gitlab_url,
+        "project_id": repo.project_id,
+        "description": repo.description,
+        "verify_ssl": repo.verify_ssl
+    }
+
+
+@router.put("/gitlab-repos/{repo_id}")
+async def update_gitlab_repo(
+    repo_id: int,
+    name: str = Form(None),
+    gitlab_url: str = Form(None),
+    gitlab_token: str = Form(None),
+    project_id: str = Form(None),
+    description: str = Form(None),
+    verify_ssl: bool = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Update a saved GitLab repo"""
+    from app.models.scanner_models import GitLabRepo
+
+    repo = db.query(GitLabRepo).filter(GitLabRepo.id == repo_id).first()
+    if not repo:
+        return JSONResponse({"error": "Repo not found"}, status_code=404)
+
+    if name:
+        repo.name = name
+    if gitlab_url:
+        repo.gitlab_url = gitlab_url.rstrip('/')
+    if gitlab_token:
+        repo.gitlab_token = gitlab_token
+    if project_id:
+        repo.project_id = project_id
+    if description is not None:
+        repo.description = description
+    if verify_ssl is not None:
+        repo.verify_ssl = verify_ssl
+
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/gitlab-repos/{repo_id}")
+async def delete_gitlab_repo(repo_id: int, db: Session = Depends(get_db)):
+    """Delete a saved GitLab repo"""
+    from app.models.scanner_models import GitLabRepo
+
+    repo = db.query(GitLabRepo).filter(GitLabRepo.id == repo_id).first()
+    if not repo:
+        return JSONResponse({"error": "Repo not found"}, status_code=404)
+
+    db.delete(repo)
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/gitlab-repos/{repo_id}")
+async def get_gitlab_repo(repo_id: int, db: Session = Depends(get_db)):
+    """Get a single GitLab repo by ID"""
+    from app.models.scanner_models import GitLabRepo
+
+    repo = db.query(GitLabRepo).filter(GitLabRepo.id == repo_id).first()
+    if not repo:
+        return JSONResponse({"error": "Repo not found"}, status_code=404)
+
+    return {
+        "id": repo.id,
+        "name": repo.name,
+        "gitlab_url": repo.gitlab_url,
+        "gitlab_token": repo.gitlab_token,  # Include for form population
+        "project_id": repo.project_id,
+        "description": repo.description,
+        "verify_ssl": repo.verify_ssl
+    }
+
+
 # ============== GitLab Repo Watchers ==============
 
 @router.get("/watchers/page", response_class=HTMLResponse)
 async def watchers_page(request: Request, db: Session = Depends(get_db)):
     """Repo watchers management page"""
+    from app.models.scanner_models import GitLabRepo
     watchers = db.query(RepoWatcher).order_by(RepoWatcher.created_at.desc()).all()
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
-    models = db.query(ModelConfig).all()
+    gitlab_repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
     return templates.TemplateResponse("watchers.html", {
         "request": request,
         "watchers": watchers,
         "profiles": profiles,
-        "models": models
+        "gitlab_repos": gitlab_repos
     })
 
 

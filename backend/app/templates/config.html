@@ -37,6 +37,10 @@
                     class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
                     Detection Rules
                 </button>
+                <button onclick="switchTab('gitlab-repos')" id="tab-gitlab-repos"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    GitLab Repos
+                </button>
             </nav>
         </div>
 
@@ -421,6 +425,204 @@
             </div>
             {% endif %}
         </div>
+
+        <!-- Tab: GitLab Repos -->
+        <div id="panel-gitlab-repos" class="tab-panel hidden">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-4">
+                    <span class="text-sm text-gray-400">{{ gitlab_repos|length }} saved repo{{ 's' if gitlab_repos|length != 1 else '' }}</span>
+                </div>
+                <button onclick="document.getElementById('add-gitlab-repo-modal').classList.remove('hidden')"
+                    class="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    Add Repo
+                </button>
+            </div>
+
+            {% if gitlab_repos %}
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-800/80 text-xs text-gray-400 uppercase">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Name</th>
+                            <th class="px-4 py-3 text-left">GitLab URL</th>
+                            <th class="px-4 py-3 text-left">Project ID/Path</th>
+                            <th class="px-4 py-3 text-center">SSL</th>
+                            <th class="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        {% for repo in gitlab_repos %}
+                        <tr class="hover:bg-gray-700/30">
+                            <td class="px-4 py-3">
+                                <div class="font-medium text-white">{{ repo.name }}</div>
+                                {% if repo.description %}
+                                <div class="text-xs text-gray-500">{{ repo.description }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3">
+                                <code class="text-xs text-blue-400 bg-gray-900 px-1.5 py-0.5 rounded font-mono">
+                                    {{ repo.gitlab_url }}
+                                </code>
+                            </td>
+                            <td class="px-4 py-3">
+                                <code class="text-xs text-purple-400 bg-gray-900 px-1.5 py-0.5 rounded font-mono">
+                                    {{ repo.project_id }}
+                                </code>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                {% if repo.verify_ssl %}
+                                <span class="text-green-400">✓</span>
+                                {% else %}
+                                <span class="text-gray-500">✗</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                <div class="flex justify-end gap-1">
+                                    <button onclick="editGitlabRepo({{ repo.id }})"
+                                        class="p-1.5 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Edit">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                        </svg>
+                                    </button>
+                                    <button onclick="deleteGitlabRepo({{ repo.id }}, '{{ repo.name }}')"
+                                        class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Delete">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center text-gray-500">
+                <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"></path>
+                </svg>
+                <p class="text-sm">No GitLab repos saved yet</p>
+                <p class="text-xs mt-1">Add a repo to quickly select it in MR reviews and watchers</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Add GitLab Repo Modal -->
+<div id="add-gitlab-repo-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add GitLab Repo</h2>
+            <button onclick="document.getElementById('add-gitlab-repo-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="add-gitlab-repo-form" onsubmit="submitGitlabRepoForm(event)">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Display Name *</label>
+                    <input type="text" name="name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., My Project">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                    <input type="text" name="gitlab_url" value="https://192.168.33.158"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="https://gitlab.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Access Token *</label>
+                    <input type="password" name="gitlab_token" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="glpat-xxxxxxxxxxxx">
+                    <p class="text-xs text-gray-500 mt-1">Personal access token with api scope</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Project ID or Path *</label>
+                    <input type="text" name="project_id" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="12345 or group/project">
+                    <p class="text-xs text-gray-500 mt-1">Find in GitLab: Settings → General → Project ID</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                    <input type="text" name="description"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Optional description">
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" name="verify_ssl" id="add-repo-verify-ssl" value="true"
+                        class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600 focus:ring-blue-500">
+                    <label for="add-repo-verify-ssl" class="text-sm text-gray-300">Verify SSL Certificates</label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-gitlab-repo-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors">Add Repo</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit GitLab Repo Modal -->
+<div id="edit-gitlab-repo-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Edit GitLab Repo</h2>
+            <button onclick="document.getElementById('edit-gitlab-repo-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="edit-gitlab-repo-form" onsubmit="submitEditGitlabRepoForm(event)">
+            <input type="hidden" name="repo_id" id="edit-gitlab-repo-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Display Name *</label>
+                    <input type="text" name="name" id="edit-gitlab-repo-name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                    <input type="text" name="gitlab_url" id="edit-gitlab-repo-url"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Access Token</label>
+                    <input type="password" name="gitlab_token" id="edit-gitlab-repo-token"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Leave empty to keep current">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Project ID or Path *</label>
+                    <input type="text" name="project_id" id="edit-gitlab-repo-project" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                    <input type="text" name="description" id="edit-gitlab-repo-description"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" name="verify_ssl" id="edit-gitlab-repo-verify-ssl" value="true"
+                        class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600 focus:ring-blue-500">
+                    <label for="edit-gitlab-repo-verify-ssl" class="text-sm text-gray-300">Verify SSL Certificates</label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('edit-gitlab-repo-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors">Save</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -903,6 +1105,75 @@ async function submitEditAnalyzerForm(event) {
     } catch (err) {
         alert('Error updating analyzer: ' + err.message);
     }
+}
+
+// GitLab Repo functions
+async function submitGitlabRepoForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const params = new URLSearchParams();
+    params.append('name', formData.get('name'));
+    params.append('gitlab_url', formData.get('gitlab_url') || 'https://192.168.33.158');
+    params.append('gitlab_token', formData.get('gitlab_token'));
+    params.append('project_id', formData.get('project_id'));
+    if (formData.get('description')) params.append('description', formData.get('description'));
+    params.append('verify_ssl', formData.get('verify_ssl') === 'true' ? 'true' : 'false');
+
+    const response = await fetch('/gitlab-repos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params
+    });
+    if (response.ok) location.reload();
+    else alert((await response.json()).error || 'Failed to add repo');
+}
+
+async function editGitlabRepo(id) {
+    try {
+        const response = await fetch(`/gitlab-repos/${id}`);
+        if (!response.ok) { alert('Failed to load repo'); return; }
+        const repo = await response.json();
+
+        document.getElementById('edit-gitlab-repo-id').value = id;
+        document.getElementById('edit-gitlab-repo-name').value = repo.name || '';
+        document.getElementById('edit-gitlab-repo-url').value = repo.gitlab_url || '';
+        document.getElementById('edit-gitlab-repo-token').value = '';  // Don't populate password
+        document.getElementById('edit-gitlab-repo-project').value = repo.project_id || '';
+        document.getElementById('edit-gitlab-repo-description').value = repo.description || '';
+        document.getElementById('edit-gitlab-repo-verify-ssl').checked = repo.verify_ssl || false;
+
+        document.getElementById('edit-gitlab-repo-modal').classList.remove('hidden');
+    } catch (err) {
+        alert('Error loading repo: ' + err.message);
+    }
+}
+
+async function submitEditGitlabRepoForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const id = formData.get('repo_id');
+    const params = new URLSearchParams();
+    params.append('name', formData.get('name'));
+    params.append('gitlab_url', formData.get('gitlab_url'));
+    if (formData.get('gitlab_token')) params.append('gitlab_token', formData.get('gitlab_token'));
+    params.append('project_id', formData.get('project_id'));
+    if (formData.get('description')) params.append('description', formData.get('description'));
+    params.append('verify_ssl', formData.get('verify_ssl') === 'true' ? 'true' : 'false');
+
+    const response = await fetch(`/gitlab-repos/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params
+    });
+    if (response.ok) location.reload();
+    else alert((await response.json()).error || 'Failed to update repo');
+}
+
+async function deleteGitlabRepo(id, name) {
+    if (!confirm(`Delete "${name}"?`)) return;
+    if ((await fetch(`/gitlab-repos/${id}`, { method: 'DELETE' })).ok) location.reload();
 }
 </script>
 {% endblock %}

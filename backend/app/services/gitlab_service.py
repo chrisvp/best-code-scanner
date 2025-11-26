@@ -46,7 +46,7 @@ class GitLabRateLimitError(GitLabError):
 class GitLabService:
     """Service for interacting with GitLab API"""
 
-    def __init__(self, gitlab_url: str, token: str, timeout: float = 30.0):
+    def __init__(self, gitlab_url: str, token: str, timeout: float = 30.0, verify_ssl: bool = False):
         """
         Initialize GitLab service.
 
@@ -54,6 +54,7 @@ class GitLabService:
             gitlab_url: Base GitLab URL (e.g., https://gitlab.com)
             token: GitLab personal access token or project access token
             timeout: HTTP request timeout in seconds
+            verify_ssl: Whether to verify SSL certificates (default False for self-hosted GitLab)
         """
         self.base_url = gitlab_url.rstrip('/')
         self.api_url = f"{self.base_url}/api/v4"
@@ -62,7 +63,7 @@ class GitLabService:
             "PRIVATE-TOKEN": token,
             "Content-Type": "application/json",
         }
-        self.client = httpx.AsyncClient(timeout=timeout, headers=self.headers)
+        self.client = httpx.AsyncClient(timeout=timeout, headers=self.headers, verify=verify_ssl)
 
     async def close(self):
         """Close the HTTP client"""
@@ -142,10 +143,26 @@ class GitLabService:
             if response.status_code == 204:
                 return {}
 
-            return response.json()
+            # Handle empty response body
+            if not response.content:
+                raise GitLabError(
+                    f"Empty response from GitLab API (status {response.status_code}). Check GitLab connectivity.",
+                    status_code=response.status_code,
+                    response_body=""
+                )
+
+            # Try to parse JSON
+            try:
+                return response.json()
+            except Exception as json_err:
+                raise GitLabError(
+                    f"Invalid JSON response from GitLab: {str(json_err)[:100]}",
+                    status_code=response.status_code,
+                    response_body=response.text[:500] if response.text else ""
+                )
 
         except httpx.RequestError as e:
-            raise GitLabError(f"Network error: {str(e)}")
+            raise GitLabError(f"Network error connecting to GitLab: {str(e)}")
 
     # -------------------------------------------------------------------------
     # Project Information

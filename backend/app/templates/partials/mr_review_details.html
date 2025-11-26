@@ -1,0 +1,150 @@
+<!-- MR Review Details Header -->
+<div class="space-y-6">
+    <!-- Review Header -->
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+        <div class="flex items-start justify-between mb-3">
+            <div>
+                <h2 class="text-xl font-semibold text-white">{{ review.mr_title or 'MR #' ~ review.mr_iid }}</h2>
+                <div class="flex items-center gap-3 mt-1 text-sm text-gray-400">
+                    <span>!{{ review.mr_iid }}</span>
+                    <span class="text-gray-600">|</span>
+                    <span>{{ review.source_branch }} &rarr; {{ review.target_branch }}</span>
+                    {% if review.mr_author %}
+                    <span class="text-gray-600">|</span>
+                    <span>by {{ review.mr_author }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-xs px-2 py-1 rounded-full font-medium uppercase tracking-wide
+                    {% if review.status == 'completed' %}bg-green-500/20 text-green-400 ring-1 ring-green-500/30
+                    {% elif review.status == 'reviewing' %}bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30
+                    {% elif review.status == 'failed' %}bg-red-500/20 text-red-400 ring-1 ring-red-500/30
+                    {% else %}bg-gray-500/20 text-gray-400 ring-1 ring-gray-500/30{% endif %}">
+                    {{ review.status }}
+                </span>
+                {% if review.mr_url %}
+                <a href="{{ review.mr_url }}" target="_blank"
+                    class="text-xs px-2 py-1 bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors flex items-center gap-1">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                    </svg>
+                    View in GitLab
+                </a>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Stats Row -->
+        <div class="grid grid-cols-4 gap-4 mt-4">
+            <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-white">{{ review.files_reviewed or 0 }}</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Files Reviewed</div>
+            </div>
+            <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold {% if findings|length > 0 %}text-orange-400{% else %}text-green-400{% endif %}">
+                    {{ findings|length }}
+                </div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Findings</div>
+            </div>
+            <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold text-blue-400">{{ generated_comments|length }}</div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Comments</div>
+            </div>
+            <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                <div class="text-xl font-bold {% if review.post_comments %}text-green-400{% else %}text-yellow-400{% endif %}">
+                    {% if review.post_comments %}Posted{% else %}Dry Run{% endif %}
+                </div>
+                <div class="text-xs text-gray-500 uppercase tracking-wider">Mode</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Section -->
+    {% if review.diff_summary %}
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+        <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">Summary</h3>
+        <div class="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{{ review.diff_summary }}</div>
+    </div>
+    {% endif %}
+
+    <!-- Findings List -->
+    <div>
+        <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+            Security Findings ({{ findings|length }})
+        </h3>
+
+        {% if findings|length > 0 %}
+        <div class="space-y-3">
+            {% for finding in findings %}
+            <div class="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
+                <!-- Finding Header -->
+                <div class="p-4 border-b border-gray-700/50">
+                    <div class="flex items-start justify-between">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-xs px-2 py-0.5 rounded font-medium uppercase
+                                    {% if finding.severity == 'Critical' %}bg-red-500/20 text-red-400
+                                    {% elif finding.severity == 'High' %}bg-orange-500/20 text-orange-400
+                                    {% elif finding.severity == 'Medium' %}bg-yellow-500/20 text-yellow-400
+                                    {% else %}bg-blue-500/20 text-blue-400{% endif %}">
+                                    {{ finding.severity }}
+                                </span>
+                                {% if finding.category %}
+                                <span class="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300">
+                                    {{ finding.category }}
+                                </span>
+                                {% endif %}
+                            </div>
+                            <p class="text-gray-200 text-sm">{{ finding.description }}</p>
+                        </div>
+                    </div>
+
+                    <!-- Location -->
+                    <div class="mt-2 text-xs text-gray-500">
+                        <span class="font-mono text-blue-400">{{ finding.file_path }}</span>
+                        {% if finding.line_number %}
+                        <span class="text-gray-600">:</span>
+                        <span class="text-green-400">{{ finding.line_number }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Code Snippet -->
+                {% if finding.snippet %}
+                <div class="bg-gray-900 p-3">
+                    <pre class="text-xs text-gray-300 overflow-x-auto"><code>{{ finding.snippet | strip_code }}</code></pre>
+                </div>
+                {% endif %}
+
+                <!-- Remediation -->
+                {% if finding.remediation %}
+                <div class="p-3 bg-gray-800/30 border-t border-gray-700/50">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider mb-1">Remediation</div>
+                    <p class="text-sm text-gray-400">{{ finding.remediation }}</p>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-gray-800/30 rounded-lg border border-gray-700/50 p-8 text-center">
+            <svg class="w-12 h-12 mx-auto text-green-500/50 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <p class="text-gray-400 font-medium">No Security Issues Found</p>
+            <p class="text-sm text-gray-500 mt-1">This merge request passed security review</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Metadata Footer -->
+    <div class="text-xs text-gray-500 flex items-center justify-between pt-4 border-t border-gray-700/50">
+        <div>
+            Reviewed: {{ review.diff_reviewed_at.strftime('%Y-%m-%d %H:%M:%S UTC') if review.diff_reviewed_at else 'N/A' }}
+        </div>
+        <div>
+            Created: {{ review.created_at.strftime('%Y-%m-%d %H:%M:%S UTC') if review.created_at else 'N/A' }}
+        </div>
+    </div>
+</div>

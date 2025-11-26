@@ -2,7 +2,7 @@
 
 {% block content %}
 <div class="flex h-screen overflow-hidden">
-    <!-- Sidebar / Scan List -->
+    <!-- Sidebar / Source List -->
     <div class="w-80 bg-gray-800/50 border-r border-gray-700 flex flex-col shrink-0">
         <!-- New Scan Form -->
         <div class="p-4 border-b border-gray-700 bg-gray-800/80">
@@ -40,17 +40,29 @@
             </form>
         </div>
 
-        <!-- Scan List Header & Filter -->
+        <!-- Source Tabs -->
+        <div class="flex border-b border-gray-700">
+            <button id="tab-scans" onclick="switchTab('scans')"
+                class="flex-1 py-2.5 px-4 text-xs font-medium uppercase tracking-wider text-center transition-colors bg-gray-800/50 text-blue-400 border-b-2 border-blue-500">
+                Scans ({{ scans|length }})
+            </button>
+            <button id="tab-mr-reviews" onclick="switchTab('mr-reviews')"
+                class="flex-1 py-2.5 px-4 text-xs font-medium uppercase tracking-wider text-center transition-colors text-gray-400 hover:text-gray-300 border-b-2 border-transparent">
+                MR Reviews ({{ mr_reviews|length }})
+            </button>
+        </div>
+
+        <!-- Filter -->
         <div class="p-3 border-b border-gray-700/50 bg-gray-800/30">
-            <div class="flex gap-2">
+            <div class="flex gap-2 mb-2">
                 <div class="relative flex-1">
                     <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
                     </svg>
-                    <input type="text" id="scan-search" onkeyup="filterScans()" placeholder="Filter scans..."
+                    <input type="text" id="source-search" onkeyup="filterSources()" placeholder="Filter..."
                         class="w-full bg-gray-900/50 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50">
                 </div>
-                <select id="scan-status-filter" onchange="filterScans()"
+                <select id="source-status-filter" onchange="filterSources()"
                     class="bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none">
                     <option value="all">All</option>
                     <option value="running">Running</option>
@@ -58,60 +70,324 @@
                     <option value="failed">Failed</option>
                 </select>
             </div>
+            <button onclick="showAllFindings()" id="show-all-btn"
+                class="w-full px-3 py-1.5 text-xs font-medium bg-purple-500/20 text-purple-400 rounded-lg hover:bg-purple-500/30 transition-colors border border-purple-500/30">
+                Show All Findings
+            </button>
         </div>
 
-        <!-- Scan List -->
-        <div id="scan-list" class="flex-1 overflow-y-auto custom-scrollbar">
-            {% include "partials/scan_list.html" %}
+        <!-- Scans List -->
+        <div id="scans-list" class="flex-1 overflow-y-auto custom-scrollbar">
+            <div id="scan-list">
+                {% include "partials/scan_list.html" %}
+            </div>
         </div>
-    </div>
 
-    <!-- Main Content / Details -->
-    <div class="flex-1 bg-gray-900 overflow-hidden relative" id="scan-details">
-        <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
-            <div class="text-center max-w-lg px-8">
-                <!-- Large Shield Icon -->
-                <div class="relative mb-8">
-                    <svg class="w-24 h-24 mx-auto text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
-                            d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
-                        </path>
-                    </svg>
-                    <div class="absolute inset-0 flex items-center justify-center">
-                        <div class="w-4 h-4 bg-blue-500/20 rounded-full animate-ping"></div>
-                    </div>
+        <!-- MR Reviews List (hidden by default) -->
+        <div id="mr-reviews-list" class="flex-1 overflow-y-auto custom-scrollbar hidden">
+            {% for review in mr_reviews %}
+            {% set finding_count = review.findings|length %}
+            {% set critical = review.findings|selectattr('severity', 'equalto', 'Critical')|list|length %}
+            {% set high = review.findings|selectattr('severity', 'equalto', 'High')|list|length %}
+
+            <div class="source-item mr-review-item group relative cursor-pointer"
+                data-source-name="{{ review.mr_title or '' }}"
+                data-source-type="mr-review"
+                data-source-id="{{ review.id }}"
+                data-status="{{ review.status }}"
+                onclick="selectMRReview({{ review.id }})">
+
+                <!-- Severity indicator bar on left edge -->
+                {% if finding_count > 0 %}
+                <div class="absolute left-0 top-0 bottom-0 w-1 rounded-l
+                    {% if critical > 0 %}bg-red-500
+                    {% elif high > 0 %}bg-orange-500
+                    {% else %}bg-yellow-500{% endif %}">
                 </div>
+                {% endif %}
 
-                <h3 class="text-xl font-semibold text-gray-300 mb-3">Select a Scan to View Results</h3>
-                <p class="text-sm text-gray-500 leading-relaxed mb-6">
-                    Choose a scan from the sidebar to view detailed security findings, vulnerability analysis, and remediation guidance.
-                </p>
+                <div class="p-3 pl-4 border-b border-gray-700/50 hover:bg-gray-700/30 transition-all">
+                    <!-- Top Row: MR Title & Status -->
+                    <div class="flex justify-between items-start gap-2 mb-1.5">
+                        <div class="flex-1 min-w-0">
+                            <span class="font-medium text-gray-200 text-sm block truncate" title="{{ review.mr_title }}">
+                                {{ review.mr_title or 'MR #' ~ review.mr_iid }}
+                            </span>
+                            <span class="text-xs text-gray-500">!{{ review.mr_iid }}</span>
+                        </div>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full shrink-0 font-medium uppercase tracking-wide
+                            {% if review.status == 'completed' %}bg-green-500/20 text-green-400 ring-1 ring-green-500/30
+                            {% elif review.status == 'reviewing' %}bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30
+                            {% elif review.status == 'failed' %}bg-red-500/20 text-red-400 ring-1 ring-red-500/30
+                            {% else %}bg-gray-500/20 text-gray-400 ring-1 ring-gray-500/30{% endif %}">
+                            {{ review.status }}
+                        </span>
+                    </div>
 
-                <!-- Quick Stats -->
-                <div class="grid grid-cols-3 gap-4 text-center">
-                    <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
-                        <div class="text-2xl font-bold text-gray-400">{{ scans|length }}</div>
-                        <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Total Scans</div>
+                    <!-- Branch info -->
+                    <div class="flex items-center gap-2 text-xs text-gray-500 mb-2">
+                        <span class="truncate">{{ review.source_branch }}</span>
+                        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                        </svg>
+                        <span class="truncate">{{ review.target_branch }}</span>
                     </div>
-                    <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
-                        <div class="text-2xl font-bold text-blue-400">{{ scans|selectattr('status', 'equalto', 'running')|list|length }}</div>
-                        <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Running</div>
-                    </div>
-                    <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
-                        {% set total_findings = namespace(count=0) %}
-                        {% for scan in scans %}
-                            {% set total_findings.count = total_findings.count + scan.findings|length %}
-                        {% endfor %}
-                        <div class="text-2xl font-bold text-red-400">{{ total_findings.count }}</div>
-                        <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Findings</div>
+
+                    <!-- Bottom Row: Date, Findings -->
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs text-gray-500">
+                            {{ review.created_at.strftime('%b %d, %H:%M') if review.created_at else 'Just now' }}
+                        </span>
+                        {% if finding_count > 0 %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                            {{ finding_count }} finding{{ 's' if finding_count != 1 else '' }}
+                        </span>
+                        {% else %}
+                        <span class="text-[10px] text-green-500 flex items-center gap-1">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                            Clean
+                        </span>
+                        {% endif %}
                     </div>
                 </div>
             </div>
+            {% else %}
+            <div class="p-8 text-center text-gray-500">
+                <div class="bg-gray-800/30 rounded-xl p-6 border border-gray-700/50">
+                    <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                    </svg>
+                    <p class="text-sm font-medium text-gray-400 mb-1">No MR reviews yet</p>
+                    <p class="text-xs text-gray-500">Use "MR Reviews" to analyze merge requests</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Main Content / Findings Panel -->
+    <div class="flex-1 bg-gray-900 overflow-hidden flex flex-col">
+        <!-- Header with stats -->
+        <div class="p-4 border-b border-gray-700 bg-gray-800/50">
+            <div class="flex items-center justify-between mb-3">
+                <div>
+                    <h2 id="findings-title" class="text-lg font-semibold text-white">All Security Findings</h2>
+                    <p id="findings-subtitle" class="text-sm text-gray-400">
+                        Showing findings from {{ scans|length }} scans and {{ mr_reviews|length }} MR reviews
+                    </p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <!-- Search -->
+                    <div class="relative">
+                        <svg class="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        <input type="text" id="findings-search" onkeyup="filterAllFindings()" placeholder="Search findings..."
+                            class="bg-gray-900/50 border border-gray-700 rounded-lg pl-7 pr-2 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50 w-40">
+                    </div>
+                    <!-- Severity Filter -->
+                    <select id="severity-filter" onchange="filterAllFindings()"
+                        class="bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none">
+                        <option value="all">All Severities</option>
+                        <option value="Critical">Critical</option>
+                        <option value="High">High</option>
+                        <option value="Medium">Medium</option>
+                        <option value="Low">Low</option>
+                    </select>
+                    <!-- Weakness/Category Filter -->
+                    <select id="category-filter" onchange="filterAllFindings()"
+                        class="bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none">
+                        <option value="all">All Weaknesses</option>
+                        {% set categories = [] %}
+                        {% for finding in all_findings %}
+                            {% if finding.category and finding.category not in categories %}
+                                {% set _ = categories.append(finding.category) %}
+                            {% endif %}
+                        {% endfor %}
+                        {% for cat in categories|sort %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                    <!-- Sort -->
+                    <select id="findings-sort" onchange="sortFindings()"
+                        class="bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none">
+                        <option value="severity">Sort: Severity</option>
+                        <option value="newest">Sort: Newest</option>
+                        <option value="file">Sort: File</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3 text-sm" id="severity-stats">
+                        {% set total_critical = all_findings|selectattr('severity', 'equalto', 'Critical')|list|length %}
+                        {% set total_high = all_findings|selectattr('severity', 'equalto', 'High')|list|length %}
+                        {% set total_medium = all_findings|selectattr('severity', 'equalto', 'Medium')|list|length %}
+                        {% set total_low = all_findings|selectattr('severity', 'equalto', 'Low')|list|length %}
+
+                        {% if total_critical > 0 %}
+                        <span class="flex items-center gap-1.5 px-2 py-1 rounded bg-red-500/10 text-red-400">
+                            <span class="w-2 h-2 rounded-full bg-red-500"></span>
+                            {{ total_critical }} Critical
+                        </span>
+                        {% endif %}
+                        {% if total_high > 0 %}
+                        <span class="flex items-center gap-1.5 px-2 py-1 rounded bg-orange-500/10 text-orange-400">
+                            <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+                            {{ total_high }} High
+                        </span>
+                        {% endif %}
+                        {% if total_medium > 0 %}
+                        <span class="flex items-center gap-1.5 px-2 py-1 rounded bg-yellow-500/10 text-yellow-400">
+                            <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+                            {{ total_medium }} Medium
+                        </span>
+                        {% endif %}
+                        {% if total_low > 0 %}
+                        <span class="flex items-center gap-1.5 px-2 py-1 rounded bg-blue-500/10 text-blue-400">
+                            <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                            {{ total_low }} Low
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Findings List -->
+        <div id="findings-panel" class="flex-1 overflow-y-auto custom-scrollbar p-4">
+            {% if all_findings|length > 0 %}
+            <div class="space-y-3" id="findings-list">
+                {% for finding in all_findings %}
+                <div class="finding-item bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden"
+                    data-scan-id="{{ finding.scan_id or '' }}"
+                    data-mr-review-id="{{ finding.mr_review_id or '' }}"
+                    data-severity="{{ finding.severity }}"
+                    data-category="{{ finding.category or '' }}"
+                    data-description="{{ finding.description or '' }}"
+                    data-file="{{ finding.file_path or '' }}">
+
+                    <div class="p-4">
+                        <!-- Finding Header -->
+                        <div class="flex items-start justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs px-2 py-0.5 rounded font-medium uppercase
+                                    {% if finding.severity == 'Critical' %}bg-red-500/20 text-red-400
+                                    {% elif finding.severity == 'High' %}bg-orange-500/20 text-orange-400
+                                    {% elif finding.severity == 'Medium' %}bg-yellow-500/20 text-yellow-400
+                                    {% else %}bg-blue-500/20 text-blue-400{% endif %}">
+                                    {{ finding.severity }}
+                                </span>
+                                {% if finding.category %}
+                                <span class="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300">
+                                    {{ finding.category }}
+                                </span>
+                                {% endif %}
+                                <!-- Source badge -->
+                                {% if finding.scan_id %}
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                    Scan #{{ finding.scan_id }}
+                                </span>
+                                {% elif finding.mr_review_id %}
+                                <span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                                    MR Review #{{ finding.mr_review_id }}
+                                </span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- Description -->
+                        <p class="text-gray-200 text-sm mb-2">{{ finding.description }}</p>
+
+                        <!-- Location -->
+                        <div class="text-xs text-gray-500">
+                            <span class="font-mono text-blue-400">{{ finding.file_path }}</span>
+                            {% if finding.line_number %}
+                            <span class="text-gray-600">:</span>
+                            <span class="text-green-400">{{ finding.line_number }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Code Snippet (collapsible) -->
+                    {% if finding.snippet %}
+                    <details class="group">
+                        <summary class="px-4 py-2 bg-gray-900/50 border-t border-gray-700/50 cursor-pointer text-xs text-gray-400 hover:text-gray-300 flex items-center gap-2">
+                            <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            View Code
+                        </summary>
+                        <div class="bg-gray-900 p-3 border-t border-gray-700/50">
+                            <pre class="text-xs text-gray-300 overflow-x-auto"><code>{{ finding.snippet | strip_code }}</code></pre>
+                        </div>
+                    </details>
+                    {% endif %}
+
+                    <!-- Remediation (collapsible) -->
+                    {% if finding.remediation %}
+                    <details class="group">
+                        <summary class="px-4 py-2 bg-gray-800/30 border-t border-gray-700/50 cursor-pointer text-xs text-gray-400 hover:text-gray-300 flex items-center gap-2">
+                            <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            Remediation
+                        </summary>
+                        <div class="p-4 bg-gray-800/30 border-t border-gray-700/50">
+                            <p class="text-sm text-gray-400">{{ finding.remediation }}</p>
+                        </div>
+                    </details>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="flex flex-col items-center justify-center h-full text-gray-600">
+                <div class="text-center max-w-lg px-8">
+                    <div class="relative mb-8">
+                        <svg class="w-24 h-24 mx-auto text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+                                d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
+                            </path>
+                        </svg>
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <div class="w-4 h-4 bg-green-500/20 rounded-full animate-ping"></div>
+                        </div>
+                    </div>
+
+                    <h3 class="text-xl font-semibold text-gray-300 mb-3">No Security Findings Yet</h3>
+                    <p class="text-sm text-gray-500 leading-relaxed mb-6">
+                        Start a scan or review a merge request to discover security vulnerabilities.
+                    </p>
+
+                    <!-- Quick Stats -->
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                        <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                            <div class="text-2xl font-bold text-gray-400">{{ scans|length }}</div>
+                            <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Scans</div>
+                        </div>
+                        <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                            <div class="text-2xl font-bold text-purple-400">{{ mr_reviews|length }}</div>
+                            <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">MR Reviews</div>
+                        </div>
+                        <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                            <div class="text-2xl font-bold text-green-400">0</div>
+                            <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Findings</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
 
 <script>
+let currentTab = 'scans';
+let selectedSourceType = null;
+let selectedSourceId = null;
+
 // File upload label update
 document.getElementById('archive-upload')?.addEventListener('change', function(e) {
     const label = document.getElementById('upload-label');
@@ -124,20 +400,219 @@ document.getElementById('archive-upload')?.addEventListener('change', function(e
     }
 });
 
-function filterScans() {
-    const search = document.getElementById('scan-search').value.toLowerCase();
-    const status = document.getElementById('scan-status-filter').value;
-    const items = document.querySelectorAll('.scan-item');
+function switchTab(tab) {
+    currentTab = tab;
+
+    // Update tab styling
+    const scansTab = document.getElementById('tab-scans');
+    const mrTab = document.getElementById('tab-mr-reviews');
+    const scansList = document.getElementById('scans-list');
+    const mrList = document.getElementById('mr-reviews-list');
+
+    if (tab === 'scans') {
+        scansTab.classList.add('bg-gray-800/50', 'text-blue-400', 'border-blue-500');
+        scansTab.classList.remove('text-gray-400', 'border-transparent');
+        mrTab.classList.remove('bg-gray-800/50', 'text-blue-400', 'border-blue-500');
+        mrTab.classList.add('text-gray-400', 'border-transparent');
+        scansList.classList.remove('hidden');
+        mrList.classList.add('hidden');
+    } else {
+        mrTab.classList.add('bg-gray-800/50', 'text-blue-400', 'border-blue-500');
+        mrTab.classList.remove('text-gray-400', 'border-transparent');
+        scansTab.classList.remove('bg-gray-800/50', 'text-blue-400', 'border-blue-500');
+        scansTab.classList.add('text-gray-400', 'border-transparent');
+        mrList.classList.remove('hidden');
+        scansList.classList.add('hidden');
+    }
+}
+
+function filterSources() {
+    const search = document.getElementById('source-search').value.toLowerCase();
+    const status = document.getElementById('source-status-filter').value;
+    const items = document.querySelectorAll('.source-item, .scan-item');
 
     items.forEach(item => {
-        const target = item.getAttribute('data-target')?.toLowerCase() || '';
-        const itemStatus = item.getAttribute('data-status');
+        const name = (item.getAttribute('data-source-name') || item.getAttribute('data-target') || '').toLowerCase();
+        const itemStatus = item.getAttribute('data-status') || '';
 
-        const matchesSearch = target.includes(search);
+        const matchesSearch = name.includes(search);
         const matchesStatus = status === 'all' || itemStatus === status;
 
         item.style.display = (matchesSearch && matchesStatus) ? '' : 'none';
     });
 }
+
+function showAllFindings() {
+    selectedSourceType = null;
+    selectedSourceId = null;
+
+    // Clear selection styling
+    document.querySelectorAll('.scan-item, .mr-review-item').forEach(item => {
+        item.classList.remove('bg-blue-500/10', 'border-l-2', 'border-blue-500', 'bg-purple-500/10', 'border-purple-500');
+    });
+
+    // Apply unified filter (respects search, severity, category)
+    filterAllFindings();
+
+    // Update title
+    document.getElementById('findings-title').textContent = 'All Security Findings';
+    document.getElementById('findings-subtitle').textContent = 'Showing findings from all scans and MR reviews';
+
+    // Highlight the All button
+    document.getElementById('show-all-btn').classList.add('bg-purple-500/30', 'ring-1', 'ring-purple-500');
+}
+
+function selectMRReview(reviewId) {
+    selectedSourceType = 'mr-review';
+    selectedSourceId = reviewId;
+
+    // Update selection styling
+    document.querySelectorAll('.mr-review-item').forEach(item => {
+        const isSelected = item.getAttribute('data-source-id') == reviewId;
+        item.classList.toggle('bg-purple-500/10', isSelected);
+        item.classList.toggle('border-l-2', isSelected);
+        item.classList.toggle('border-purple-500', isSelected);
+    });
+
+    document.querySelectorAll('.scan-item').forEach(item => {
+        item.classList.remove('bg-blue-500/10', 'border-l-2', 'border-blue-500');
+    });
+
+    // Remove highlight from All button
+    document.getElementById('show-all-btn').classList.remove('bg-purple-500/30', 'ring-1', 'ring-purple-500');
+
+    // Filter findings
+    filterFindings('mr-review', reviewId);
+
+    // Get the review title for display
+    const reviewItem = document.querySelector(`.mr-review-item[data-source-id="${reviewId}"]`);
+    const reviewName = reviewItem?.querySelector('.font-medium')?.textContent.trim() || `MR Review #${reviewId}`;
+
+    document.getElementById('findings-title').textContent = reviewName;
+    document.getElementById('findings-subtitle').textContent = 'Showing findings from this MR review';
+}
+
+// Hook into existing scan selection (from partials/scan_list.html hx-get)
+document.addEventListener('htmx:beforeRequest', function(evt) {
+    if (evt.detail.pathInfo.requestPath.startsWith('/scan/') && evt.detail.target.id === 'scan-details') {
+        // This is a scan selection - we'll handle filtering differently
+        const scanId = evt.detail.pathInfo.requestPath.match(/\/scan\/(\d+)/)?.[1];
+        if (scanId) {
+            selectScan(parseInt(scanId));
+        }
+    }
+});
+
+function selectScan(scanId) {
+    selectedSourceType = 'scan';
+    selectedSourceId = scanId;
+
+    // Update selection styling for scans
+    document.querySelectorAll('.scan-item').forEach(item => {
+        const isSelected = item.getAttribute('data-source-id') == scanId;
+        item.classList.toggle('bg-blue-500/10', isSelected);
+        item.classList.toggle('border-l-2', isSelected);
+        item.classList.toggle('border-blue-500', isSelected);
+    });
+
+    // Clear MR review selection
+    document.querySelectorAll('.mr-review-item').forEach(item => {
+        item.classList.remove('bg-purple-500/10', 'border-l-2', 'border-purple-500');
+    });
+
+    // Remove highlight from All button
+    document.getElementById('show-all-btn').classList.remove('bg-purple-500/30', 'ring-1', 'ring-purple-500');
+
+    // Filter findings
+    filterFindings('scan', scanId);
+
+    // Get the scan name for display
+    const scanItem = document.querySelector(`.scan-item[data-source-id="${scanId}"]`);
+    const scanName = scanItem?.querySelector('.font-medium')?.textContent.trim() || `Scan #${scanId}`;
+
+    document.getElementById('findings-title').textContent = scanName;
+    document.getElementById('findings-subtitle').textContent = 'Showing findings from this scan';
+}
+
+function filterFindings(sourceType, sourceId) {
+    // Just call the unified filter - it will use selectedSourceType/selectedSourceId
+    filterAllFindings();
+}
+
+// Unified filter for findings - handles search, severity, category, and source
+function filterAllFindings() {
+    const search = (document.getElementById('findings-search')?.value || '').toLowerCase();
+    const severity = document.getElementById('severity-filter').value;
+    const category = document.getElementById('category-filter').value;
+    const items = document.querySelectorAll('.finding-item');
+
+    items.forEach(item => {
+        const itemSeverity = item.getAttribute('data-severity') || '';
+        const itemCategory = item.getAttribute('data-category') || '';
+        const itemDescription = item.getAttribute('data-description') || '';
+        const itemFile = item.getAttribute('data-file') || '';
+
+        // Check source filter
+        let matchesSource = true;
+        if (selectedSourceType) {
+            if (selectedSourceType === 'scan') {
+                matchesSource = item.getAttribute('data-scan-id') == selectedSourceId;
+            } else if (selectedSourceType === 'mr-review') {
+                matchesSource = item.getAttribute('data-mr-review-id') == selectedSourceId;
+            }
+        }
+
+        // Check search filter
+        const matchesSearch = search === '' ||
+            itemDescription.toLowerCase().includes(search) ||
+            itemFile.toLowerCase().includes(search) ||
+            itemCategory.toLowerCase().includes(search);
+
+        // Check severity filter
+        const matchesSeverity = severity === 'all' || itemSeverity === severity;
+
+        // Check category filter
+        const matchesCategory = category === 'all' || itemCategory === category;
+
+        item.style.display = (matchesSource && matchesSearch && matchesSeverity && matchesCategory) ? '' : 'none';
+    });
+}
+
+// Sort findings
+function sortFindings() {
+    const sortBy = document.getElementById('findings-sort').value;
+    const container = document.getElementById('findings-list');
+    if (!container) return;
+
+    const items = Array.from(container.querySelectorAll('.finding-item'));
+
+    const severityOrder = { 'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
+
+    items.sort((a, b) => {
+        if (sortBy === 'severity') {
+            const sevA = severityOrder[a.getAttribute('data-severity')] ?? 4;
+            const sevB = severityOrder[b.getAttribute('data-severity')] ?? 4;
+            return sevA - sevB;
+        } else if (sortBy === 'newest') {
+            // Using data attributes for ID (higher ID = newer)
+            const idA = parseInt(a.getAttribute('data-scan-id') || a.getAttribute('data-mr-review-id') || '0');
+            const idB = parseInt(b.getAttribute('data-scan-id') || b.getAttribute('data-mr-review-id') || '0');
+            return idB - idA;
+        } else if (sortBy === 'file') {
+            const fileA = a.querySelector('.font-mono')?.textContent || '';
+            const fileB = b.querySelector('.font-mono')?.textContent || '';
+            return fileA.localeCompare(fileB);
+        }
+        return 0;
+    });
+
+    // Re-append sorted items
+    items.forEach(item => container.appendChild(item));
+}
+
+// Initialize with All button highlighted
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('show-all-btn').classList.add('bg-purple-500/30', 'ring-1', 'ring-purple-500');
+});
 </script>
 {% endblock %}

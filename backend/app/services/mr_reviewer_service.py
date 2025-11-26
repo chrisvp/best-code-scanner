@@ -22,12 +22,13 @@ from app.models.scanner_models import RepoWatcher, MRReview, ScanProfile
 from app.models.models import Scan, Finding, ScanStatus
 from app.services.gitlab_service import GitLabService, GitLabError
 from app.services.llm_provider import llm_provider
+from app.services.analysis.parsers import DraftParser
 from app.core.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
 
-# Security review prompt for analyzing code diffs
+# Security review prompt for analyzing code diffs (marker format)
 DIFF_REVIEW_PROMPT = """You are a security code reviewer analyzing a merge request diff.
 
 Review the following code changes for security vulnerabilities. Focus on:
@@ -48,21 +49,29 @@ DIFF:
 {diff_content}
 ```
 
-For each security issue found, respond with a JSON array of findings:
-[
-  {{
-    "line": <line_number in new file>,
-    "severity": "CRITICAL|HIGH|MEDIUM|LOW",
-    "title": "<brief title>",
-    "description": "<detailed description of the vulnerability>",
-    "recommendation": "<how to fix>"
-  }}
-]
+=== OUTPUT FORMAT ===
+For each security issue found, respond using this marker format:
 
-If no security issues are found, respond with an empty array: []
+*DRAFT: descriptive title of the vulnerability
+*TYPE: CWE-XXX (e.g., CWE-78, CWE-89, CWE-79)
+*SEVERITY: Critical/High/Medium/Low
+*LINE: exact line number in the new file
+*SNIPPET: the vulnerable code
+*REASON: explanation of why this is a vulnerability and how to fix it
+*END_DRAFT
 
-Only include actual security vulnerabilities, not code style or general quality issues.
-Respond ONLY with the JSON array, no other text."""
+Example:
+*DRAFT: SQL Injection in User Query
+*TYPE: CWE-89
+*SEVERITY: High
+*LINE: 42
+*SNIPPET: query = f"SELECT * FROM users WHERE id = {{user_id}}"
+*REASON: User input is directly concatenated into SQL query. Use parameterized queries instead.
+*END_DRAFT
+
+If no security issues are found, respond with: *DRAFT:NONE
+
+Only include actual security vulnerabilities, not code style or general quality issues."""
 
 
 # Summary prompt for generating overall MR review
@@ -181,10 +190,13 @@ class MRReviewerService:
         """
         language = self._detect_language(file_path)
 
+        # Escape curly braces in diff content to prevent format() issues
+        escaped_diff = diff_content[:8000].replace("{", "{{").replace("}", "}}")
+
         prompt = DIFF_REVIEW_PROMPT.format(
             file_path=file_path,
             language=language,
-            diff_content=diff_content[:8000],  # Limit diff size
+            diff_content=escaped_diff,
         )
 
         try:
@@ -192,18 +204,30 @@ class MRReviewerService:
                 {"role": "user", "content": prompt}
             ])
 
-            # Parse JSON response
-            import json
-            content = response.get("content", "[]")
+            content = response.get("content", "")
 
-            # Extract JSON array from response
-            # Handle cases where LLM adds extra text
-            json_match = re.search(r'\[.*\]', content, re.DOTALL)
-            if json_match:
-                findings = json.loads(json_match.group())
-                return findings if isinstance(findings, list) else []
+            # Check for "no findings" response
+            if "*DRAFT:NONE" in content or not content.strip():
+                return []
 
-            return []
+            # Parse marker format using DraftParser
+            parser = DraftParser()
+            parsed_findings = parser.parse(content)
+
+            # Transform parsed findings to expected format
+            findings = []
+            for finding in parsed_findings:
+                findings.append({
+                    "title": finding.get("title", finding.get("draft", "Unknown Issue")),
+                    "type": finding.get("type", "Unknown"),
+                    "severity": finding.get("severity", "MEDIUM").upper(),
+                    "line": int(finding.get("line", 1)) if finding.get("line") else 1,
+                    "snippet": finding.get("snippet", ""),
+                    "description": finding.get("reason", "No description provided."),
+                    "recommendation": finding.get("reason", "Review this code for security implications."),
+                })
+
+            return findings
 
         except Exception as e:
             logger.error(f"Error analyzing diff for {file_path}: {e}")

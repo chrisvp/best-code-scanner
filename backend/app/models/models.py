@@ -21,15 +21,16 @@ class Scan(Base):
     logs = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
+
     findings = relationship("Finding", back_populates="scan")
 
 class Finding(Base):
     __tablename__ = "findings"
 
     id = Column(Integer, primary_key=True, index=True)
-    scan_id = Column(Integer, ForeignKey("scans.id"))
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True)
     verified_id = Column(Integer, ForeignKey("verified_findings.id"), nullable=True)
+    mr_review_id = Column(Integer, ForeignKey("mr_reviews.id"), nullable=True)
 
     file_path = Column(String, nullable=False)
     line_number = Column(Integer, nullable=True)
@@ -48,3 +49,5 @@ class Finding(Base):
     references = Column(Text, nullable=True)
 
     scan = relationship("Scan", back_populates="findings")
+    # MRReview is defined in scanner_models.py
+    mr_review = relationship("MRReview", back_populates="findings")

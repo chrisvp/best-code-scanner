@@ -96,28 +96,47 @@
                         placeholder="e.g., Main Project Watcher">
                 </div>
 
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
-                    <input type="text" name="gitlab_url" value="https://gitlab.com"
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="https://gitlab.com">
-                    <p class="text-xs text-gray-500 mt-1">Use your self-hosted GitLab URL if applicable</p>
+                <!-- Saved Repo Selection -->
+                {% if gitlab_repos %}
+                <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Saved Repository</label>
+                    <select name="gitlab_repo_id" id="add-watcher-repo-id" onchange="selectAddWatcherRepo(this.value)"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">-- Select a saved repo or enter manually --</option>
+                        {% for repo in gitlab_repos %}
+                        <option value="{{ repo.id }}">{{ repo.name }} ({{ repo.project_id }})</option>
+                        {% endfor %}
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Select a saved repo to auto-fill connection details</p>
                 </div>
+                {% endif %}
 
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Access Token *</label>
-                    <input type="password" name="gitlab_token" required
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="glpat-xxxxxxxxxxxx">
-                    <p class="text-xs text-gray-500 mt-1">Personal access token with api scope</p>
-                </div>
+                <div id="add-watcher-manual-fields">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                            <input type="text" name="gitlab_url" id="add-watcher-url" value="https://192.168.33.158"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="https://gitlab.com">
+                            <p class="text-xs text-gray-500 mt-1">Use your self-hosted GitLab URL if applicable</p>
+                        </div>
 
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path *</label>
-                    <input type="text" name="project_id" required
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="12345 or group/project">
-                    <p class="text-xs text-gray-500 mt-1">Numeric ID or full path like "mygroup/myproject"</p>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Access Token <span id="add-watcher-token-req">*</span></label>
+                            <input type="password" name="gitlab_token" id="add-watcher-token"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="glpat-xxxxxxxxxxxx">
+                            <p class="text-xs text-gray-500 mt-1">Personal access token with api scope</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path <span id="add-watcher-project-req">*</span></label>
+                            <input type="text" name="project_id" id="add-watcher-project"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="12345 or group/project">
+                            <p class="text-xs text-gray-500 mt-1">Numeric ID or full path like "mygroup/myproject"</p>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
@@ -137,27 +156,14 @@
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
-                        <select name="scan_profile_id"
-                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="">Default (Quick Scan)</option>
-                            {% for profile in profiles %}
-                            <option value="{{ profile.id }}">{{ profile.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Review Model</label>
-                        <select name="review_model_id"
-                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="">Default Model</option>
-                            {% for model in models %}
-                            <option value="{{ model.id }}">{{ model.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
+                    <select name="scan_profile_id"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        {% for profile in profiles %}
+                        <option value="{{ profile.id }}" {% if profile.name == 'Quick Scan' %}selected{% endif %}>{{ profile.name }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
 
                 <div>
@@ -233,21 +239,40 @@
                     <input type="text" name="name" id="edit-watcher-name" required
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
-                    <input type="text" name="gitlab_url" id="edit-watcher-url"
+
+                <!-- Saved Repo Selection -->
+                {% if gitlab_repos %}
+                <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Saved Repository</label>
+                    <select name="gitlab_repo_id" id="edit-watcher-repo-id" onchange="selectEditWatcherRepo(this.value)"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">-- Enter manually --</option>
+                        {% for repo in gitlab_repos %}
+                        <option value="{{ repo.id }}">{{ repo.name }} ({{ repo.project_id }})</option>
+                        {% endfor %}
+                    </select>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Access Token</label>
-                    <input type="password" name="gitlab_token" id="edit-watcher-token"
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        placeholder="Leave empty to keep current">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path</label>
-                    <input type="text" name="project_id" id="edit-watcher-project"
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                {% endif %}
+
+                <div id="edit-watcher-manual-fields">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                            <input type="text" name="gitlab_url" id="edit-watcher-url"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Access Token</label>
+                            <input type="password" name="gitlab_token" id="edit-watcher-token"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Leave empty to keep current">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path</label>
+                            <input type="text" name="project_id" id="edit-watcher-project"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        </div>
+                    </div>
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
@@ -260,6 +285,16 @@
                         <input type="number" name="poll_interval" id="edit-watcher-interval" min="60"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
+                    <select name="scan_profile_id" id="edit-watcher-profile"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        {% for profile in profiles %}
+                        <option value="{{ profile.id }}" {% if profile.name == 'Quick Scan' %}selected{% endif %}>{{ profile.name }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
 
                 <!-- Post Comments Toggle -->
@@ -285,6 +320,16 @@
 </div>
 
 <script>
+// Saved repos data for auto-fill
+const savedRepos = {
+    {% for repo in gitlab_repos %}
+    {{ repo.id }}: {
+        gitlab_url: "{{ repo.gitlab_url }}",
+        project_id: "{{ repo.project_id }}"
+    },
+    {% endfor %}
+};
+
 // Store watcher data for editing
 const watchersData = {
     {% for watcher in watchers %}
@@ -294,10 +339,53 @@ const watchersData = {
         project_id: "{{ watcher.project_id }}",
         branch_filter: "{{ watcher.branch_filter or '' }}",
         poll_interval: {{ watcher.poll_interval }},
-        post_comments: {{ 'true' if watcher.post_comments else 'false' }}
+        post_comments: {{ 'true' if watcher.post_comments else 'false' }},
+        scan_profile_id: {{ watcher.scan_profile_id or 'null' }},
+        gitlab_repo_id: {{ watcher.gitlab_repo_id or 'null' }}
     },
     {% endfor %}
 };
+
+function selectAddWatcherRepo(repoId) {
+    const urlField = document.getElementById('add-watcher-url');
+    const tokenField = document.getElementById('add-watcher-token');
+    const projectField = document.getElementById('add-watcher-project');
+    const tokenReq = document.getElementById('add-watcher-token-req');
+    const projectReq = document.getElementById('add-watcher-project-req');
+
+    if (repoId && savedRepos[repoId]) {
+        const repo = savedRepos[repoId];
+        urlField.value = repo.gitlab_url;
+        projectField.value = repo.project_id;
+        tokenField.value = '';
+        tokenField.placeholder = 'Using saved token';
+        tokenReq.style.display = 'none';
+        projectReq.style.display = 'none';
+    } else {
+        urlField.value = 'https://192.168.33.158';
+        tokenField.value = '';
+        projectField.value = '';
+        tokenField.placeholder = 'glpat-xxxxxxxxxxxx';
+        tokenReq.style.display = '';
+        projectReq.style.display = '';
+    }
+}
+
+function selectEditWatcherRepo(repoId) {
+    const urlField = document.getElementById('edit-watcher-url');
+    const tokenField = document.getElementById('edit-watcher-token');
+    const projectField = document.getElementById('edit-watcher-project');
+
+    if (repoId && savedRepos[repoId]) {
+        const repo = savedRepos[repoId];
+        urlField.value = repo.gitlab_url;
+        projectField.value = repo.project_id;
+        tokenField.value = '';
+        tokenField.placeholder = 'Using saved token';
+    } else {
+        tokenField.placeholder = 'Leave empty to keep current';
+    }
+}
 
 function editWatcher(id) {
     const w = watchersData[id];
@@ -310,6 +398,14 @@ function editWatcher(id) {
     document.getElementById('edit-watcher-branch').value = w.branch_filter;
     document.getElementById('edit-watcher-interval').value = w.poll_interval;
     document.getElementById('edit-watcher-post-comments').checked = w.post_comments;
+    document.getElementById('edit-watcher-profile').value = w.scan_profile_id || '';
+
+    // Set saved repo dropdown if exists
+    const repoSelect = document.getElementById('edit-watcher-repo-id');
+    if (repoSelect) {
+        repoSelect.value = w.gitlab_repo_id || '';
+    }
+
     document.getElementById('edit-watcher-modal').classList.remove('hidden');
 }
 

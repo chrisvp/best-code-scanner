@@ -5,9 +5,12 @@
 {% set low = scan.findings|selectattr('severity', 'equalto', 'Low')|list|length %}
 {% set total = critical + high + medium + low %}
 
-<div class="scan-item group relative"
+<div class="scan-item source-item group relative"
     data-target="{{ scan.target_url }}"
-    data-status="{{ scan.status }}">
+    data-status="{{ scan.status }}"
+    data-source-id="{{ scan.id }}"
+    data-source-name="{{ scan.target_url }}"
+    onclick="if(typeof selectScan === 'function') selectScan({{ scan.id }})">
 
     <!-- Severity indicator bar on left edge -->
     {% if total > 0 %}

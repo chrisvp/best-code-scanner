@@ -405,15 +405,39 @@ class ScanMetrics(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class GitLabRepo(Base):
+    """Stored GitLab repository connection for reuse across MR reviews and watchers"""
+    __tablename__ = "gitlab_repos"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)  # Human-readable name (e.g., "Main Firmware Repo")
+    gitlab_url = Column(String, nullable=False, default="https://192.168.33.158")  # GitLab instance URL
+    gitlab_token = Column(String)  # Access token (stored encrypted ideally)
+    project_id = Column(String, nullable=False)  # Project ID or path (e.g., "12345" or "group/project")
+    description = Column(String, nullable=True)  # Optional description
+    verify_ssl = Column(Boolean, default=False)  # Whether to verify SSL certs (False for self-hosted)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    watchers = relationship("RepoWatcher", back_populates="gitlab_repo")
+
+
 class RepoWatcher(Base):
     """Configuration for watching a GitLab repository for MR security reviews"""
     __tablename__ = "repo_watchers"
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)  # Human-readable name for this watcher
-    gitlab_url = Column(String, nullable=False)  # e.g., https://gitlab.com
-    gitlab_token = Column(String)  # Encrypted access token
-    project_id = Column(String, nullable=False)  # GitLab project ID or path (e.g., "group/project")
+
+    # GitLab connection - can use saved repo or manual entry
+    gitlab_repo_id = Column(Integer, ForeignKey("gitlab_repos.id"), nullable=True)
+    # Fallback fields if not using a saved repo (kept for backwards compatibility)
+    gitlab_url = Column(String, nullable=True)  # e.g., https://gitlab.com
+    gitlab_token = Column(String, nullable=True)  # Encrypted access token
+    project_id = Column(String, nullable=True)  # GitLab project ID or path (e.g., "group/project")
+
     branch_filter = Column(String, nullable=True)  # Regex or glob pattern for branches to watch
     label_filter = Column(String, nullable=True)  # Comma-separated labels to filter MRs
 
@@ -434,6 +458,7 @@ class RepoWatcher(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
+    gitlab_repo = relationship("GitLabRepo", back_populates="watchers")
     scan_profile = relationship("ScanProfile")
     review_model = relationship("ModelConfig")
     webhook = relationship("WebhookConfig")
@@ -445,7 +470,8 @@ class MRReview(Base):
     __tablename__ = "mr_reviews"
 
     id = Column(Integer, primary_key=True)
-    watcher_id = Column(Integer, ForeignKey("repo_watchers.id"), nullable=False, index=True)
+    watcher_id = Column(Integer, ForeignKey("repo_watchers.id"), nullable=True, index=True)  # Nullable for manual reviews
+    gitlab_repo_id = Column(Integer, ForeignKey("gitlab_repos.id"), nullable=True, index=True)  # For manual reviews with saved repo
 
     # GitLab MR identification
     mr_iid = Column(Integer, nullable=False)  # GitLab MR internal ID within project
@@ -457,6 +483,8 @@ class MRReview(Base):
 
     # Review status
     status = Column(String, default="pending")  # pending, reviewing, completed, error
+    files_reviewed = Column(Integer, default=0)  # Number of files analyzed
+    post_comments = Column(Boolean, default=False)  # Whether to post comments to GitLab
 
     # Phase 1: Diff review results (fast inline feedback)
     diff_findings = Column(JSON, nullable=True)  # List of inline comments from diff analysis
@@ -481,4 +509,6 @@ class MRReview(Base):
 
     # Relationships
     watcher = relationship("RepoWatcher", back_populates="reviews")
+    gitlab_repo = relationship("GitLabRepo")
     scan = relationship("Scan")
+    findings = relationship("Finding", back_populates="mr_review")

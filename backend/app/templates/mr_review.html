@@ -12,26 +12,41 @@
         <!-- Review Form -->
         <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
             <form id="review-form" class="space-y-4">
-                <div class="grid grid-cols-2 gap-4">
+                <!-- Saved Repo Selection -->
+                {% if gitlab_repos %}
+                <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Saved Repository</label>
+                    <select name="gitlab_repo_id" id="gitlab_repo_id" onchange="selectRepo(this.value)"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">-- Select a saved repo or enter manually --</option>
+                        {% for repo in gitlab_repos %}
+                        <option value="{{ repo.id }}">{{ repo.name }} ({{ repo.project_id }})</option>
+                        {% endfor %}
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Select a saved repo to auto-fill connection details, or enter manually below</p>
+                </div>
+                {% endif %}
+
+                <div class="grid grid-cols-2 gap-4" id="manual-fields">
                     <div class="col-span-2">
                         <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
-                        <input type="text" name="gitlab_url" id="gitlab_url" value="https://gitlab.com"
+                        <input type="text" name="gitlab_url" id="gitlab_url" value="https://192.168.33.158"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="https://gitlab.com">
                         <p class="text-xs text-gray-500 mt-1">Your GitLab instance URL</p>
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Access Token *</label>
-                        <input type="password" name="gitlab_token" id="gitlab_token" required
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Access Token <span id="token-required">*</span></label>
+                        <input type="password" name="gitlab_token" id="gitlab_token"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="glpat-xxxxxxxxxxxx">
                         <p class="text-xs text-gray-500 mt-1">Personal access token with api scope</p>
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path *</label>
-                        <input type="text" name="project_id" id="project_id" required
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path <span id="project-required">*</span></label>
+                        <input type="text" name="project_id" id="project_id"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                             placeholder="12345 or group/project">
                     </div>
@@ -45,12 +60,11 @@
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-1">Review Model</label>
-                        <select name="model_id" id="model_id"
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
+                        <select name="scan_profile_id" id="scan_profile_id"
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="">Default Model</option>
-                            {% for model in models %}
-                            <option value="{{ model.id }}">{{ model.name }}</option>
+                            {% for profile in profiles %}
+                            <option value="{{ profile.id }}" {% if profile.name == 'Quick Scan' %}selected{% endif %}>{{ profile.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -109,9 +123,61 @@
 </div>
 
 <script>
+// Saved repos data for auto-fill
+const savedRepos = {
+    {% for repo in gitlab_repos %}
+    {{ repo.id }}: {
+        gitlab_url: "{{ repo.gitlab_url }}",
+        project_id: "{{ repo.project_id }}"
+    },
+    {% endfor %}
+};
+
+function selectRepo(repoId) {
+    const manualFields = document.getElementById('manual-fields');
+    const urlField = document.getElementById('gitlab_url');
+    const tokenField = document.getElementById('gitlab_token');
+    const projectField = document.getElementById('project_id');
+    const tokenRequired = document.getElementById('token-required');
+    const projectRequired = document.getElementById('project-required');
+
+    if (repoId && savedRepos[repoId]) {
+        // Auto-fill from saved repo
+        const repo = savedRepos[repoId];
+        urlField.value = repo.gitlab_url;
+        projectField.value = repo.project_id;
+        tokenField.value = '';
+        tokenField.placeholder = 'Using saved token';
+        // Make fields optional when using saved repo
+        tokenField.removeAttribute('required');
+        projectField.removeAttribute('required');
+        tokenRequired.style.display = 'none';
+        projectRequired.style.display = 'none';
+        // Visually indicate these are pre-filled
+        urlField.classList.add('bg-gray-800');
+        projectField.classList.add('bg-gray-800');
+    } else {
+        // Manual entry mode
+        urlField.value = 'https://192.168.33.158';
+        tokenField.value = '';
+        projectField.value = '';
+        tokenField.placeholder = 'glpat-xxxxxxxxxxxx';
+        tokenRequired.style.display = '';
+        projectRequired.style.display = '';
+        urlField.classList.remove('bg-gray-800');
+        projectField.classList.remove('bg-gray-800');
+    }
+}
+
 function clearForm() {
     document.getElementById('review-form').reset();
     document.getElementById('results-section').classList.add('hidden');
+    // Reset repo selection
+    const repoSelect = document.getElementById('gitlab_repo_id');
+    if (repoSelect) {
+        repoSelect.value = '';
+        selectRepo('');
+    }
 }
 
 document.getElementById('review-form').addEventListener('submit', async (e) => {
@@ -145,10 +211,19 @@ document.getElementById('review-form').addEventListener('submit', async (e) => {
         if (!response.ok) {
             resultsSection.classList.remove('hidden');
             resultsStatus.innerHTML = '<span class="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded">Error</span>';
+            // Handle both custom errors and FastAPI validation errors
+            let errorMsg = data.error || 'Unknown error occurred';
+            if (data.detail) {
+                if (Array.isArray(data.detail)) {
+                    errorMsg = data.detail.map(d => `${d.loc?.join('.') || ''}: ${d.msg}`).join(', ');
+                } else {
+                    errorMsg = data.detail;
+                }
+            }
             resultsContent.innerHTML = `
                 <div class="text-red-400">
                     <p class="font-medium">Error</p>
-                    <p class="text-sm mt-1">${data.error || 'Unknown error occurred'}</p>
+                    <p class="text-sm mt-1">${escapeHtml(errorMsg)}</p>
                 </div>
             `;
             return;
