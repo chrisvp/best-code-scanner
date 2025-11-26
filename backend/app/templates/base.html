@@ -121,14 +121,20 @@
         <!-- Chat Panel -->
         <div id="chat-panel" class="hidden absolute bottom-16 right-0 w-96 bg-gray-800 rounded-xl shadow-2xl border border-gray-700 overflow-hidden">
             <!-- Header -->
-            <div class="bg-gray-900 px-4 py-3 flex items-center justify-between border-b border-gray-700">
-                <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <span class="text-sm font-medium text-white">Security Assistant</span>
+            <div class="bg-gray-900 px-4 py-3 border-b border-gray-700">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                        <span class="text-sm font-medium text-white">Security Assistant</span>
+                    </div>
+                    <button id="clear-chat" class="text-gray-400 hover:text-red-400 text-xs transition-colors">
+                        Clear History
+                    </button>
                 </div>
-                <button id="clear-chat" class="text-gray-400 hover:text-red-400 text-xs transition-colors">
-                    Clear History
-                </button>
+                <!-- Model Picker -->
+                <select id="chat-model-select" class="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-blue-500">
+                    <option value="">Default Model</option>
+                </select>
             </div>
 
             <!-- Messages -->
@@ -165,6 +171,8 @@
         const form = document.getElementById('quick-chat-form');
         const input = document.getElementById('chat-input');
         const clearBtn = document.getElementById('clear-chat');
+        const modelSelect = document.getElementById('chat-model-select');
+        let modelsLoaded = false;
 
         // Get current scan ID from URL if on scan page
         function getScanId() {
@@ -224,10 +232,13 @@
             div.className = 'flex justify-start';
             div.innerHTML = `
                 <div class="bg-gray-700 rounded-lg px-3 py-2">
-                    <div class="flex gap-1">
-                        <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                        <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
-                        <div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-gray-400 italic">AI is typing...</span>
+                        <div class="flex gap-1">
+                            <div class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></div>
+                            <div class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                            <div class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                        </div>
                     </div>
                 </div>
             `;
@@ -246,6 +257,33 @@
             return div.innerHTML;
         }
 
+        // Load available models
+        async function loadModels() {
+            if (modelsLoaded) return;
+            try {
+                const response = await fetch('/models');
+                const models = await response.json();
+                modelSelect.innerHTML = '<option value="">Default Model</option>';
+                models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.name;
+                    modelSelect.appendChild(option);
+                });
+                // Restore saved selection
+                const savedModel = localStorage.getItem('chat_model_id');
+                if (savedModel) modelSelect.value = savedModel;
+                modelsLoaded = true;
+            } catch (error) {
+                console.error('Failed to load models:', error);
+            }
+        }
+
+        // Save model selection
+        modelSelect.addEventListener('change', () => {
+            localStorage.setItem('chat_model_id', modelSelect.value);
+        });
+
         // Toggle panel
         toggle.addEventListener('click', () => {
             const isOpen = !panel.classList.contains('hidden');
@@ -257,6 +295,7 @@
                 panel.classList.remove('hidden');
                 chatIcon.classList.add('hidden');
                 closeIcon.classList.remove('hidden');
+                loadModels();
                 loadHistory();
                 input.focus();
             }
@@ -287,12 +326,14 @@
 
             try {
                 const scanId = getScanId();
+                const selectedModel = modelSelect.value;
                 let response;
 
                 if (scanId) {
                     // Use scan-specific chat endpoint
                     const formData = new FormData();
                     formData.append('message', message);
+                    if (selectedModel) formData.append('model_id', selectedModel);
                     response = await fetch(`/scan/${scanId}/chat/message`, {
                         method: 'POST',
                         body: formData
@@ -301,6 +342,7 @@
                     // Use general chat endpoint (POST to /chat/message)
                     const formData = new FormData();
                     formData.append('message', message);
+                    if (selectedModel) formData.append('model_id', selectedModel);
                     response = await fetch('/chat/message', {
                         method: 'POST',
                         body: formData

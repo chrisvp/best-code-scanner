@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFile, File
+from typing import Optional
 import os
 import tempfile
 from fastapi.templating import Jinja2Templates
@@ -1216,10 +1217,11 @@ async def chat_page(request: Request, scan_id: int, db: Session = Depends(get_db
 async def chat_message(
     scan_id: int,
     message: str = Form(...),
+    model_id: Optional[int] = Form(None),
     db: Session = Depends(get_db)
 ):
     """Send a message and get a response from the interactive agent"""
-    from app.services.orchestration.model_orchestrator import ModelOrchestrator, ModelConfig, ModelPool
+    from app.services.orchestration.model_orchestrator import ModelOrchestrator, ModelConfig as ModelConfigClass, ModelPool
 
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
@@ -1232,14 +1234,23 @@ async def chat_message(
     except ImportError:
         return {"error": "Interactive agent not available"}
 
-    # Get or create chat session
-    session_key = f"chat_{scan_id}"
+    # Get or create chat session (include model_id in key for different model sessions)
+    session_key = f"chat_{scan_id}_{model_id or 'default'}"
     if session_key not in _chat_sessions:
-        # Initialize model orchestrator to get primary analyzer
+        # Initialize model orchestrator
         orchestrator = ModelOrchestrator(db)
         await orchestrator.initialize()
 
-        model_pool = orchestrator.get_primary_analyzer()
+        # Get specific model or primary analyzer
+        model_pool = None
+        if model_id:
+            model_config = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+            if model_config:
+                model_pool = orchestrator.get_pool(model_config.name)
+
+        if not model_pool:
+            model_pool = orchestrator.get_primary_analyzer()
+
         if not model_pool:
             return {"error": "No analyzer model configured"}
 
@@ -1302,6 +1313,7 @@ async def chat_history(scan_id: int):
 @router.post("/chat/message")
 async def general_chat_message(
     message: str = Form(...),
+    model_id: Optional[int] = Form(None),
     db: Session = Depends(get_db)
 ):
     """General security chat endpoint (no specific scan context)"""
@@ -1311,7 +1323,16 @@ async def general_chat_message(
     orchestrator = ModelOrchestrator(db)
     await orchestrator.initialize()
 
-    model_pool = orchestrator.get_primary_analyzer()
+    # Get specific model or primary analyzer
+    model_pool = None
+    if model_id:
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+        if model_config:
+            model_pool = orchestrator.get_pool(model_config.name)
+
+    if not model_pool:
+        model_pool = orchestrator.get_primary_analyzer()
+
     if not model_pool:
         await orchestrator.shutdown()
         return {"error": "No analyzer model configured", "response": "Please configure an analyzer model in Settings."}
