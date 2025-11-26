@@ -348,26 +348,54 @@ class MRReviewerService:
             summary = await self._generate_summary(files_reviewed, all_findings)
             review.diff_summary = summary
 
+            # Always generate and store the formatted comments (even in dry-run mode)
+            generated_comments = {
+                "inline_comments": [],
+                "summary_comment": None
+            }
+
+            # Get diff refs for inline comments
+            base_sha = diff_data.get("diff_refs", {}).get("base_sha")
+            head_sha = diff_data.get("diff_refs", {}).get("head_sha")
+            start_sha = diff_data.get("diff_refs", {}).get("start_sha")
+
+            # Generate inline comments for each finding
+            for finding in all_findings:
+                comment_body = self._format_inline_comment(finding)
+                generated_comments["inline_comments"].append({
+                    "file_path": finding["file_path"],
+                    "line": finding.get("line", 1),
+                    "body": comment_body,
+                    "base_sha": base_sha,
+                    "head_sha": head_sha,
+                    "start_sha": start_sha,
+                })
+
+            # Generate summary comment
+            summary_comment = self._format_summary_comment(
+                files_reviewed=files_reviewed,
+                findings=all_findings,
+                summary=summary,
+            )
+            generated_comments["summary_comment"] = summary_comment
+
+            # Store all generated comments (even if not posted)
+            review.generated_comments = generated_comments
+
             # Post comments to GitLab only if post_comments is enabled
             comments_posted = []
             if watcher.post_comments and all_findings:
-                # Get diff refs for inline comments
-                base_sha = diff_data.get("diff_refs", {}).get("base_sha")
-                head_sha = diff_data.get("diff_refs", {}).get("head_sha")
-                start_sha = diff_data.get("diff_refs", {}).get("start_sha")
-
-                for finding in all_findings:
+                for gen_comment in generated_comments["inline_comments"]:
                     try:
-                        comment_body = self._format_inline_comment(finding)
                         result = await gitlab.post_inline_comment(
                             project_id=watcher.project_id,
                             mr_iid=mr_iid,
-                            file_path=finding["file_path"],
-                            new_line=finding.get("line", 1),
-                            comment=comment_body,
-                            base_sha=base_sha,
-                            head_sha=head_sha,
-                            start_sha=start_sha,
+                            file_path=gen_comment["file_path"],
+                            new_line=gen_comment["line"],
+                            comment=gen_comment["body"],
+                            base_sha=gen_comment["base_sha"],
+                            head_sha=gen_comment["head_sha"],
+                            start_sha=gen_comment["start_sha"],
                         )
                         comments_posted.append(result.get("id"))
                     except GitLabError as e:
@@ -375,21 +403,16 @@ class MRReviewerService:
 
                 # Post summary comment
                 try:
-                    summary_comment = self._format_summary_comment(
-                        files_reviewed=files_reviewed,
-                        findings=all_findings,
-                        summary=summary,
-                    )
                     result = await gitlab.post_mr_comment(
                         project_id=watcher.project_id,
                         mr_iid=mr_iid,
-                        comment=summary_comment,
+                        comment=generated_comments["summary_comment"],
                     )
                     comments_posted.append(result.get("id"))
                 except GitLabError as e:
                     logger.warning(f"Failed to post summary comment: {e}")
             elif not watcher.post_comments:
-                logger.info(f"Dry run mode: {len(all_findings)} findings tracked locally (post_comments=False)")
+                logger.info(f"Dry run mode: {len(all_findings)} findings with {len(generated_comments['inline_comments'])} comments stored locally (post_comments=False)")
 
             review.comments_posted = comments_posted
             review.status = "completed"

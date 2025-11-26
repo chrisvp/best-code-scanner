@@ -464,6 +464,7 @@ class MRReview(Base):
     scan_completed_at = Column(DateTime(timezone=True), nullable=True)
 
     # GitLab interaction tracking
+    generated_comments = Column(JSON, nullable=True)  # Pre-formatted comments ready for GitLab (stored even in dry-run)
     comments_posted = Column(JSON, nullable=True)  # List of posted comment IDs for deduplication
     approval_status = Column(String, nullable=True)  # approved, changes_requested, pending
 
