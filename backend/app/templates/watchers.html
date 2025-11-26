@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-white">GitLab MR Watchers</h1>
+                <p class="text-gray-400 text-sm mt-1">Automatically scan merge requests for security vulnerabilities</p>
+            </div>
+            <button onclick="document.getElementById('add-watcher-modal').classList.remove('hidden')"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+                Add Watcher
+            </button>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-white">{{ watchers|length }}</div>
+                <div class="text-sm text-gray-400">Total Watchers</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-green-400">{{ watchers|selectattr('status', 'equalto', 'running')|list|length }}</div>
+                <div class="text-sm text-gray-400">Running</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-yellow-400">{{ watchers|selectattr('status', 'equalto', 'paused')|list|length }}</div>
+                <div class="text-sm text-gray-400">Paused</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-red-400">{{ watchers|selectattr('status', 'equalto', 'error')|list|length }}</div>
+                <div class="text-sm text-gray-400">Error</div>
+            </div>
+        </div>
+
+        <!-- Watchers Table -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-900/50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Project</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Profile</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Last Check</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Reviews</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="watchers-list" class="divide-y divide-gray-700">
+                    {% for watcher in watchers %}
+                    {% include "partials/watcher_row.html" %}
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            {% if not watchers %}
+            <div class="p-8 text-center text-gray-500">
+                <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                </svg>
+                <p class="text-sm">No watchers configured yet</p>
+                <p class="text-xs mt-1">Add a watcher to start monitoring GitLab MRs</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Add Watcher Modal -->
+<div id="add-watcher-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add GitLab Watcher</h2>
+            <button onclick="document.getElementById('add-watcher-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <form hx-post="/watchers" hx-target="#watchers-list" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) { document.getElementById('add-watcher-modal').classList.add('hidden'); location.reload(); }">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Watcher Name *</label>
+                    <input type="text" name="name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., Main Project Watcher">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                    <input type="text" name="gitlab_url" value="https://gitlab.com"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="https://gitlab.com">
+                    <p class="text-xs text-gray-500 mt-1">Use your self-hosted GitLab URL if applicable</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Access Token *</label>
+                    <input type="password" name="gitlab_token" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="glpat-xxxxxxxxxxxx">
+                    <p class="text-xs text-gray-500 mt-1">Personal access token with api scope</p>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path *</label>
+                    <input type="text" name="project_id" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="12345 or group/project">
+                    <p class="text-xs text-gray-500 mt-1">Numeric ID or full path like "mygroup/myproject"</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Branch Filter</label>
+                        <input type="text" name="branch_filter"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="main|develop">
+                        <p class="text-xs text-gray-500 mt-1">Regex for target branches</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Label Filter</label>
+                        <input type="text" name="label_filter"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="security-review">
+                        <p class="text-xs text-gray-500 mt-1">Comma-separated labels</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
+                        <select name="scan_profile_id"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">Default (Quick Scan)</option>
+                            {% for profile in profiles %}
+                            <option value="{{ profile.id }}">{{ profile.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Review Model</label>
+                        <select name="review_model_id"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">Default Model</option>
+                            {% for model in models %}
+                            <option value="{{ model.id }}">{{ model.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Poll Interval (seconds)</label>
+                    <input type="number" name="poll_interval" value="300" min="60" max="86400"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <p class="text-xs text-gray-500 mt-1">Minimum 60 seconds. Default: 300 (5 minutes)</p>
+                </div>
+
+                <!-- Post Comments Toggle -->
+                <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" name="post_comments" value="true"
+                            class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 mr-3">
+                        <div>
+                            <span class="text-sm font-medium text-gray-300">Post comments to GitLab</span>
+                            <p class="text-xs text-gray-500 mt-0.5">When enabled, findings will be posted as inline comments on MRs. When disabled, findings are only tracked locally (dry run mode for testing).</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-watcher-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                    Cancel
+                </button>
+                <button type="submit"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                    Create Watcher
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- View Reviews Modal -->
+<div id="reviews-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">MR Reviews</h2>
+            <button onclick="document.getElementById('reviews-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div id="reviews-content">
+            <!-- Reviews will be loaded here via HTMX -->
+            <div class="text-center py-8 text-gray-500">Loading reviews...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Watcher Modal -->
+<div id="edit-watcher-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Edit Watcher</h2>
+            <button onclick="document.getElementById('edit-watcher-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <form id="edit-watcher-form" onsubmit="submitEditWatcher(event)">
+            <input type="hidden" name="watcher_id" id="edit-watcher-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Watcher Name</label>
+                    <input type="text" name="name" id="edit-watcher-name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                    <input type="text" name="gitlab_url" id="edit-watcher-url"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Access Token</label>
+                    <input type="password" name="gitlab_token" id="edit-watcher-token"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Leave empty to keep current">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path</label>
+                    <input type="text" name="project_id" id="edit-watcher-project"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Branch Filter</label>
+                        <input type="text" name="branch_filter" id="edit-watcher-branch"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Poll Interval</label>
+                        <input type="number" name="poll_interval" id="edit-watcher-interval" min="60"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+
+                <!-- Post Comments Toggle -->
+                <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" name="post_comments" id="edit-watcher-post-comments" value="true"
+                            class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 mr-3">
+                        <div>
+                            <span class="text-sm font-medium text-gray-300">Post comments to GitLab</span>
+                            <p class="text-xs text-gray-500 mt-0.5">When enabled, findings will be posted as inline comments on MRs.</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('edit-watcher-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+// Store watcher data for editing
+const watchersData = {
+    {% for watcher in watchers %}
+    {{ watcher.id }}: {
+        name: "{{ watcher.name }}",
+        gitlab_url: "{{ watcher.gitlab_url }}",
+        project_id: "{{ watcher.project_id }}",
+        branch_filter: "{{ watcher.branch_filter or '' }}",
+        poll_interval: {{ watcher.poll_interval }},
+        post_comments: {{ 'true' if watcher.post_comments else 'false' }}
+    },
+    {% endfor %}
+};
+
+function editWatcher(id) {
+    const w = watchersData[id];
+    if (!w) return;
+
+    document.getElementById('edit-watcher-id').value = id;
+    document.getElementById('edit-watcher-name').value = w.name;
+    document.getElementById('edit-watcher-url').value = w.gitlab_url;
+    document.getElementById('edit-watcher-project').value = w.project_id;
+    document.getElementById('edit-watcher-branch').value = w.branch_filter;
+    document.getElementById('edit-watcher-interval').value = w.poll_interval;
+    document.getElementById('edit-watcher-post-comments').checked = w.post_comments;
+    document.getElementById('edit-watcher-modal').classList.remove('hidden');
+}
+
+async function submitEditWatcher(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const id = formData.get('watcher_id');
+
+    try {
+        const response = await fetch(`/watchers/${id}`, {
+            method: 'PUT',
+            body: formData
+        });
+        if (response.ok) {
+            location.reload();
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Failed to update watcher');
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function deleteWatcher(id, name) {
+    if (!confirm(`Delete watcher "${name}"? This will also delete all associated reviews.`)) return;
+
+    try {
+        const response = await fetch(`/watchers/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+            location.reload();
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Failed to delete watcher');
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+function viewReviews(watcherId) {
+    document.getElementById('reviews-content').innerHTML = '<div class="text-center py-8 text-gray-500">Loading reviews...</div>';
+    document.getElementById('reviews-modal').classList.remove('hidden');
+
+    // Fetch reviews
+    htmx.ajax('GET', `/watchers/${watcherId}/reviews`, {target: '#reviews-content', swap: 'innerHTML'});
+}
+
+async function pollNow(id) {
+    try {
+        const response = await fetch(`/watchers/${id}/poll`, { method: 'POST' });
+        const data = await response.json();
+        if (response.ok) {
+            alert('Poll task queued successfully');
+        } else {
+            alert(data.error || 'Failed to queue poll');
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+</script>
+{% endblock %}

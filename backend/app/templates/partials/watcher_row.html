@@ -1,0 +1,114 @@
+<tr id="watcher-row-{{ watcher.id }}" class="hover:bg-gray-700/30 transition-colors">
+    <td class="px-4 py-3">
+        {% if watcher.status == 'running' %}
+        <span class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-green-500/20 text-green-400 rounded-full">
+            <span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></span>
+            Running
+        </span>
+        {% elif watcher.status == 'paused' %}
+        <span class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-yellow-500/20 text-yellow-400 rounded-full">
+            <span class="w-1.5 h-1.5 bg-yellow-400 rounded-full"></span>
+            Paused
+        </span>
+        {% elif watcher.status == 'error' %}
+        <span class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-red-500/20 text-red-400 rounded-full" title="{{ watcher.last_error or 'Unknown error' }}">
+            <span class="w-1.5 h-1.5 bg-red-400 rounded-full"></span>
+            Error
+        </span>
+        {% else %}
+        <span class="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-gray-500/20 text-gray-400 rounded-full">
+            {{ watcher.status|default('Unknown') }}
+        </span>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3">
+        <div class="flex items-center gap-2">
+            <span class="font-medium text-white">{{ watcher.name }}</span>
+            {% if watcher.post_comments %}
+            <span class="px-1.5 py-0.5 text-xs font-medium bg-blue-500/20 text-blue-400 rounded" title="Posts comments to GitLab">Live</span>
+            {% else %}
+            <span class="px-1.5 py-0.5 text-xs font-medium bg-gray-500/20 text-gray-400 rounded" title="Dry run: findings tracked locally only">Dry Run</span>
+            {% endif %}
+        </div>
+        <div class="text-xs text-gray-500 truncate max-w-[200px]" title="{{ watcher.gitlab_url }}">
+            {{ watcher.gitlab_url }}
+        </div>
+    </td>
+    <td class="px-4 py-3">
+        <div class="text-sm text-white">{{ watcher.project_id }}</div>
+        {% if watcher.branch_filter %}
+        <div class="text-xs text-gray-500">Branch: {{ watcher.branch_filter }}</div>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3">
+        {% if watcher.scan_profile %}
+        <span class="text-sm text-blue-400">{{ watcher.scan_profile.name }}</span>
+        {% else %}
+        <span class="text-sm text-gray-500">Default</span>
+        {% endif %}
+    </td>
+    <td class="px-4 py-3">
+        {% if watcher.last_check %}
+        <div class="text-sm text-gray-400">{{ watcher.last_check.strftime('%Y-%m-%d %H:%M') }}</div>
+        {% else %}
+        <div class="text-sm text-gray-500">Never</div>
+        {% endif %}
+        <div class="text-xs text-gray-600">Every {{ watcher.poll_interval }}s</div>
+    </td>
+    <td class="px-4 py-3">
+        <button onclick="viewReviews({{ watcher.id }})"
+            class="text-sm text-blue-400 hover:text-blue-300 hover:underline">
+            {{ watcher.reviews|length if watcher.reviews else 0 }} reviews
+        </button>
+    </td>
+    <td class="px-4 py-3">
+        <div class="flex items-center gap-1">
+            {% if watcher.status == 'running' %}
+            <button hx-post="/watchers/{{ watcher.id }}/stop"
+                    hx-target="#watcher-row-{{ watcher.id }}"
+                    hx-swap="outerHTML"
+                    class="p-1.5 text-yellow-400 hover:text-yellow-300 hover:bg-gray-700 rounded transition-colors"
+                    title="Stop">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </button>
+            {% else %}
+            <button hx-post="/watchers/{{ watcher.id }}/start"
+                    hx-target="#watcher-row-{{ watcher.id }}"
+                    hx-swap="outerHTML"
+                    class="p-1.5 text-green-400 hover:text-green-300 hover:bg-gray-700 rounded transition-colors"
+                    title="Start">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </button>
+            {% endif %}
+
+            <button onclick="pollNow({{ watcher.id }})"
+                class="p-1.5 text-blue-400 hover:text-blue-300 hover:bg-gray-700 rounded transition-colors"
+                title="Poll Now">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+            </button>
+
+            <button onclick="editWatcher({{ watcher.id }})"
+                class="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                title="Edit">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                </svg>
+            </button>
+
+            <button onclick="deleteWatcher({{ watcher.id }}, '{{ watcher.name }}')"
+                class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                title="Delete">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+            </button>
+        </div>
+    </td>
+</tr>

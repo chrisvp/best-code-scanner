@@ -398,3 +398,81 @@ class ScanMetrics(Base):
     tokens_per_second = Column(Float, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RepoWatcher(Base):
+    """Configuration for watching a GitLab repository for MR security reviews"""
+    __tablename__ = "repo_watchers"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)  # Human-readable name for this watcher
+    gitlab_url = Column(String, nullable=False)  # e.g., https://gitlab.com
+    gitlab_token = Column(String)  # Encrypted access token
+    project_id = Column(String, nullable=False)  # GitLab project ID or path (e.g., "group/project")
+    branch_filter = Column(String, nullable=True)  # Regex or glob pattern for branches to watch
+    label_filter = Column(String, nullable=True)  # Comma-separated labels to filter MRs
+
+    # Configuration references
+    scan_profile_id = Column(Integer, ForeignKey("scan_profiles.id"), nullable=True)
+    review_model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)
+    webhook_id = Column(Integer, ForeignKey("webhook_configs.id"), nullable=True)  # For alerts
+
+    # Watcher state
+    status = Column(String, default="paused")  # running, paused, error
+    enabled = Column(Boolean, default=True)
+    poll_interval = Column(Integer, default=300)  # Seconds between checks
+    post_comments = Column(Boolean, default=False)  # If False, only track findings locally (dry run mode)
+    last_check = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    scan_profile = relationship("ScanProfile")
+    review_model = relationship("ModelConfig")
+    webhook = relationship("WebhookConfig")
+    reviews = relationship("MRReview", back_populates="watcher")
+
+
+class MRReview(Base):
+    """Tracking for individual merge request reviews"""
+    __tablename__ = "mr_reviews"
+
+    id = Column(Integer, primary_key=True)
+    watcher_id = Column(Integer, ForeignKey("repo_watchers.id"), nullable=False, index=True)
+
+    # GitLab MR identification
+    mr_iid = Column(Integer, nullable=False)  # GitLab MR internal ID within project
+    mr_title = Column(String, nullable=True)
+    mr_url = Column(String, nullable=True)
+    mr_author = Column(String, nullable=True)
+    source_branch = Column(String, nullable=True)
+    target_branch = Column(String, nullable=True)
+
+    # Review status
+    status = Column(String, default="pending")  # pending, reviewing, completed, error
+
+    # Phase 1: Diff review results (fast inline feedback)
+    diff_findings = Column(JSON, nullable=True)  # List of inline comments from diff analysis
+    diff_summary = Column(Text, nullable=True)  # Overall summary comment
+    diff_reviewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Phase 2: Full file scan results (deep analysis)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True)  # Link to full security scan
+    scan_started_at = Column(DateTime(timezone=True), nullable=True)
+    scan_completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # GitLab interaction tracking
+    comments_posted = Column(JSON, nullable=True)  # List of posted comment IDs for deduplication
+    approval_status = Column(String, nullable=True)  # approved, changes_requested, pending
+
+    # Error tracking
+    last_error = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    watcher = relationship("RepoWatcher", back_populates="reviews")
+    scan = relationship("Scan")

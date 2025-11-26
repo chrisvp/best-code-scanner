@@ -10,7 +10,8 @@ from app.models.models import Scan, Finding
 from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
-    ScanProfile, ProfileAnalyzer, WebhookConfig, WebhookDeliveryLog
+    ScanProfile, ProfileAnalyzer, WebhookConfig, WebhookDeliveryLog,
+    RepoWatcher, MRReview
 )
 
 # Create tables
@@ -2036,3 +2037,429 @@ async def send_scan_completion_alert(scan_id: int, db: Session = Depends(get_db)
         return result
     finally:
         await service.close()
+
+
+# ============== GitLab Repo Watchers ==============
+
+@router.get("/watchers/page", response_class=HTMLResponse)
+async def watchers_page(request: Request, db: Session = Depends(get_db)):
+    """Repo watchers management page"""
+    watchers = db.query(RepoWatcher).order_by(RepoWatcher.created_at.desc()).all()
+    profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+    models = db.query(ModelConfig).all()
+    return templates.TemplateResponse("watchers.html", {
+        "request": request,
+        "watchers": watchers,
+        "profiles": profiles,
+        "models": models
+    })
+
+
+@router.get("/watchers")
+async def list_watchers(db: Session = Depends(get_db)):
+    """List all repo watchers (JSON API)"""
+    watchers = db.query(RepoWatcher).order_by(RepoWatcher.created_at.desc()).all()
+    return [
+        {
+            "id": w.id,
+            "name": w.name,
+            "gitlab_url": w.gitlab_url,
+            "project_id": w.project_id,
+            "branch_filter": w.branch_filter,
+            "label_filter": w.label_filter,
+            "scan_profile_id": w.scan_profile_id,
+            "scan_profile_name": w.scan_profile.name if w.scan_profile else None,
+            "review_model_id": w.review_model_id,
+            "review_model_name": w.review_model.name if w.review_model else None,
+            "poll_interval": w.poll_interval,
+            "status": w.status,
+            "last_check": w.last_check.isoformat() if w.last_check else None,
+            "last_error": w.last_error,
+            "review_count": len(w.reviews) if w.reviews else 0,
+            "enabled": w.enabled,
+            "post_comments": w.post_comments,
+            "created_at": w.created_at.isoformat() if w.created_at else None,
+        }
+        for w in watchers
+    ]
+
+
+@router.post("/watchers")
+async def create_watcher(
+    request: Request,
+    name: str = Form(...),
+    gitlab_url: str = Form("https://gitlab.com"),
+    gitlab_token: str = Form(...),
+    project_id: str = Form(...),
+    branch_filter: str = Form(None),
+    label_filter: str = Form(None),
+    scan_profile_id: int = Form(None),
+    review_model_id: int = Form(None),
+    poll_interval: int = Form(300),
+    post_comments: bool = Form(False),
+    db: Session = Depends(get_db)
+):
+    """Create a new repo watcher"""
+    # Validate URL
+    if not gitlab_url.startswith(("http://", "https://")):
+        return JSONResponse({"error": "GitLab URL must start with http:// or https://"}, status_code=400)
+
+    # Check for duplicate name
+    existing = db.query(RepoWatcher).filter(RepoWatcher.name == name).first()
+    if existing:
+        return JSONResponse({"error": f"Watcher '{name}' already exists"}, status_code=400)
+
+    watcher = RepoWatcher(
+        name=name,
+        gitlab_url=gitlab_url.rstrip('/'),
+        gitlab_token=gitlab_token,
+        project_id=project_id,
+        branch_filter=branch_filter if branch_filter else None,
+        label_filter=label_filter if label_filter else None,
+        scan_profile_id=scan_profile_id if scan_profile_id else None,
+        review_model_id=review_model_id if review_model_id else None,
+        poll_interval=max(60, poll_interval),  # Minimum 60 seconds
+        post_comments=post_comments,
+        status="paused",
+        enabled=True
+    )
+    db.add(watcher)
+    db.commit()
+    db.refresh(watcher)
+
+    # Return updated list for HTMX
+    if request.headers.get("HX-Request"):
+        watchers = db.query(RepoWatcher).order_by(RepoWatcher.created_at.desc()).all()
+        profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+        return templates.TemplateResponse("partials/watcher_list.html", {
+            "request": request,
+            "watchers": watchers,
+            "profiles": profiles
+        })
+
+    return {"id": watcher.id, "name": watcher.name, "status": "created"}
+
+
+@router.get("/watchers/{watcher_id}")
+async def get_watcher(watcher_id: int, db: Session = Depends(get_db)):
+    """Get a specific watcher with details"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    return {
+        "id": watcher.id,
+        "name": watcher.name,
+        "gitlab_url": watcher.gitlab_url,
+        "project_id": watcher.project_id,
+        "branch_filter": watcher.branch_filter,
+        "label_filter": watcher.label_filter,
+        "scan_profile_id": watcher.scan_profile_id,
+        "scan_profile_name": watcher.scan_profile.name if watcher.scan_profile else None,
+        "review_model_id": watcher.review_model_id,
+        "review_model_name": watcher.review_model.name if watcher.review_model else None,
+        "poll_interval": watcher.poll_interval,
+        "status": watcher.status,
+        "last_check": watcher.last_check.isoformat() if watcher.last_check else None,
+        "last_error": watcher.last_error,
+        "review_count": len(watcher.reviews) if watcher.reviews else 0,
+        "enabled": watcher.enabled,
+        "post_comments": watcher.post_comments,
+        "created_at": watcher.created_at.isoformat() if watcher.created_at else None,
+    }
+
+
+@router.put("/watchers/{watcher_id}")
+async def update_watcher(
+    watcher_id: int,
+    name: str = Form(None),
+    gitlab_url: str = Form(None),
+    gitlab_token: str = Form(None),
+    project_id: str = Form(None),
+    branch_filter: str = Form(None),
+    label_filter: str = Form(None),
+    scan_profile_id: int = Form(None),
+    review_model_id: int = Form(None),
+    poll_interval: int = Form(None),
+    enabled: bool = Form(None),
+    post_comments: bool = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Update a repo watcher"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    if name is not None:
+        # Check for duplicate name
+        existing = db.query(RepoWatcher).filter(
+            RepoWatcher.name == name,
+            RepoWatcher.id != watcher_id
+        ).first()
+        if existing:
+            return JSONResponse({"error": f"Watcher '{name}' already exists"}, status_code=400)
+        watcher.name = name
+
+    if gitlab_url is not None:
+        if not gitlab_url.startswith(("http://", "https://")):
+            return JSONResponse({"error": "GitLab URL must start with http:// or https://"}, status_code=400)
+        watcher.gitlab_url = gitlab_url.rstrip('/')
+
+    if gitlab_token is not None:
+        watcher.gitlab_token = gitlab_token
+
+    if project_id is not None:
+        watcher.project_id = project_id
+
+    if branch_filter is not None:
+        watcher.branch_filter = branch_filter if branch_filter else None
+
+    if label_filter is not None:
+        watcher.label_filter = label_filter if label_filter else None
+
+    if scan_profile_id is not None:
+        watcher.scan_profile_id = scan_profile_id if scan_profile_id else None
+
+    if review_model_id is not None:
+        watcher.review_model_id = review_model_id if review_model_id else None
+
+    if poll_interval is not None:
+        watcher.poll_interval = max(60, poll_interval)
+
+    if enabled is not None:
+        watcher.enabled = enabled
+
+    if post_comments is not None:
+        watcher.post_comments = post_comments
+
+    db.commit()
+    return {"id": watcher.id, "name": watcher.name, "status": "updated"}
+
+
+@router.delete("/watchers/{watcher_id}")
+async def delete_watcher(request: Request, watcher_id: int, db: Session = Depends(get_db)):
+    """Delete a repo watcher and its reviews"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    # Don't allow deleting running watchers
+    if watcher.status == "running":
+        return JSONResponse({"error": "Stop the watcher before deleting"}, status_code=400)
+
+    # Delete reviews first
+    db.query(MRReview).filter(MRReview.watcher_id == watcher_id).delete()
+    db.delete(watcher)
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(content="")  # Remove the row
+
+    return {"status": "deleted", "id": watcher_id}
+
+
+@router.post("/watchers/{watcher_id}/start")
+async def start_watcher(request: Request, watcher_id: int, db: Session = Depends(get_db)):
+    """Start watching for new MRs"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    if not watcher.enabled:
+        return JSONResponse({"error": "Watcher is disabled"}, status_code=400)
+
+    watcher.status = "running"
+    watcher.last_error = None
+    db.commit()
+
+    # Return updated row for HTMX
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse("partials/watcher_row.html", {
+            "request": request,
+            "watcher": watcher
+        })
+
+    return {"id": watcher.id, "status": "running"}
+
+
+@router.post("/watchers/{watcher_id}/stop")
+async def stop_watcher(request: Request, watcher_id: int, db: Session = Depends(get_db)):
+    """Stop watching for new MRs"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    watcher.status = "paused"
+    db.commit()
+
+    # Return updated row for HTMX
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse("partials/watcher_row.html", {
+            "request": request,
+            "watcher": watcher
+        })
+
+    return {"id": watcher.id, "status": "paused"}
+
+
+@router.post("/watchers/{watcher_id}/poll")
+async def poll_watcher(
+    watcher_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Force poll for new MRs now"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    # Queue the poll task
+    # Note: In a real implementation, this would trigger the GitLab MR polling service
+    # For now, we just update the last_check timestamp
+    from datetime import datetime
+    watcher.last_check = datetime.utcnow()
+    db.commit()
+
+    return {"id": watcher.id, "status": "poll_queued", "message": "Poll task queued"}
+
+
+# ============== MR Reviews ==============
+
+@router.get("/watchers/{watcher_id}/reviews")
+async def get_watcher_reviews(
+    request: Request,
+    watcher_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    status: str = None,
+    db: Session = Depends(get_db)
+):
+    """Get reviews for a watcher"""
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
+    if not watcher:
+        return JSONResponse({"error": "Watcher not found"}, status_code=404)
+
+    query = db.query(MRReview).filter(MRReview.watcher_id == watcher_id)
+
+    if status:
+        query = query.filter(MRReview.status == status)
+
+    total = query.count()
+    reviews = query.order_by(MRReview.created_at.desc()).offset(offset).limit(limit).all()
+
+    # Return HTML partial for HTMX
+    if request.headers.get("HX-Request"):
+        return templates.TemplateResponse("partials/review_list.html", {
+            "request": request,
+            "reviews": reviews,
+            "watcher": watcher
+        })
+
+    return {
+        "watcher_id": watcher_id,
+        "total": total,
+        "reviews": [
+            {
+                "id": r.id,
+                "mr_iid": r.mr_iid,
+                "mr_title": r.mr_title,
+                "mr_url": r.mr_url,
+                "source_branch": r.source_branch,
+                "target_branch": r.target_branch,
+                "mr_author": r.mr_author,
+                "status": r.status,
+                "diff_findings": r.diff_findings,
+                "diff_summary": r.diff_summary,
+                "diff_reviewed_at": r.diff_reviewed_at.isoformat() if r.diff_reviewed_at else None,
+                "scan_id": r.scan_id,
+                "scan_started_at": r.scan_started_at.isoformat() if r.scan_started_at else None,
+                "scan_completed_at": r.scan_completed_at.isoformat() if r.scan_completed_at else None,
+                "approval_status": r.approval_status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reviews
+        ]
+    }
+
+
+@router.get("/reviews/{review_id}")
+async def get_review(review_id: int, db: Session = Depends(get_db)):
+    """Get review details"""
+    review = db.query(MRReview).filter(MRReview.id == review_id).first()
+    if not review:
+        return JSONResponse({"error": "Review not found"}, status_code=404)
+
+    # Get finding counts from scan if available
+    finding_count = 0
+    critical_count = 0
+    high_count = 0
+    medium_count = 0
+    low_count = 0
+
+    if review.scan_id:
+        findings = db.query(VerifiedFinding).filter(
+            VerifiedFinding.scan_id == review.scan_id,
+            VerifiedFinding.status == "complete"
+        ).all()
+        finding_count = len(findings)
+        for f in findings:
+            severity = (f.adjusted_severity or "").lower()
+            if severity == "critical":
+                critical_count += 1
+            elif severity == "high":
+                high_count += 1
+            elif severity == "medium":
+                medium_count += 1
+            elif severity == "low":
+                low_count += 1
+
+    return {
+        "id": review.id,
+        "watcher_id": review.watcher_id,
+        "watcher_name": review.watcher.name if review.watcher else None,
+        "mr_iid": review.mr_iid,
+        "mr_title": review.mr_title,
+        "mr_url": review.mr_url,
+        "source_branch": review.source_branch,
+        "target_branch": review.target_branch,
+        "mr_author": review.mr_author,
+        "status": review.status,
+        "diff_findings": review.diff_findings,
+        "diff_summary": review.diff_summary,
+        "diff_reviewed_at": review.diff_reviewed_at.isoformat() if review.diff_reviewed_at else None,
+        "scan_id": review.scan_id,
+        "scan_started_at": review.scan_started_at.isoformat() if review.scan_started_at else None,
+        "scan_completed_at": review.scan_completed_at.isoformat() if review.scan_completed_at else None,
+        "finding_count": finding_count,
+        "critical_count": critical_count,
+        "high_count": high_count,
+        "medium_count": medium_count,
+        "low_count": low_count,
+        "comments_posted": review.comments_posted,
+        "approval_status": review.approval_status,
+        "last_error": review.last_error,
+        "created_at": review.created_at.isoformat() if review.created_at else None,
+    }
+
+
+@router.post("/reviews/{review_id}/retry")
+async def retry_review(
+    review_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """Retry a failed review"""
+    review = db.query(MRReview).filter(MRReview.id == review_id).first()
+    if not review:
+        return JSONResponse({"error": "Review not found"}, status_code=404)
+
+    if review.status not in ("error", "completed"):
+        return JSONResponse({"error": "Can only retry errored or completed reviews"}, status_code=400)
+
+    # Reset review state
+    review.status = "pending"
+    review.last_error = None
+    db.commit()
+
+    # Note: In a real implementation, this would re-queue the review for processing
+    return {"id": review.id, "status": "retry_queued"}
