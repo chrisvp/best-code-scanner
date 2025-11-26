@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold text-white">Manual MR Review</h1>
+            <p class="text-gray-400 text-sm mt-1">Review a specific GitLab merge request for security vulnerabilities</p>
+        </div>
+
+        <!-- Review Form -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-6">
+            <form id="review-form" class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="col-span-2">
+                        <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
+                        <input type="text" name="gitlab_url" id="gitlab_url" value="https://gitlab.com"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="https://gitlab.com">
+                        <p class="text-xs text-gray-500 mt-1">Your GitLab instance URL</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Access Token *</label>
+                        <input type="password" name="gitlab_token" id="gitlab_token" required
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="glpat-xxxxxxxxxxxx">
+                        <p class="text-xs text-gray-500 mt-1">Personal access token with api scope</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Project ID/Path *</label>
+                        <input type="text" name="project_id" id="project_id" required
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="12345 or group/project">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Merge Request IID *</label>
+                        <input type="number" name="mr_iid" id="mr_iid" required min="1"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="123">
+                        <p class="text-xs text-gray-500 mt-1">The MR number (e.g., !123)</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Review Model</label>
+                        <select name="model_id" id="model_id"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">Default Model</option>
+                            {% for model in models %}
+                            <option value="{{ model.id }}">{{ model.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Dry Run Option -->
+                <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="checkbox" name="post_comments" id="post_comments" value="true"
+                            class="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 mr-3">
+                        <div>
+                            <span class="text-sm font-medium text-gray-300">Post comments to GitLab</span>
+                            <p class="text-xs text-gray-500 mt-0.5">When unchecked (default), runs in dry-run mode - findings are analyzed but not posted to GitLab.</p>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="flex justify-end gap-3">
+                    <button type="button" onclick="clearForm()"
+                        class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                        Clear
+                    </button>
+                    <button type="submit" id="submit-btn"
+                        class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                        </svg>
+                        Review MR
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Results Section -->
+        <div id="results-section" class="hidden">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <div class="bg-gray-900/50 px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+                    <h2 class="text-lg font-medium text-white">Review Results</h2>
+                    <div id="results-status"></div>
+                </div>
+                <div id="results-content" class="p-4">
+                    <!-- Results will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-lg p-6 flex flex-col items-center">
+                <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+                <p class="text-white font-medium">Analyzing Merge Request...</p>
+                <p class="text-gray-400 text-sm mt-1">This may take a minute</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function clearForm() {
+    document.getElementById('review-form').reset();
+    document.getElementById('results-section').classList.add('hidden');
+}
+
+document.getElementById('review-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const form = e.target;
+    const submitBtn = document.getElementById('submit-btn');
+    const loading = document.getElementById('loading-overlay');
+    const resultsSection = document.getElementById('results-section');
+    const resultsContent = document.getElementById('results-content');
+    const resultsStatus = document.getElementById('results-status');
+
+    // Show loading
+    loading.classList.remove('hidden');
+    submitBtn.disabled = true;
+
+    try {
+        const formData = new FormData(form);
+
+        const response = await fetch('/mr-review/analyze', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        // Hide loading
+        loading.classList.add('hidden');
+        submitBtn.disabled = false;
+
+        if (!response.ok) {
+            resultsSection.classList.remove('hidden');
+            resultsStatus.innerHTML = '<span class="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded">Error</span>';
+            resultsContent.innerHTML = `
+                <div class="text-red-400">
+                    <p class="font-medium">Error</p>
+                    <p class="text-sm mt-1">${data.error || 'Unknown error occurred'}</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Show results
+        resultsSection.classList.remove('hidden');
+
+        const postStatus = data.post_comments
+            ? '<span class="px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded">Posted to GitLab</span>'
+            : '<span class="px-2 py-1 text-xs bg-yellow-500/20 text-yellow-400 rounded">Dry Run</span>';
+
+        resultsStatus.innerHTML = postStatus;
+
+        // Build results HTML
+        let html = `
+            <div class="space-y-4">
+                <!-- MR Info -->
+                <div class="bg-gray-900/50 rounded-lg p-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-white font-medium">${escapeHtml(data.mr_title || 'Merge Request')}</h3>
+                            <p class="text-sm text-gray-400">!${data.mr_iid} · ${data.source_branch} → ${data.target_branch}</p>
+                        </div>
+                        ${data.mr_url ? `<a href="${data.mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-sm">View in GitLab →</a>` : ''}
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-white">${data.files_reviewed || 0}</div>
+                        <div class="text-xs text-gray-400">Files Reviewed</div>
+                    </div>
+                    <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold ${data.finding_count > 0 ? 'text-orange-400' : 'text-green-400'}">${data.finding_count || 0}</div>
+                        <div class="text-xs text-gray-400">Findings</div>
+                    </div>
+                    <div class="bg-gray-900/50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-blue-400">${data.comments_generated || 0}</div>
+                        <div class="text-xs text-gray-400">Comments Generated</div>
+                    </div>
+                </div>
+        `;
+
+        // Summary
+        if (data.summary) {
+            html += `
+                <div class="space-y-2">
+                    <h4 class="text-sm font-medium text-gray-400 uppercase">Summary</h4>
+                    <div class="bg-gray-900/50 rounded-lg p-4 border-l-2 border-blue-500">
+                        <div class="text-sm text-gray-300 whitespace-pre-wrap">${escapeHtml(data.summary)}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Inline Comments
+        if (data.inline_comments && data.inline_comments.length > 0) {
+            html += `
+                <div class="space-y-2">
+                    <h4 class="text-sm font-medium text-gray-400 uppercase">Generated Inline Comments (${data.inline_comments.length})</h4>
+                    <div class="space-y-2 max-h-96 overflow-y-auto">
+            `;
+
+            for (const comment of data.inline_comments) {
+                html += `
+                    <div class="bg-gray-900/50 rounded-lg p-3 border-l-2 border-orange-500">
+                        <div class="text-xs text-gray-500 mb-1">
+                            <span class="font-mono text-blue-400">${escapeHtml(comment.file_path)}</span>
+                            <span class="text-gray-600">:</span>
+                            <span class="text-green-400">${comment.line}</span>
+                        </div>
+                        <div class="text-sm text-gray-300 whitespace-pre-wrap">${escapeHtml(comment.body)}</div>
+                    </div>
+                `;
+            }
+
+            html += `</div></div>`;
+        }
+
+        // Summary Comment
+        if (data.summary_comment) {
+            html += `
+                <div class="space-y-2">
+                    <h4 class="text-sm font-medium text-gray-400 uppercase">Generated Summary Comment</h4>
+                    <div class="bg-gray-900/50 rounded-lg p-4 border-l-2 border-green-500">
+                        <div class="text-sm text-gray-300 whitespace-pre-wrap">${escapeHtml(data.summary_comment)}</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        html += '</div>';
+        resultsContent.innerHTML = html;
+
+    } catch (error) {
+        loading.classList.add('hidden');
+        submitBtn.disabled = false;
+
+        resultsSection.classList.remove('hidden');
+        resultsStatus.innerHTML = '<span class="px-2 py-1 text-xs bg-red-500/20 text-red-400 rounded">Error</span>';
+        resultsContent.innerHTML = `
+            <div class="text-red-400">
+                <p class="font-medium">Request Failed</p>
+                <p class="text-sm mt-1">${error.message}</p>
+            </div>
+        `;
+    }
+});
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

@@ -2039,6 +2039,158 @@ async def send_scan_completion_alert(scan_id: int, db: Session = Depends(get_db)
         await service.close()
 
 
+# ============== Manual MR Review ==============
+
+@router.get("/mr-review", response_class=HTMLResponse)
+async def mr_review_page(request: Request, db: Session = Depends(get_db)):
+    """Manual MR review page"""
+    models = db.query(ModelConfig).all()
+    return templates.TemplateResponse("mr_review.html", {
+        "request": request,
+        "models": models
+    })
+
+
+@router.post("/mr-review/analyze")
+async def analyze_mr(
+    gitlab_url: str = Form("https://gitlab.com"),
+    gitlab_token: str = Form(...),
+    project_id: str = Form(...),
+    mr_iid: int = Form(...),
+    model_id: int = Form(None),
+    post_comments: bool = Form(False),
+    db: Session = Depends(get_db)
+):
+    """
+    Analyze a specific MR for security vulnerabilities.
+    Returns generated comments without requiring a watcher.
+    """
+    from app.services.gitlab_service import GitLabService, GitLabError
+    from app.services.mr_reviewer_service import MRReviewerService
+
+    try:
+        # Create GitLab client
+        gitlab = GitLabService(
+            gitlab_url=gitlab_url.rstrip('/'),
+            token=gitlab_token
+        )
+
+        # Get MR details
+        mr_details = await gitlab.get_mr_details(project_id, mr_iid)
+        diff_data = await gitlab.get_mr_diff(project_id, mr_iid)
+
+        # Create a temporary reviewer service instance
+        reviewer = MRReviewerService(db)
+
+        # Analyze the diff
+        changes = diff_data.get("changes", [])
+        all_findings = []
+        files_reviewed = 0
+
+        for change in changes:
+            file_path = change.get("new_path", "")
+
+            if not reviewer._is_scannable_file(file_path):
+                continue
+
+            diff_content = change.get("diff", "")
+            if not diff_content:
+                continue
+
+            files_reviewed += 1
+
+            # Analyze with LLM
+            findings = await reviewer._analyze_diff_with_llm(file_path, diff_content)
+
+            for finding in findings:
+                finding["file_path"] = file_path
+                all_findings.append(finding)
+
+        # Generate summary
+        summary = await reviewer._generate_summary(files_reviewed, all_findings)
+
+        # Generate comments (always, regardless of post_comments)
+        generated_comments = {
+            "inline_comments": [],
+            "summary_comment": None
+        }
+
+        base_sha = diff_data.get("diff_refs", {}).get("base_sha")
+        head_sha = diff_data.get("diff_refs", {}).get("head_sha")
+        start_sha = diff_data.get("diff_refs", {}).get("start_sha")
+
+        for finding in all_findings:
+            comment_body = reviewer._format_inline_comment(finding)
+            generated_comments["inline_comments"].append({
+                "file_path": finding["file_path"],
+                "line": finding.get("line", 1),
+                "body": comment_body,
+            })
+
+        summary_comment = reviewer._format_summary_comment(
+            files_reviewed=files_reviewed,
+            findings=all_findings,
+            summary=summary,
+        )
+        generated_comments["summary_comment"] = summary_comment
+
+        # Post to GitLab if requested
+        comments_posted = []
+        if post_comments and all_findings:
+            for gen_comment in generated_comments["inline_comments"]:
+                try:
+                    result = await gitlab.post_inline_comment(
+                        project_id=project_id,
+                        mr_iid=mr_iid,
+                        file_path=gen_comment["file_path"],
+                        new_line=gen_comment["line"],
+                        comment=gen_comment["body"],
+                        base_sha=base_sha,
+                        head_sha=head_sha,
+                        start_sha=start_sha,
+                    )
+                    comments_posted.append(result.get("id"))
+                except GitLabError as e:
+                    pass  # Continue with other comments
+
+            # Post summary
+            try:
+                result = await gitlab.post_mr_comment(
+                    project_id=project_id,
+                    mr_iid=mr_iid,
+                    comment=generated_comments["summary_comment"],
+                )
+                comments_posted.append(result.get("id"))
+            except GitLabError:
+                pass
+
+        await gitlab.close()
+
+        return {
+            "mr_iid": mr_iid,
+            "mr_title": mr_details.get("title"),
+            "mr_url": mr_details.get("web_url"),
+            "source_branch": mr_details.get("source_branch"),
+            "target_branch": mr_details.get("target_branch"),
+            "files_reviewed": files_reviewed,
+            "finding_count": len(all_findings),
+            "findings": all_findings,
+            "summary": summary,
+            "inline_comments": generated_comments["inline_comments"],
+            "summary_comment": generated_comments["summary_comment"],
+            "comments_generated": len(generated_comments["inline_comments"]) + (1 if generated_comments["summary_comment"] else 0),
+            "comments_posted": len(comments_posted),
+            "post_comments": post_comments,
+        }
+
+    except GitLabError as e:
+        return JSONResponse({"error": f"GitLab API error: {str(e)}"}, status_code=400)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ============== GitLab Repo Watchers ==============
 
 @router.get("/watchers/page", response_class=HTMLResponse)
