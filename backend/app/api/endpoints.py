@@ -10,7 +10,7 @@ from app.models.models import Scan, Finding
 from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
-    ScanProfile, ProfileAnalyzer
+    ScanProfile, ProfileAnalyzer, WebhookConfig, WebhookDeliveryLog
 )
 
 # Create tables
@@ -870,6 +870,63 @@ async def download_pdf_report(scan_id: int, db: Session = Depends(get_db)):
     return {"error": "PDF generation not yet implemented"}
 
 
+@router.post("/scan/{scan_id}/analyze-findings")
+async def analyze_findings(scan_id: int, db: Session = Depends(get_db)):
+    """
+    Analyze all verified findings for a scan and provide prioritized recommendations.
+
+    Returns:
+        - summary: Brief overview of findings with severity counts
+        - critical_priority: Findings needing immediate attention (with reason and CVSS)
+        - quick_wins: Easy fixes with estimated effort
+        - grouped: Findings grouped by root cause
+        - remediation_order: Suggested order to fix findings
+    """
+    from app.services.analysis.findings_analyzer import FindingsAnalyzer
+    from app.services.orchestration.model_orchestrator import ModelOrchestrator
+
+    # Verify scan exists
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return JSONResponse({"error": "Scan not found"}, status_code=404)
+
+    # Check if scan has completed
+    if scan.status not in ("completed", "failed"):
+        return JSONResponse(
+            {"error": f"Scan is still {scan.status}. Wait for completion before analyzing findings."},
+            status_code=400
+        )
+
+    # Initialize model orchestrator to get analyzer
+    orchestrator = ModelOrchestrator(db)
+    await orchestrator.initialize()
+
+    try:
+        model_pool = orchestrator.get_primary_analyzer()
+        if not model_pool:
+            return JSONResponse(
+                {"error": "No analyzer model configured. Add a model in /config first."},
+                status_code=500
+            )
+
+        # Run analysis
+        analyzer = FindingsAnalyzer(model_pool, db)
+        result = await analyzer.analyze(scan_id)
+
+        return result
+
+    except Exception as e:
+        import traceback
+        print(f"Analysis error: {traceback.format_exc()}")
+        return JSONResponse(
+            {"error": f"Analysis failed: {str(e)}"},
+            status_code=500
+        )
+
+    finally:
+        await orchestrator.shutdown()
+
+
 @router.get("/config", response_class=HTMLResponse)
 async def get_config(request: Request, db: Session = Depends(get_db)):
     from app.core.config import settings
@@ -1237,6 +1294,49 @@ async def chat_history(scan_id: int):
 
     agent = _chat_sessions[session_key]['agent']
     return {"messages": agent.conversation_history}
+
+
+# ============== General Chat (non-scan) ==============
+
+@router.post("/chat/message")
+async def general_chat_message(
+    message: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """General security chat endpoint (no specific scan context)"""
+    from app.services.orchestration.model_orchestrator import ModelOrchestrator
+
+    # Initialize model orchestrator
+    orchestrator = ModelOrchestrator(db)
+    await orchestrator.initialize()
+
+    model_pool = orchestrator.get_primary_analyzer()
+    if not model_pool:
+        await orchestrator.shutdown()
+        return {"error": "No analyzer model configured", "response": "Please configure an analyzer model in Settings."}
+
+    try:
+        # Simple single-turn chat without tools
+        prompt = f"""You are a security expert assistant. Answer the following question about security best practices, vulnerability types, or general security topics.
+
+Question: {message}
+
+Provide a helpful, concise answer:"""
+
+        response = await model_pool.call(prompt)
+        await orchestrator.shutdown()
+
+        return {
+            "response": response,
+            "status": "ok"
+        }
+    except Exception as e:
+        await orchestrator.shutdown()
+        return {
+            "error": str(e),
+            "response": f"Error: {str(e)}",
+            "status": "error"
+        }
 
 
 # ============== Scan Profiles Management ==============
@@ -1610,3 +1710,329 @@ async def toggle_analyzer(profile_id: int, analyzer_id: int, db: Session = Depen
     db.commit()
 
     return {"id": analyzer.id, "enabled": analyzer.enabled}
+
+
+# ============== Webhook Security Alerts ==============
+
+@router.get("/webhooks")
+async def list_webhooks(db: Session = Depends(get_db)):
+    """List all webhook configurations"""
+    webhooks = db.query(WebhookConfig).order_by(WebhookConfig.created_at.desc()).all()
+    return [
+        {
+            "id": w.id,
+            "name": w.name,
+            "url": w.url,
+            "events": w.events or [],
+            "min_severity": w.min_severity,
+            "enabled": w.enabled,
+            "last_triggered": w.last_triggered.isoformat() if w.last_triggered else None,
+            "trigger_count": w.trigger_count or 0,
+            "last_error": w.last_error,
+            "created_at": w.created_at.isoformat() if w.created_at else None,
+        }
+        for w in webhooks
+    ]
+
+
+@router.post("/webhooks")
+async def create_webhook(
+    request: Request,
+    name: str = Form(...),
+    url: str = Form(...),
+    secret: str = Form(None),
+    events: str = Form(...),  # Comma-separated: malicious_intent,critical_finding,scan_complete
+    min_severity: str = Form("High"),
+    db: Session = Depends(get_db)
+):
+    """Create a new webhook configuration"""
+    # Parse events
+    event_list = [e.strip() for e in events.split(",") if e.strip()]
+
+    # Validate events
+    valid_events = {"malicious_intent", "critical_finding", "scan_complete"}
+    invalid = set(event_list) - valid_events
+    if invalid:
+        return JSONResponse(
+            {"error": f"Invalid events: {invalid}. Valid events: {valid_events}"},
+            status_code=400
+        )
+
+    # Validate URL
+    if not url.startswith(("http://", "https://")):
+        return JSONResponse(
+            {"error": "URL must start with http:// or https://"},
+            status_code=400
+        )
+
+    webhook = WebhookConfig(
+        name=name,
+        url=url,
+        secret=secret if secret else None,
+        events=event_list,
+        min_severity=min_severity,
+        enabled=True
+    )
+    db.add(webhook)
+    db.commit()
+    db.refresh(webhook)
+
+    return {"id": webhook.id, "name": webhook.name, "status": "created"}
+
+
+@router.put("/webhooks/{webhook_id}")
+async def update_webhook(
+    webhook_id: int,
+    name: str = Form(None),
+    url: str = Form(None),
+    secret: str = Form(None),
+    events: str = Form(None),
+    min_severity: str = Form(None),
+    enabled: bool = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Update a webhook configuration"""
+    webhook = db.query(WebhookConfig).filter(WebhookConfig.id == webhook_id).first()
+    if not webhook:
+        return JSONResponse({"error": "Webhook not found"}, status_code=404)
+
+    if name is not None:
+        webhook.name = name
+    if url is not None:
+        if not url.startswith(("http://", "https://")):
+            return JSONResponse(
+                {"error": "URL must start with http:// or https://"},
+                status_code=400
+            )
+        webhook.url = url
+    if secret is not None:
+        webhook.secret = secret if secret else None
+    if events is not None:
+        event_list = [e.strip() for e in events.split(",") if e.strip()]
+        valid_events = {"malicious_intent", "critical_finding", "scan_complete"}
+        invalid = set(event_list) - valid_events
+        if invalid:
+            return JSONResponse(
+                {"error": f"Invalid events: {invalid}. Valid events: {valid_events}"},
+                status_code=400
+            )
+        webhook.events = event_list
+    if min_severity is not None:
+        webhook.min_severity = min_severity
+    if enabled is not None:
+        webhook.enabled = enabled
+
+    db.commit()
+    return {"id": webhook.id, "name": webhook.name, "status": "updated"}
+
+
+@router.delete("/webhooks/{webhook_id}")
+async def delete_webhook(webhook_id: int, db: Session = Depends(get_db)):
+    """Delete a webhook configuration and its delivery logs"""
+    webhook = db.query(WebhookConfig).filter(WebhookConfig.id == webhook_id).first()
+    if not webhook:
+        return JSONResponse({"error": "Webhook not found"}, status_code=404)
+
+    # Delete delivery logs first
+    db.query(WebhookDeliveryLog).filter(WebhookDeliveryLog.webhook_id == webhook_id).delete()
+    db.delete(webhook)
+    db.commit()
+
+    return {"status": "deleted", "id": webhook_id}
+
+
+@router.post("/webhooks/{webhook_id}/test")
+async def test_webhook(webhook_id: int, db: Session = Depends(get_db)):
+    """Send a test webhook to verify configuration"""
+    from app.services.webhook_service import WebhookService
+
+    webhook = db.query(WebhookConfig).filter(WebhookConfig.id == webhook_id).first()
+    if not webhook:
+        return JSONResponse({"error": "Webhook not found"}, status_code=404)
+
+    service = WebhookService(db)
+    try:
+        result = await service.send_test_webhook(webhook_id)
+        return result
+    finally:
+        await service.close()
+
+
+@router.post("/webhooks/{webhook_id}/toggle")
+async def toggle_webhook(webhook_id: int, db: Session = Depends(get_db)):
+    """Toggle a webhook's enabled status"""
+    webhook = db.query(WebhookConfig).filter(WebhookConfig.id == webhook_id).first()
+    if not webhook:
+        return JSONResponse({"error": "Webhook not found"}, status_code=404)
+
+    webhook.enabled = not webhook.enabled
+    db.commit()
+
+    return {"id": webhook.id, "enabled": webhook.enabled}
+
+
+@router.get("/webhooks/logs")
+async def get_webhook_logs(
+    webhook_id: int = None,
+    scan_id: int = None,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get recent webhook delivery logs"""
+    from app.services.webhook_service import WebhookService
+
+    service = WebhookService(db)
+    deliveries = service.get_recent_deliveries(
+        limit=limit,
+        webhook_id=webhook_id,
+        scan_id=scan_id
+    )
+
+    return {"deliveries": deliveries, "count": len(deliveries)}
+
+
+@router.post("/webhooks/analyze-finding")
+async def analyze_finding_malicious_intent(request: Request, db: Session = Depends(get_db)):
+    """
+    Analyze a finding for malicious intent indicators without sending webhooks.
+    Useful for testing or previewing what would trigger alerts.
+    """
+    from app.services.webhook_service import analyze_malicious_intent
+
+    data = await request.json()
+
+    finding = {
+        "title": data.get("title", ""),
+        "snippet": data.get("snippet", ""),
+        "reason": data.get("reason", ""),
+        "vulnerability_type": data.get("vulnerability_type", ""),
+        "description": data.get("description", ""),
+    }
+
+    result = analyze_malicious_intent(finding)
+    return result
+
+
+@router.post("/finding/{finding_id}/send-alert")
+async def send_finding_alert(finding_id: int, db: Session = Depends(get_db)):
+    """
+    Manually trigger a webhook alert for a specific finding.
+    Useful for testing or re-sending alerts.
+    """
+    from app.services.webhook_service import WebhookService
+
+    # Try to find the finding in draft or verified findings
+    draft = db.query(DraftFinding).filter(DraftFinding.id == finding_id).first()
+
+    if draft:
+        # Get file path from chunk
+        chunk = db.query(ScanFileChunk).filter(ScanFileChunk.id == draft.chunk_id).first()
+        scan_file = db.query(ScanFile).filter(ScanFile.id == chunk.scan_file_id).first() if chunk else None
+
+        finding_data = {
+            "id": draft.id,
+            "title": draft.title,
+            "file_path": scan_file.file_path if scan_file else "unknown",
+            "line_number": draft.line_number,
+            "snippet": draft.snippet,
+            "severity": draft.severity,
+            "vulnerability_type": draft.vulnerability_type,
+            "reason": draft.reason,
+            "initial_votes": draft.initial_votes,
+        }
+        scan_id = draft.scan_id
+    else:
+        # Try verified findings
+        verified = db.query(VerifiedFinding).filter(VerifiedFinding.id == finding_id).first()
+        if not verified:
+            return JSONResponse({"error": "Finding not found"}, status_code=404)
+
+        # Get draft for additional details
+        draft = db.query(DraftFinding).filter(DraftFinding.id == verified.draft_id).first()
+        chunk = db.query(ScanFileChunk).filter(ScanFileChunk.id == draft.chunk_id).first() if draft else None
+        scan_file = db.query(ScanFile).filter(ScanFile.id == chunk.scan_file_id).first() if chunk else None
+
+        finding_data = {
+            "id": verified.id,
+            "title": verified.title,
+            "file_path": scan_file.file_path if scan_file else "unknown",
+            "line_number": draft.line_number if draft else 0,
+            "snippet": draft.snippet if draft else "",
+            "severity": verified.adjusted_severity or (draft.severity if draft else "Medium"),
+            "vulnerability_type": draft.vulnerability_type if draft else "",
+            "confidence": verified.confidence,
+            "attack_vector": verified.attack_vector,
+        }
+        scan_id = verified.scan_id
+
+    service = WebhookService(db)
+    try:
+        result = await service.send_alert(finding_data, scan_id)
+        return result
+    finally:
+        await service.close()
+
+
+@router.post("/scan/{scan_id}/send-completion-alert")
+async def send_scan_completion_alert(scan_id: int, db: Session = Depends(get_db)):
+    """
+    Manually trigger a scan completion webhook alert.
+    Useful for testing or re-sending alerts.
+    """
+    from app.services.webhook_service import WebhookService
+
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return JSONResponse({"error": "Scan not found"}, status_code=404)
+
+    # Build summary
+    total_findings = db.query(VerifiedFinding).filter(
+        VerifiedFinding.scan_id == scan_id,
+        VerifiedFinding.status == "complete"
+    ).count()
+
+    findings_by_severity = {}
+    for severity in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+        count = db.query(VerifiedFinding).filter(
+            VerifiedFinding.scan_id == scan_id,
+            VerifiedFinding.status == "complete",
+            VerifiedFinding.adjusted_severity.ilike(severity)
+        ).count()
+        findings_by_severity[severity.lower()] = count
+
+    files_scanned = db.query(ScanFile).filter(ScanFile.scan_id == scan_id).count()
+
+    # Count malicious intent findings
+    from app.services.webhook_service import analyze_malicious_intent
+    malicious_count = 0
+    drafts = db.query(DraftFinding).filter(
+        DraftFinding.scan_id == scan_id,
+        DraftFinding.status == "verified"
+    ).all()
+    for draft in drafts:
+        result = analyze_malicious_intent({
+            "title": draft.title,
+            "snippet": draft.snippet,
+            "reason": draft.reason,
+            "vulnerability_type": draft.vulnerability_type,
+        })
+        if result["is_malicious"]:
+            malicious_count += 1
+
+    summary = {
+        "total_findings": total_findings,
+        "critical": findings_by_severity.get("critical", 0),
+        "high": findings_by_severity.get("high", 0),
+        "medium": findings_by_severity.get("medium", 0),
+        "low": findings_by_severity.get("low", 0),
+        "malicious_intent_count": malicious_count,
+        "files_scanned": files_scanned,
+        "duration_seconds": 0,  # Would need scan timing data
+    }
+
+    service = WebhookService(db)
+    try:
+        result = await service.send_scan_complete(scan_id, summary)
+        return result
+    finally:
+        await service.close()

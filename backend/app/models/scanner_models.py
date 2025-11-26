@@ -299,6 +299,56 @@ class ProfileAnalyzer(Base):
     model = relationship("ModelConfig")
 
 
+class WebhookConfig(Base):
+    """Webhook configuration for security alerts"""
+    __tablename__ = "webhook_configs"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    url = Column(String, nullable=False)
+    secret = Column(String, nullable=True)  # For HMAC-SHA256 signing
+    events = Column(JSON)  # ["malicious_intent", "critical_finding", "scan_complete"]
+    min_severity = Column(String, default="High")  # CRITICAL, HIGH, MEDIUM, LOW
+    enabled = Column(Boolean, default=True)
+
+    # Stats
+    last_triggered = Column(DateTime(timezone=True), nullable=True)
+    trigger_count = Column(Integer, default=0)
+    last_error = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    deliveries = relationship("WebhookDeliveryLog", back_populates="webhook")
+
+
+class WebhookDeliveryLog(Base):
+    """Log of webhook delivery attempts"""
+    __tablename__ = "webhook_delivery_logs"
+
+    id = Column(Integer, primary_key=True)
+    webhook_id = Column(Integer, ForeignKey("webhook_configs.id"), index=True)
+
+    event_type = Column(String, index=True)  # malicious_intent, critical_finding, scan_complete
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
+    finding_id = Column(Integer, nullable=True)  # Reference to draft or verified finding
+
+    payload = Column(JSON)  # The actual payload sent
+
+    # Delivery status
+    status = Column(String, default="pending")  # pending, success, failed
+    status_code = Column(Integer, nullable=True)  # HTTP status code
+    response_body = Column(Text, nullable=True)  # Response from webhook endpoint
+    error_message = Column(String, nullable=True)
+
+    # Timing
+    attempt_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+
+    webhook = relationship("WebhookConfig", back_populates="deliveries")
+
+
 class ScanErrorLog(Base):
     """Detailed error log for tracking failures and enabling recovery"""
     __tablename__ = "scan_error_logs"
