@@ -512,7 +512,9 @@ async def list_models(db: Session = Depends(get_db)):
             "max_concurrent": m.max_concurrent,
             "votes": m.votes,
             "is_analyzer": m.is_analyzer,
-            "is_verifier": m.is_verifier
+            "is_verifier": m.is_verifier,
+            "is_cleanup": m.is_cleanup,
+            "is_chat": m.is_chat
         }
         for m in models
     ]
@@ -537,7 +539,9 @@ async def create_model(request: Request, db: Session = Depends(get_db)):
         votes=data.get('votes', 1),
         chunk_size=data.get('chunk_size', 3000),
         is_analyzer=data.get('is_analyzer', True),
-        is_verifier=data.get('is_verifier', False)
+        is_verifier=data.get('is_verifier', False),
+        is_cleanup=data.get('is_cleanup', False),
+        is_chat=data.get('is_chat', False)
     )
     db.add(model)
     db.commit()
@@ -580,6 +584,10 @@ async def update_model(model_id: int, request: Request, db: Session = Depends(ge
         model.is_analyzer = data['is_analyzer']
     if 'is_verifier' in data:
         model.is_verifier = data['is_verifier']
+    if 'is_cleanup' in data:
+        model.is_cleanup = data['is_cleanup']
+    if 'is_chat' in data:
+        model.is_chat = data['is_chat']
 
     db.commit()
     return {"status": "updated", "id": model.id, "name": model.name}
@@ -1323,7 +1331,7 @@ async def general_chat_message(
     orchestrator = ModelOrchestrator(db)
     await orchestrator.initialize()
 
-    # Get specific model or primary analyzer
+    # Get specific model, or chat model, or primary analyzer
     model_pool = None
     if model_id:
         model_config = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
@@ -1331,6 +1339,13 @@ async def general_chat_message(
             model_pool = orchestrator.get_pool(model_config.name)
 
     if not model_pool:
+        # Try to get the configured chat model first
+        chat_model = db.query(ModelConfig).filter(ModelConfig.is_chat == True).first()
+        if chat_model:
+            model_pool = orchestrator.get_pool(chat_model.name)
+
+    if not model_pool:
+        # Fallback to primary analyzer
         model_pool = orchestrator.get_primary_analyzer()
 
     if not model_pool:

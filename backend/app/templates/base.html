@@ -263,16 +263,24 @@
             try {
                 const response = await fetch('/models');
                 const models = await response.json();
-                modelSelect.innerHTML = '<option value="">Default Model</option>';
+                modelSelect.innerHTML = '';
+                let chatModelId = null;
                 models.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.id;
                     option.textContent = model.name;
                     modelSelect.appendChild(option);
+                    if (model.is_chat) chatModelId = model.id;
                 });
-                // Restore saved selection
+                // Use saved selection, or chat model, or first model
                 const savedModel = localStorage.getItem('chat_model_id');
-                if (savedModel) modelSelect.value = savedModel;
+                if (savedModel && modelSelect.querySelector(`option[value="${savedModel}"]`)) {
+                    modelSelect.value = savedModel;
+                } else if (chatModelId) {
+                    modelSelect.value = chatModelId;
+                } else if (models.length > 0) {
+                    modelSelect.value = models[0].id;
+                }
                 modelsLoaded = true;
             } catch (error) {
                 console.error('Failed to load models:', error);
