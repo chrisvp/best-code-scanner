@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, TYPE_CHECKING
 import os
 import asyncio
 import fnmatch
@@ -6,6 +6,7 @@ import fnmatch
 from app.models.scanner_models import ScanFileChunk, ScanFile, ScanProfile, ProfileAnalyzer
 from app.services.analysis.static_detector import StaticPatternDetector
 from app.services.analysis.parsers import DraftParser
+from app.services.analysis.response_cleaner import ResponseCleaner
 from app.services.orchestration.cache import AnalysisCache
 from app.services.orchestration.model_orchestrator import ModelPool, ModelOrchestrator
 from app.core.database import SessionLocal
@@ -22,6 +23,7 @@ class ProfileAwareScanner:
         self.cache = cache
         self.static_detector = static_detector if static_detector else StaticPatternDetector()
         self.parser = DraftParser()
+        self._response_cleaner = None  # Lazily initialized
 
     def _format_code_with_lines(self, code: str, start_line: int) -> str:
         """Prefix lines with numbers for LLM reference"""
@@ -62,6 +64,35 @@ class ProfileAwareScanner:
             return True
         except (ValueError, TypeError):
             return False
+
+    async def _try_cleanup_and_reparse(self, response: str, db) -> Optional[List[dict]]:
+        """
+        Try to clean up a malformed response using the cleanup model and reparse.
+        Only called when initial parsing completely fails (returns None).
+        """
+        # Lazily initialize the response cleaner
+        if self._response_cleaner is None:
+            self._response_cleaner = ResponseCleaner(db)
+
+        try:
+            print(f"[Scan {self.scan_id}] Attempting to clean up malformed response ({len(response)} chars)...")
+            cleaned_response = await self._response_cleaner.cleanup_draft_response(response)
+
+            if cleaned_response:
+                print(f"[Scan {self.scan_id}] Cleanup model returned {len(cleaned_response)} chars, reparsing...")
+                findings = self.parser.parse(cleaned_response)
+                if findings is not None:
+                    print(f"[Scan {self.scan_id}] Successfully recovered {len(findings)} findings via cleanup model")
+                    return findings
+                else:
+                    print(f"[Scan {self.scan_id}] Cleanup did not produce parseable output")
+            else:
+                print(f"[Scan {self.scan_id}] No cleanup model configured or cleanup failed")
+
+        except Exception as e:
+            print(f"[Scan {self.scan_id}] Error during cleanup attempt: {e}")
+
+        return None
 
     async def scan_batch_with_profile(self, chunks: List[ScanFileChunk]) -> Dict[int, List[dict]]:
         """
@@ -166,7 +197,13 @@ class ProfileAwareScanner:
 
                     for i, (chunk_id, info) in enumerate(matching_chunks):
                         response = responses[i] if i < len(responses) else ""
-                        findings = self.parser.parse(response) or []
+                        findings = self.parser.parse(response)
+
+                        # If parsing returned None (completely failed), try cleanup model
+                        if findings is None and response.strip():
+                            findings = await self._try_cleanup_and_reparse(response, db)
+
+                        findings = findings or []
 
                         # Debug: Print response summary (after thinking tags stripped by parser)
                         import re

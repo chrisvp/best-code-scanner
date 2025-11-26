@@ -19,6 +19,7 @@ class ModelConfig(Base):
 
     is_analyzer = Column(Boolean, default=False)
     is_verifier = Column(Boolean, default=False)
+    is_cleanup = Column(Boolean, default=False)  # Model for cleaning up malformed LLM responses
 
     analysis_prompt_template = Column(Text, nullable=True)
     verification_prompt_template = Column(Text, nullable=True)

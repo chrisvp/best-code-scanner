@@ -141,6 +141,9 @@
                                     {% if model.is_verifier %}
                                     <span class="px-1.5 py-0.5 text-[10px] bg-green-500/20 text-green-400 rounded">Verifier</span>
                                     {% endif %}
+                                    {% if model.is_cleanup %}
+                                    <span class="px-1.5 py-0.5 text-[10px] bg-orange-500/20 text-orange-400 rounded">Cleanup</span>
+                                    {% endif %}
                                 </div>
                                 <div class="text-xs text-gray-500 font-mono truncate mb-2" title="{{ model.base_url }}">
                                     {{ model.base_url or 'Using default URL' }}
@@ -480,7 +483,7 @@
                             class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                 </div>
-                <div class="flex gap-4">
+                <div class="flex flex-wrap gap-4">
                     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                         <input type="checkbox" name="is_analyzer" value="true" checked
                             class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">
@@ -491,7 +494,13 @@
                             class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-green-600">
                         Verifier
                     </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer" title="Cleans up malformed LLM responses">
+                        <input type="checkbox" name="is_cleanup" value="true"
+                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-orange-600">
+                        Cleanup
+                    </label>
                 </div>
+                <p class="text-xs text-gray-500 mt-2">Cleanup model reformats malformed LLM responses (fast model recommended)</p>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-model-modal').classList.add('hidden')"
@@ -546,12 +555,15 @@
                         <input type="number" name="chunk_size" id="edit-model-chunk-size" min="500" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     </div>
                 </div>
-                <div class="flex gap-4">
+                <div class="flex flex-wrap gap-4">
                     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                         <input type="checkbox" name="is_analyzer" id="edit-model-is-analyzer" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">Analyzer
                     </label>
                     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
                         <input type="checkbox" name="is_verifier" id="edit-model-is-verifier" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-green-600">Verifier
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer" title="Cleans up malformed LLM responses">
+                        <input type="checkbox" name="is_cleanup" id="edit-model-is-cleanup" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-orange-600">Cleanup
                     </label>
                 </div>
             </div>
@@ -764,7 +776,7 @@ If none found: []</textarea>
 
 <script>
 const modelsData = {
-    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, chunk_size: {{ model.chunk_size }}, is_analyzer: {{ 'true' if model.is_analyzer else 'false' }}, is_verifier: {{ 'true' if model.is_verifier else 'false' }} },{% endfor %}
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, chunk_size: {{ model.chunk_size }}, is_analyzer: {{ 'true' if model.is_analyzer else 'false' }}, is_verifier: {{ 'true' if model.is_verifier else 'false' }}, is_cleanup: {{ 'true' if model.is_cleanup else 'false' }} },{% endfor %}
 };
 
 function switchTab(tab) {
@@ -779,7 +791,7 @@ async function submitModelForm(event) {
     event.preventDefault();
     const form = event.target;
     const formData = new FormData(form);
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true' };
     const response = await fetch('/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
 }
@@ -795,6 +807,7 @@ function editModel(id) {
     document.getElementById('edit-model-chunk-size').value = m.chunk_size;
     document.getElementById('edit-model-is-analyzer').checked = m.is_analyzer;
     document.getElementById('edit-model-is-verifier').checked = m.is_verifier;
+    document.getElementById('edit-model-is-cleanup').checked = m.is_cleanup;
     document.getElementById('edit-model-modal').classList.remove('hidden');
 }
 
@@ -803,7 +816,7 @@ async function submitEditModelForm(event) {
     const form = event.target;
     const formData = new FormData(form);
     const id = formData.get('model_id');
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true' };
     if (formData.get('api_key')) data.api_key = formData.get('api_key');
     const response = await fetch(`/models/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
