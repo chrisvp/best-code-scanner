@@ -1,55 +1,882 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto p-8">
-    <h2 class="text-2xl font-bold mb-6">System Configuration</h2>
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold text-white">Settings</h1>
+            <p class="text-gray-400 text-sm mt-1">Configure LLM endpoints, models, scan profiles, and detection rules</p>
+        </div>
 
-    {% if message %}
-    <div class="bg-green-900 text-green-200 p-4 rounded mb-6 border border-green-700">
-        {{ message }}
+        {% if message %}
+        <div class="bg-green-900/50 text-green-300 p-4 rounded-lg mb-6 border border-green-700/50 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+            {{ message }}
+        </div>
+        {% endif %}
+
+        <!-- Tabs -->
+        <div class="border-b border-gray-700 mb-6">
+            <nav class="flex gap-1">
+                <button onclick="switchTab('connection')" id="tab-connection"
+                    class="tab-btn active px-4 py-2.5 text-sm font-medium text-white border-b-2 border-blue-500 -mb-px">
+                    Connection
+                </button>
+                <button onclick="switchTab('models')" id="tab-models"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    Models
+                </button>
+                <button onclick="switchTab('profiles')" id="tab-profiles"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    Scan Profiles
+                </button>
+                <button onclick="switchTab('rules')" id="tab-rules"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    Detection Rules
+                </button>
+            </nav>
+        </div>
+
+        <!-- Tab: Connection -->
+        <div id="panel-connection" class="tab-panel">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Connection Settings -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
+                            </svg>
+                            LLM Endpoint
+                        </h2>
+                    </div>
+                    <form method="POST" class="p-4 space-y-4">
+                        <input type="hidden" name="form_type" value="connection">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1.5">Base URL</label>
+                            <input type="text" name="llm_base_url" value="{{ settings.LLM_BASE_URL }}"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1.5">API Key</label>
+                            <input type="password" name="llm_api_key" value="{{ settings.LLM_API_KEY }}"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500">
+                        </div>
+
+                        <div class="flex items-center gap-2 pt-2">
+                            <input type="checkbox" name="llm_verify_ssl" id="ssl" {% if settings.LLM_VERIFY_SSL %}checked{% endif %}
+                                class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
+                            <label for="ssl" class="text-sm text-gray-400">Verify SSL Certificates</label>
+                        </div>
+
+                        <button type="submit" class="w-full mt-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                            Save Connection
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Default Settings -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            </svg>
+                            Global Defaults
+                        </h2>
+                    </div>
+                    <form method="POST" class="p-4 space-y-4">
+                        <input type="hidden" name="form_type" value="defaults">
+
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1.5">Max Concurrent Requests</label>
+                            <input type="number" name="max_concurrent" value="{{ settings.MAX_CONCURRENT_REQUESTS }}" min="1" max="50"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50">
+                            <p class="text-xs text-gray-500 mt-1">Global limit for simultaneous LLM API calls</p>
+                        </div>
+
+                        <button type="submit" class="w-full bg-green-600 hover:bg-green-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                            Save Defaults
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Models -->
+        <div id="panel-models" class="tab-panel hidden">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex justify-between items-center">
+                    <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                        </svg>
+                        Model Configurations
+                    </h2>
+                    <button onclick="document.getElementById('add-model-modal').classList.remove('hidden')"
+                        class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                        </svg>
+                        Add Model
+                    </button>
+                </div>
+
+                {% if models %}
+                <div class="divide-y divide-gray-700">
+                    {% for model in models %}
+                    <div class="p-4 hover:bg-gray-700/30 transition-colors">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <h3 class="text-white font-medium">{{ model.name }}</h3>
+                                    {% if model.is_analyzer %}
+                                    <span class="px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-400 rounded">Analyzer</span>
+                                    {% endif %}
+                                    {% if model.is_verifier %}
+                                    <span class="px-1.5 py-0.5 text-[10px] bg-green-500/20 text-green-400 rounded">Verifier</span>
+                                    {% endif %}
+                                </div>
+                                <div class="text-xs text-gray-500 font-mono truncate mb-2" title="{{ model.base_url }}">
+                                    {{ model.base_url or 'Using default URL' }}
+                                </div>
+                                <div class="flex flex-wrap gap-3 text-xs text-gray-400">
+                                    <span class="flex items-center gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                        </svg>
+                                        {{ model.max_concurrent }} concurrent
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                                        </svg>
+                                        {{ model.max_tokens }} max tokens
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                                        </svg>
+                                        {{ model.votes }} vote{{ 's' if model.votes != 1 else '' }}
+                                    </span>
+                                    <span class="flex items-center gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                                        </svg>
+                                        ~{{ model.chunk_size }} chunk
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="flex gap-1 ml-4">
+                                <button onclick="editModel({{ model.id }})"
+                                    class="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                                    title="Edit model">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                    </svg>
+                                </button>
+                                <button onclick="deleteModel({{ model.id }}, '{{ model.name }}')"
+                                    class="p-2 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="Delete model">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="p-8 text-center text-gray-500">
+                    <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                    </svg>
+                    <p class="text-sm">No models configured yet</p>
+                    <p class="text-xs mt-1">Add a model to start scanning</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Tab: Profiles -->
+        <div id="panel-profiles" class="tab-panel hidden">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-4">
+                    <span class="text-sm text-gray-400">{{ profiles|length }} profile{{ 's' if profiles|length != 1 else '' }}</span>
+                </div>
+                <button onclick="document.getElementById('add-profile-modal').classList.remove('hidden')"
+                    class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    New Profile
+                </button>
+            </div>
+
+            {% if profiles %}
+            <div class="space-y-4">
+                {% for profile in profiles %}
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <!-- Profile Header -->
+                    <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                        <div>
+                            <h2 class="text-base font-semibold text-white flex items-center gap-2">
+                                {{ profile.name }}
+                                {% if profile.is_default %}
+                                <span class="px-2 py-0.5 text-[10px] bg-blue-600 text-white rounded uppercase">Default</span>
+                                {% endif %}
+                                {% if not profile.enabled %}
+                                <span class="px-2 py-0.5 text-[10px] bg-gray-600 text-gray-300 rounded uppercase">Disabled</span>
+                                {% endif %}
+                            </h2>
+                            <p class="text-xs text-gray-500 mt-0.5">{{ profile.description or 'No description' }}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="text-xs text-gray-500">
+                                Chunk: {{ profile.chunk_size }} | {{ profile.chunk_strategy }}
+                            </span>
+                            <div class="flex gap-1">
+                                <button onclick="deleteProfile({{ profile.id }}, '{{ profile.name }}')"
+                                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Analyzers -->
+                    <div class="p-4">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Analyzers ({{ profile.analyzers|length }})</h3>
+                            <button onclick="addAnalyzer({{ profile.id }})"
+                                class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
+                                + Add
+                            </button>
+                        </div>
+
+                        {% if profile.analyzers %}
+                        <div class="space-y-2">
+                            {% for analyzer in profile.analyzers %}
+                            <div class="bg-gray-900/50 rounded-lg p-3 flex items-center justify-between {% if not analyzer.enabled %}opacity-50{% endif %}">
+                                <div class="flex items-center gap-3">
+                                    <span class="w-5 h-5 flex items-center justify-center text-[10px] font-bold text-gray-500 bg-gray-700 rounded">
+                                        {{ analyzer.run_order }}
+                                    </span>
+                                    <div>
+                                        <div class="font-medium text-white text-sm">{{ analyzer.name }}</div>
+                                        <div class="text-[11px] text-gray-500">
+                                            {% if analyzer.file_filter %}{{ analyzer.file_filter }}{% else %}All files{% endif %}
+                                            {% if analyzer.model %} | {{ analyzer.model.name }}{% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex gap-1">
+                                    <button onclick="editAnalyzer({{ profile.id }}, {{ analyzer.id }})"
+                                        class="p-1 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Edit">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                        </svg>
+                                    </button>
+                                    <button hx-post="/profiles/{{ profile.id }}/analyzers/{{ analyzer.id }}/toggle"
+                                        hx-swap="none" hx-on::after-request="location.reload()"
+                                        class="p-1 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Toggle">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            {% if analyzer.enabled %}
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                            {% else %}
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                                            {% endif %}
+                                        </svg>
+                                    </button>
+                                    <button onclick="deleteAnalyzer({{ profile.id }}, {{ analyzer.id }}, '{{ analyzer.name }}')"
+                                        class="p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Delete">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="text-center py-3 text-gray-500 text-xs">
+                            No analyzers. Add one to use this profile.
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center text-gray-500">
+                <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                </svg>
+                <p class="text-sm">No scan profiles yet</p>
+                <p class="text-xs mt-1">Create a profile to customize scan behavior</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Tab: Rules -->
+        <div id="panel-rules" class="tab-panel hidden">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-4">
+                    <span class="text-sm text-gray-400">{{ rules|length }} rule{{ 's' if rules|length != 1 else '' }}</span>
+                    <span class="text-xs text-gray-500">|</span>
+                    <span class="text-xs text-green-400">{{ rules|selectattr('enabled')|list|length }} enabled</span>
+                </div>
+                <button onclick="document.getElementById('add-rule-modal').classList.remove('hidden')"
+                    class="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    New Rule
+                </button>
+            </div>
+
+            {% if rules %}
+            <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-800/80 text-xs text-gray-400 uppercase">
+                        <tr>
+                            <th class="px-4 py-3 text-left">Rule</th>
+                            <th class="px-4 py-3 text-left">Pattern</th>
+                            <th class="px-4 py-3 text-left">Severity</th>
+                            <th class="px-4 py-3 text-left">Languages</th>
+                            <th class="px-4 py-3 text-center">Enabled</th>
+                            <th class="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-700">
+                        {% for rule in rules %}
+                        <tr class="hover:bg-gray-700/30 {% if not rule.enabled %}opacity-50{% endif %}">
+                            <td class="px-4 py-3">
+                                <div class="font-medium text-white">{{ rule.name }}</div>
+                                <div class="text-xs text-gray-500">{{ rule.vulnerability_type }}</div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <code class="text-xs text-purple-400 bg-gray-900 px-1.5 py-0.5 rounded font-mono truncate max-w-[200px] block" title="{{ rule.pattern }}">
+                                    {{ rule.pattern[:40] }}{% if rule.pattern|length > 40 %}...{% endif %}
+                                </code>
+                            </td>
+                            <td class="px-4 py-3">
+                                <span class="px-2 py-0.5 text-xs rounded
+                                    {% if rule.severity == 'Critical' %}bg-red-500/20 text-red-400
+                                    {% elif rule.severity == 'High' %}bg-orange-500/20 text-orange-400
+                                    {% elif rule.severity == 'Medium' %}bg-yellow-500/20 text-yellow-400
+                                    {% else %}bg-blue-500/20 text-blue-400{% endif %}">
+                                    {{ rule.severity }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-xs text-gray-400">
+                                {{ rule.languages|join(', ') if rule.languages else 'All' }}
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <button hx-post="/rules/{{ rule.id }}/toggle" hx-swap="none" hx-on::after-request="location.reload()"
+                                    class="p-1 rounded transition-colors {% if rule.enabled %}text-green-400 hover:text-green-300{% else %}text-gray-500 hover:text-gray-400{% endif %}">
+                                    {% if rule.enabled %}
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    {% else %}
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    {% endif %}
+                                </button>
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                {% if not rule.built_in %}
+                                <button onclick="deleteRule({{ rule.id }}, '{{ rule.name }}')"
+                                    class="p-1 text-gray-400 hover:text-red-400 rounded transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
+                                </button>
+                                {% else %}
+                                <span class="text-[10px] text-gray-600 uppercase">Built-in</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center text-gray-500">
+                <p class="text-sm">No detection rules configured</p>
+            </div>
+            {% endif %}
+        </div>
     </div>
-    {% endif %}
+</div>
 
-    <form method="POST" class="space-y-6 bg-gray-800 p-6 rounded-lg border border-gray-700">
-        <div>
-            <label class="block text-sm font-medium text-gray-400 mb-2">LLM Base URL</label>
-            <input type="text" name="llm_base_url" value="{{ settings.LLM_BASE_URL }}"
-                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-        </div>
-
-        <div>
-            <label class="block text-sm font-medium text-gray-400 mb-2">LLM API Key</label>
-            <input type="password" name="llm_api_key" value="{{ settings.LLM_API_KEY }}"
-                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-        </div>
-
-        <div>
-            <label class="block text-sm font-medium text-gray-400 mb-2">Primary Model</label>
-            <input type="text" name="llm_model" value="{{ settings.LLM_MODEL }}"
-                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-            <p class="text-xs text-gray-500 mt-1">The main model used for initial scanning (e.g., llama3.3-70b-instruct)
-            </p>
-        </div>
-
-        <div>
-            <label class="block text-sm font-medium text-gray-400 mb-2">Verification Models</label>
-            <input type="text" name="llm_verification_models" value="{{ settings.LLM_VERIFICATION_MODELS|join(', ') }}"
-                class="w-full bg-gray-900 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500">
-            <p class="text-xs text-gray-500 mt-1">Comma-separated list of models for consensus verification (e.g.,
-                mistral-small, gemma-3-27b-it)</p>
-        </div>
-
-        <div class="flex items-center gap-3">
-            <input type="checkbox" name="llm_verify_ssl" id="ssl" {% if settings.LLM_VERIFY_SSL %}checked{% endif %}
-                class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
-            <label for="ssl" class="text-sm font-medium text-gray-400">Verify SSL Certificates</label>
-        </div>
-
-        <div class="pt-4">
-            <button type="submit" class="bg-blue-600 hover:bg-blue-500 px-6 py-2 rounded font-medium transition-colors">
-                Save Configuration
+<!-- Add Model Modal -->
+<div id="add-model-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add Model</h2>
+            <button onclick="document.getElementById('add-model-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
             </button>
         </div>
-    </form>
+        <form id="add-model-form" onsubmit="submitModelForm(event)">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Model Name *</label>
+                    <input type="text" name="name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., llama3.3-70b-instruct">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Base URL (optional)</label>
+                    <input type="text" name="base_url"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Leave empty to use default">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">API Key (optional)</label>
+                    <input type="password" name="api_key"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Leave empty to use default">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Tokens</label>
+                        <input type="number" name="max_tokens" value="4096" min="256"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Concurrent</label>
+                        <input type="number" name="max_concurrent" value="2" min="1" max="20"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Votes Weight</label>
+                        <input type="number" name="votes" value="1" min="1" max="5"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
+                        <input type="number" name="chunk_size" value="3000" min="500"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div class="flex gap-4">
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" name="is_analyzer" value="true" checked
+                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">
+                        Analyzer
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" name="is_verifier" value="true"
+                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-green-600">
+                        Verifier
+                    </label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-model-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors">Add Model</button>
+            </div>
+        </form>
+    </div>
 </div>
+
+<!-- Edit Model Modal -->
+<div id="edit-model-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Edit Model</h2>
+            <button onclick="document.getElementById('edit-model-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="edit-model-form" onsubmit="submitEditModelForm(event)">
+            <input type="hidden" name="model_id" id="edit-model-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Model Name *</label>
+                    <input type="text" name="name" id="edit-model-name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Base URL</label>
+                    <input type="text" name="base_url" id="edit-model-base-url" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">API Key</label>
+                    <input type="password" name="api_key" id="edit-model-api-key" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Leave empty to keep current">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Tokens</label>
+                        <input type="number" name="max_tokens" id="edit-model-max-tokens" min="256" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Concurrent</label>
+                        <input type="number" name="max_concurrent" id="edit-model-max-concurrent" min="1" max="20" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Votes</label>
+                        <input type="number" name="votes" id="edit-model-votes" min="1" max="5" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
+                        <input type="number" name="chunk_size" id="edit-model-chunk-size" min="500" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div class="flex gap-4">
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" name="is_analyzer" id="edit-model-is-analyzer" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">Analyzer
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                        <input type="checkbox" name="is_verifier" id="edit-model-is-verifier" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-green-600">Verifier
+                    </label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('edit-model-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Profile Modal -->
+<div id="add-profile-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">New Scan Profile</h2>
+            <button onclick="document.getElementById('add-profile-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form hx-post="/profiles" hx-swap="none" hx-on::after-request="if(event.detail.successful) location.reload()">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Profile Name</label>
+                    <input type="text" name="name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Deep C Audit">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                    <textarea name="description" rows="2" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Size</label>
+                        <input type="number" name="chunk_size" value="6000" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Strategy</label>
+                        <select name="chunk_strategy" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="smart">Smart</option>
+                            <option value="functions">Functions</option>
+                            <option value="lines">Lines</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-profile-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Create</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Analyzer Modal -->
+<div id="add-analyzer-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add Analyzer</h2>
+            <button onclick="document.getElementById('add-analyzer-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="add-analyzer-form" hx-swap="none" hx-on::after-request="if(event.detail.successful) location.reload()">
+            <input type="hidden" name="profile_id" id="analyzer-profile-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Analyzer Name</label>
+                    <input type="text" name="name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Memory Safety Check">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
+                    <select name="model_id" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Use Default</option>
+                        {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">File Filter</label>
+                        <input type="text" name="file_filter" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., *.c,*.h">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Run Order</label>
+                        <input type="number" name="run_order" value="1" min="1" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
+                    <textarea name="prompt_template" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">Analyze this {language} code for security vulnerabilities.
+
+File: {file_path}
+
+```{language}
+{code}
+```
+
+For each vulnerability, respond with JSON:
+```json
+[{"title": "...", "vulnerability_type": "CWE-XXX", "severity": "High", "line_number": 123, "snippet": "...", "reason": "..."}]
+```
+
+If none found: []</textarea>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-analyzer-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Analyzer Modal -->
+<div id="edit-analyzer-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Edit Analyzer</h2>
+            <button onclick="document.getElementById('edit-analyzer-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="edit-analyzer-form" onsubmit="submitEditAnalyzerForm(event)">
+            <input type="hidden" name="profile_id" id="edit-analyzer-profile-id">
+            <input type="hidden" name="analyzer_id" id="edit-analyzer-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Analyzer Name</label>
+                    <input type="text" name="name" id="edit-analyzer-name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
+                    <select name="model_id" id="edit-analyzer-model" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="">Use Default</option>
+                        {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">File Filter</label>
+                        <input type="text" name="file_filter" id="edit-analyzer-file-filter" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., *.c,*.h">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Run Order</label>
+                        <input type="number" name="run_order" id="edit-analyzer-run-order" value="1" min="1" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
+                    <textarea name="prompt_template" id="edit-analyzer-prompt" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('edit-analyzer-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add Rule Modal -->
+<div id="add-rule-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">New Detection Rule</h2>
+            <button onclick="document.getElementById('add-rule-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form hx-post="/rules" hx-swap="none" hx-on::after-request="if(event.detail.successful) location.reload()">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Rule Name</label>
+                    <input type="text" name="name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Regex Pattern</label>
+                    <input type="text" name="pattern" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Vulnerability Type</label>
+                        <input type="text" name="vulnerability_type" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., SQL Injection">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Severity</label>
+                        <select name="severity" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="Critical">Critical</option>
+                            <option value="High" selected>High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Languages (comma-separated)</label>
+                    <input type="text" name="languages" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="c, cpp, py (leave empty for all)">
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-rule-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors">Create</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+.tab-btn.active { color: white; border-color: rgb(59, 130, 246); }
+</style>
+
+<script>
+const modelsData = {
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, chunk_size: {{ model.chunk_size }}, is_analyzer: {{ 'true' if model.is_analyzer else 'false' }}, is_verifier: {{ 'true' if model.is_verifier else 'false' }} },{% endfor %}
+};
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-gray-400', 'border-transparent'); b.classList.remove('text-white', 'border-blue-500'); });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+    document.getElementById('tab-' + tab).classList.add('active', 'text-white', 'border-blue-500');
+    document.getElementById('tab-' + tab).classList.remove('text-gray-400', 'border-transparent');
+    document.getElementById('panel-' + tab).classList.remove('hidden');
+}
+
+async function submitModelForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true' };
+    const response = await fetch('/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
+}
+
+function editModel(id) {
+    const m = modelsData[id]; if (!m) return;
+    document.getElementById('edit-model-id').value = id;
+    document.getElementById('edit-model-name').value = m.name;
+    document.getElementById('edit-model-base-url').value = m.base_url;
+    document.getElementById('edit-model-max-tokens').value = m.max_tokens;
+    document.getElementById('edit-model-max-concurrent').value = m.max_concurrent;
+    document.getElementById('edit-model-votes').value = m.votes;
+    document.getElementById('edit-model-chunk-size').value = m.chunk_size;
+    document.getElementById('edit-model-is-analyzer').checked = m.is_analyzer;
+    document.getElementById('edit-model-is-verifier').checked = m.is_verifier;
+    document.getElementById('edit-model-modal').classList.remove('hidden');
+}
+
+async function submitEditModelForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const id = formData.get('model_id');
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), chunk_size: parseInt(formData.get('chunk_size')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true' };
+    if (formData.get('api_key')) data.api_key = formData.get('api_key');
+    const response = await fetch(`/models/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
+}
+
+async function deleteModel(id, name) { if (!confirm(`Delete "${name}"?`)) return; if ((await fetch(`/models/${id}`, { method: 'DELETE' })).ok) location.reload(); }
+async function deleteProfile(id, name) { if (!confirm(`Delete profile "${name}"?`)) return; if ((await fetch(`/profiles/${id}`, { method: 'DELETE' })).ok) location.reload(); }
+async function deleteAnalyzer(pid, aid, name) { if (!confirm(`Delete analyzer "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/analyzers/${aid}`, { method: 'DELETE' })).ok) location.reload(); }
+async function deleteRule(id, name) { if (!confirm(`Delete rule "${name}"?`)) return; if ((await fetch(`/rules/${id}`, { method: 'DELETE' })).ok) location.reload(); }
+
+function addAnalyzer(profileId) {
+    document.getElementById('analyzer-profile-id').value = profileId;
+    document.getElementById('add-analyzer-form').setAttribute('hx-post', `/profiles/${profileId}/analyzers`);
+    htmx.process(document.getElementById('add-analyzer-form'));
+    document.getElementById('add-analyzer-modal').classList.remove('hidden');
+}
+
+async function editAnalyzer(profileId, analyzerId) {
+    try {
+        // Fetch profile data which includes analyzers
+        const response = await fetch(`/profiles/${profileId}`);
+        if (!response.ok) { alert('Failed to load analyzer'); return; }
+        const profile = await response.json();
+
+        // Find the specific analyzer
+        const analyzer = profile.analyzers.find(a => a.id === analyzerId);
+        if (!analyzer) { alert('Analyzer not found'); return; }
+
+        // Populate the form
+        document.getElementById('edit-analyzer-profile-id').value = profileId;
+        document.getElementById('edit-analyzer-id').value = analyzerId;
+        document.getElementById('edit-analyzer-name').value = analyzer.name || '';
+        document.getElementById('edit-analyzer-model').value = analyzer.model_id || '';
+        document.getElementById('edit-analyzer-file-filter').value = analyzer.file_filter || '';
+        document.getElementById('edit-analyzer-run-order').value = analyzer.run_order || 1;
+        document.getElementById('edit-analyzer-prompt').value = analyzer.prompt_template || '';
+
+        document.getElementById('edit-analyzer-modal').classList.remove('hidden');
+    } catch (err) {
+        alert('Error loading analyzer: ' + err.message);
+    }
+}
+
+async function submitEditAnalyzerForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const profileId = formData.get('profile_id');
+    const analyzerId = formData.get('analyzer_id');
+
+    // Build form data for PUT request
+    const params = new URLSearchParams();
+    params.append('name', formData.get('name'));
+    params.append('prompt_template', formData.get('prompt_template'));
+    if (formData.get('model_id')) params.append('model_id', formData.get('model_id'));
+    if (formData.get('file_filter')) params.append('file_filter', formData.get('file_filter'));
+    params.append('run_order', formData.get('run_order'));
+
+    try {
+        const response = await fetch(`/profiles/${profileId}/analyzers/${analyzerId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params
+        });
+        if (response.ok) {
+            location.reload();
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Failed to update analyzer');
+        }
+    } catch (err) {
+        alert('Error updating analyzer: ' + err.message);
+    }
+}
+</script>
 {% endblock %}

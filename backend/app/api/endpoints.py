@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFi
 import os
 import tempfile
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.core.database import get_db, engine, Base, SessionLocal
@@ -461,6 +461,42 @@ async def resume_scan(
     return {"error": "Cannot resume scan", "current_status": scan.status if scan else None}
 
 
+@router.post("/scan/{scan_id}/stop")
+async def stop_scan(scan_id: int, db: Session = Depends(get_db)):
+    """Force stop a running or paused scan"""
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return {"error": "Scan not found"}
+
+    if scan.status in ("running", "paused", "queued"):
+        scan.status = "failed"
+        scan.logs = (scan.logs or "") + "\n[STOPPED] Scan manually stopped by user"
+        db.commit()
+        return {"status": "stopped", "scan_id": scan_id}
+    return {"error": "Scan is not running", "current_status": scan.status}
+
+
+@router.delete("/scan/{scan_id}")
+async def delete_scan(scan_id: int, db: Session = Depends(get_db)):
+    """Delete a scan and all associated data"""
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return {"error": "Scan not found"}
+
+    # Don't allow deleting running scans
+    if scan.status == "running":
+        return {"error": "Cannot delete a running scan. Stop it first."}
+
+    # Delete associated findings
+    db.query(Finding).filter(Finding.scan_id == scan_id).delete()
+
+    # Delete the scan
+    db.delete(scan)
+    db.commit()
+
+    return {"status": "deleted", "scan_id": scan_id}
+
+
 # Model configuration endpoints
 @router.get("/models")
 async def list_models(db: Session = Depends(get_db)):
@@ -478,6 +514,85 @@ async def list_models(db: Session = Depends(get_db)):
         }
         for m in models
     ]
+
+
+@router.post("/models")
+async def create_model(request: Request, db: Session = Depends(get_db)):
+    """Create a new model configuration"""
+    data = await request.json()
+
+    # Check for duplicate name
+    existing = db.query(ModelConfig).filter(ModelConfig.name == data.get('name')).first()
+    if existing:
+        return JSONResponse({"error": "Model with this name already exists"}, status_code=400)
+
+    model = ModelConfig(
+        name=data.get('name'),
+        base_url=data.get('base_url'),
+        api_key=data.get('api_key'),
+        max_tokens=data.get('max_tokens', 4096),
+        max_concurrent=data.get('max_concurrent', 2),
+        votes=data.get('votes', 1),
+        chunk_size=data.get('chunk_size', 3000),
+        is_analyzer=data.get('is_analyzer', True),
+        is_verifier=data.get('is_verifier', False)
+    )
+    db.add(model)
+    db.commit()
+    db.refresh(model)
+
+    return {"status": "created", "id": model.id, "name": model.name}
+
+
+@router.put("/models/{model_id}")
+async def update_model(model_id: int, request: Request, db: Session = Depends(get_db)):
+    """Update a model configuration"""
+    model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    if not model:
+        return JSONResponse({"error": "Model not found"}, status_code=404)
+
+    data = await request.json()
+
+    # Check for duplicate name (excluding current model)
+    if data.get('name') and data['name'] != model.name:
+        existing = db.query(ModelConfig).filter(ModelConfig.name == data['name']).first()
+        if existing:
+            return JSONResponse({"error": "Model with this name already exists"}, status_code=400)
+
+    # Update fields
+    if data.get('name'):
+        model.name = data['name']
+    if 'base_url' in data:
+        model.base_url = data['base_url']
+    if data.get('api_key'):
+        model.api_key = data['api_key']
+    if 'max_tokens' in data:
+        model.max_tokens = data['max_tokens']
+    if 'max_concurrent' in data:
+        model.max_concurrent = data['max_concurrent']
+    if 'votes' in data:
+        model.votes = data['votes']
+    if 'chunk_size' in data:
+        model.chunk_size = data['chunk_size']
+    if 'is_analyzer' in data:
+        model.is_analyzer = data['is_analyzer']
+    if 'is_verifier' in data:
+        model.is_verifier = data['is_verifier']
+
+    db.commit()
+    return {"status": "updated", "id": model.id, "name": model.name}
+
+
+@router.delete("/models/{model_id}")
+async def delete_model(model_id: int, db: Session = Depends(get_db)):
+    """Delete a model configuration"""
+    model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    if not model:
+        return JSONResponse({"error": "Model not found"}, status_code=404)
+
+    db.delete(model)
+    db.commit()
+    return {"status": "deleted", "id": model_id}
 
 
 @router.get("/models/performance")
@@ -756,34 +871,72 @@ async def download_pdf_report(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/config", response_class=HTMLResponse)
-async def get_config(request: Request):
+async def get_config(request: Request, db: Session = Depends(get_db)):
     from app.core.config import settings
-    return templates.TemplateResponse("config.html", {"request": request, "settings": settings})
+    from app.services.analysis.static_detector import StaticPatternDetector
+
+    # Ensure defaults are seeded
+    seed_default_profiles(db)
+    StaticPatternDetector.seed_default_rules(db)
+
+    models = db.query(ModelConfig).all()
+    profiles = db.query(ScanProfile).order_by(ScanProfile.name).all()
+    rules = db.query(StaticRule).order_by(StaticRule.severity, StaticRule.name).all()
+
+    return templates.TemplateResponse("config.html", {
+        "request": request,
+        "settings": settings,
+        "models": models,
+        "profiles": profiles,
+        "rules": rules
+    })
 
 
 @router.post("/config")
 async def update_config(
     request: Request,
-    llm_base_url: str = Form(...),
-    llm_api_key: str = Form(...),
-    llm_model: str = Form(...),
-    llm_verification_models: str = Form(...),
-    llm_verify_ssl: bool = Form(False)
+    db: Session = Depends(get_db),
+    form_type: str = Form(None),
+    llm_base_url: str = Form(None),
+    llm_api_key: str = Form(None),
+    llm_verify_ssl: bool = Form(False),
+    max_concurrent: int = Form(None)
 ):
     from app.core.config import settings
-    settings.LLM_BASE_URL = llm_base_url
-    settings.LLM_API_KEY = llm_api_key
-    settings.LLM_MODEL = llm_model
+    message = "Configuration saved!"
 
-    settings.LLM_VERIFICATION_MODELS = [m.strip() for m in llm_verification_models.split(",") if m.strip()]
-    settings.LLM_VERIFY_SSL = llm_verify_ssl
+    if form_type == "connection":
+        if llm_base_url:
+            settings.LLM_BASE_URL = llm_base_url
+        if llm_api_key:
+            settings.LLM_API_KEY = llm_api_key
+        settings.LLM_VERIFY_SSL = llm_verify_ssl
 
-    from app.services.llm_provider import llm_provider
-    llm_provider.base_url = llm_base_url
-    llm_provider.api_key = llm_api_key
-    llm_provider.verify_ssl = llm_verify_ssl
+        from app.services.llm_provider import llm_provider
+        if llm_base_url:
+            llm_provider.base_url = llm_base_url
+        if llm_api_key:
+            llm_provider.api_key = llm_api_key
+        llm_provider.verify_ssl = llm_verify_ssl
+        message = "Connection settings saved!"
 
-    return templates.TemplateResponse("config.html", {"request": request, "settings": settings, "message": "Configuration saved!"})
+    elif form_type == "defaults":
+        if max_concurrent:
+            settings.MAX_CONCURRENT_REQUESTS = max_concurrent
+        message = "Default settings saved!"
+
+    models = db.query(ModelConfig).all()
+    profiles = db.query(ScanProfile).order_by(ScanProfile.name).all()
+    rules = db.query(StaticRule).order_by(StaticRule.severity, StaticRule.name).all()
+
+    return templates.TemplateResponse("config.html", {
+        "request": request,
+        "settings": settings,
+        "models": models,
+        "profiles": profiles,
+        "rules": rules,
+        "message": message
+    })
 
 
 # ============== Static Rules Management ==============

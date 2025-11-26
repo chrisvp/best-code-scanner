@@ -1,0 +1,80 @@
+<tr class="hover:bg-gray-700/30 transition-colors"
+    data-name="{{ rule.name }}"
+    data-severity="{{ rule.severity }}"
+    data-languages="{{ rule.languages|join(',') if rule.languages else '' }}">
+    <!-- Status Toggle -->
+    <td class="px-4 py-3">
+        <button hx-post="/rules/{{ rule.id }}/toggle" hx-target="closest tr" hx-swap="outerHTML"
+            class="w-10 h-5 rounded-full transition-colors relative {{ 'bg-green-600' if rule.enabled else 'bg-gray-600' }}">
+            <span class="absolute top-0.5 {{ 'right-0.5' if rule.enabled else 'left-0.5' }} w-4 h-4 bg-white rounded-full transition-all shadow"></span>
+        </button>
+    </td>
+
+    <!-- Name -->
+    <td class="px-4 py-3">
+        <div class="flex items-center gap-2">
+            <span class="font-medium text-white {{ 'opacity-50' if not rule.enabled else '' }}">{{ rule.name }}</span>
+            {% if rule.built_in %}
+            <span class="text-xs px-1.5 py-0.5 bg-blue-900/50 text-blue-400 rounded">built-in</span>
+            {% endif %}
+        </div>
+        {% if rule.description %}
+        <div class="text-xs text-gray-500 mt-0.5 truncate max-w-xs" title="{{ rule.description }}">{{ rule.description }}</div>
+        {% endif %}
+    </td>
+
+    <!-- Type -->
+    <td class="px-4 py-3">
+        <div class="text-sm text-gray-300">{{ rule.vulnerability_type }}</div>
+        {% if rule.cwe_id %}
+        <div class="text-xs text-gray-500">{{ rule.cwe_id }}</div>
+        {% endif %}
+    </td>
+
+    <!-- Severity -->
+    <td class="px-4 py-3">
+        <span class="text-xs px-2 py-1 rounded-full
+            {% if rule.severity == 'Critical' %}bg-red-900/50 text-red-400
+            {% elif rule.severity == 'High' %}bg-orange-900/50 text-orange-400
+            {% elif rule.severity == 'Medium' %}bg-yellow-900/50 text-yellow-400
+            {% else %}bg-green-900/50 text-green-400{% endif %}">
+            {{ rule.severity }}
+        </span>
+    </td>
+
+    <!-- Languages -->
+    <td class="px-4 py-3">
+        <div class="flex flex-wrap gap-1">
+            {% for lang in (rule.languages or []) %}
+            <span class="text-xs px-1.5 py-0.5 bg-gray-700 text-gray-300 rounded">{{ lang }}</span>
+            {% endfor %}
+        </div>
+    </td>
+
+    <!-- Match Count -->
+    <td class="px-4 py-3">
+        <span class="text-sm text-gray-400">{{ rule.match_count or 0 }}</span>
+    </td>
+
+    <!-- Actions -->
+    <td class="px-4 py-3">
+        <div class="flex items-center gap-2">
+            <button onclick="openTestModal('{{ rule.pattern|e }}')"
+                class="text-gray-400 hover:text-blue-400 transition-colors" title="Test Pattern">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </button>
+            {% if not rule.built_in %}
+            <button hx-delete="/rules/{{ rule.id }}" hx-target="closest tr" hx-swap="outerHTML"
+                hx-confirm="Delete this rule?"
+                class="text-gray-400 hover:text-red-400 transition-colors" title="Delete">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+            </button>
+            {% endif %}
+        </div>
+    </td>
+</tr>

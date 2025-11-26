@@ -3,75 +3,61 @@
 {% block content %}
 <div class="flex h-screen overflow-hidden">
     <!-- Sidebar / Scan List -->
-    <div class="w-1/3 bg-gray-800 border-r border-gray-700 flex flex-col">
+    <div class="w-80 bg-gray-800/50 border-r border-gray-700 flex flex-col shrink-0">
         <!-- New Scan Form -->
-        <div class="p-4 border-b border-gray-700 bg-gray-800 z-10 shadow-md">
-            <h2 class="text-lg font-bold mb-3 text-white flex items-center gap-2">
-                <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="p-4 border-b border-gray-700 bg-gray-800/80">
+            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                 </svg>
                 New Scan
             </h2>
             <form hx-post="/scan/start" hx-target="#scan-list" hx-swap="innerHTML" hx-encoding="multipart/form-data" class="space-y-3">
                 <div>
-                    <label class="block text-xs font-medium text-gray-400 mb-1">Git URL or Local Archive Path</label>
-                    <input type="text" name="target_url" placeholder="https://github.com/user/repo.git or /path/to/file.tar.gz" required
-                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+                    <input type="text" name="target_url" placeholder="https://github.com/user/repo.git" required
+                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all">
                 </div>
 
-                <!-- File Upload -->
-                <div>
-                    <label class="block text-xs font-medium text-gray-400 mb-1">Or Upload Archive</label>
-                    <input type="file" name="archive" accept=".zip,.tar.gz,.tgz"
-                        class="w-full text-xs text-gray-400 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-gray-700 file:text-gray-300 hover:file:bg-gray-600 cursor-pointer">
-                </div>
-
-                <!-- Scan Options (collapsed by default) -->
-                <details class="group">
-                    <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-300 flex items-center gap-1">
-                        <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                <!-- File Upload (subtle) -->
+                <div class="relative">
+                    <input type="file" name="archive" accept=".zip,.tar.gz,.tgz" id="archive-upload"
+                        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+                    <div class="flex items-center gap-2 px-3 py-2 bg-gray-900/50 border border-dashed border-gray-600 rounded-lg text-xs text-gray-400 hover:border-gray-500 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                         </svg>
-                        Advanced Options
-                    </summary>
-                    <div class="mt-2 space-y-2 pl-4 border-l border-gray-700">
-                        <div class="flex items-center gap-2">
-                            <input type="checkbox" name="multi_model_scan" id="multi_model" value="true"
-                                class="w-3 h-3 rounded bg-gray-800 border-gray-600 text-blue-600">
-                            <label for="multi_model" class="text-xs text-gray-300">Multi-model scan</label>
-                        </div>
-                        <input type="hidden" name="chunk_size" value="8000">
-                        <input type="hidden" name="chunk_strategy" value="smart">
+                        <span id="upload-label">Or drop archive (.zip, .tar.gz)</span>
                     </div>
-                </details>
+                </div>
 
                 <button type="submit"
-                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-2 text-sm">
-                    <span>Start Scan</span>
+                    class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg transition-all flex items-center justify-center gap-2 text-sm shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                     </svg>
+                    Start Scan
                 </button>
             </form>
         </div>
 
-        <!-- Scan List Filter -->
-        <div class="p-3 border-b border-gray-700 bg-gray-800/50 flex gap-2">
-            <div class="relative flex-1">
-                <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-                </svg>
-                <input type="text" id="scan-search" onkeyup="filterScans()" placeholder="Search scans..."
-                    class="w-full bg-gray-900 border border-gray-600 rounded pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+        <!-- Scan List Header & Filter -->
+        <div class="p-3 border-b border-gray-700/50 bg-gray-800/30">
+            <div class="flex gap-2">
+                <div class="relative flex-1">
+                    <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
+                    <input type="text" id="scan-search" onkeyup="filterScans()" placeholder="Filter scans..."
+                        class="w-full bg-gray-900/50 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-blue-500/50">
+                </div>
+                <select id="scan-status-filter" onchange="filterScans()"
+                    class="bg-gray-900/50 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none">
+                    <option value="all">All</option>
+                    <option value="running">Running</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                </select>
             </div>
-            <select id="scan-status-filter" onchange="filterScans()"
-                class="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-white focus:outline-none">
-                <option value="all">All</option>
-                <option value="running">Running</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-                <option value="queued">Queued</option>
-            </select>
         </div>
 
         <!-- Scan List -->
@@ -80,14 +66,71 @@
         </div>
     </div>
 
+    <!-- Main Content / Details -->
+    <div class="flex-1 bg-gray-900 overflow-hidden relative" id="scan-details">
+        <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
+            <div class="text-center max-w-lg px-8">
+                <!-- Large Shield Icon -->
+                <div class="relative mb-8">
+                    <svg class="w-24 h-24 mx-auto text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+                            d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z">
+                        </path>
+                    </svg>
+                    <div class="absolute inset-0 flex items-center justify-center">
+                        <div class="w-4 h-4 bg-blue-500/20 rounded-full animate-ping"></div>
+                    </div>
+                </div>
+
+                <h3 class="text-xl font-semibold text-gray-300 mb-3">Select a Scan to View Results</h3>
+                <p class="text-sm text-gray-500 leading-relaxed mb-6">
+                    Choose a scan from the sidebar to view detailed security findings, vulnerability analysis, and remediation guidance.
+                </p>
+
+                <!-- Quick Stats -->
+                <div class="grid grid-cols-3 gap-4 text-center">
+                    <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                        <div class="text-2xl font-bold text-gray-400">{{ scans|length }}</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Total Scans</div>
+                    </div>
+                    <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                        <div class="text-2xl font-bold text-blue-400">{{ scans|selectattr('status', 'equalto', 'running')|list|length }}</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Running</div>
+                    </div>
+                    <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                        {% set total_findings = namespace(count=0) %}
+                        {% for scan in scans %}
+                            {% set total_findings.count = total_findings.count + scan.findings|length %}
+                        {% endfor %}
+                        <div class="text-2xl font-bold text-red-400">{{ total_findings.count }}</div>
+                        <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Findings</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
+// File upload label update
+document.getElementById('archive-upload')?.addEventListener('change', function(e) {
+    const label = document.getElementById('upload-label');
+    if (this.files.length > 0) {
+        label.textContent = this.files[0].name;
+        label.classList.add('text-blue-400');
+    } else {
+        label.textContent = 'Or drop archive (.zip, .tar.gz)';
+        label.classList.remove('text-blue-400');
+    }
+});
+
 function filterScans() {
     const search = document.getElementById('scan-search').value.toLowerCase();
     const status = document.getElementById('scan-status-filter').value;
     const items = document.querySelectorAll('.scan-item');
 
     items.forEach(item => {
-        const target = item.getAttribute('data-target').toLowerCase();
+        const target = item.getAttribute('data-target')?.toLowerCase() || '';
         const itemStatus = item.getAttribute('data-status');
 
         const matchesSearch = target.includes(search);
@@ -97,21 +140,4 @@ function filterScans() {
     });
 }
 </script>
-
-    <!-- Main Content / Details -->
-    <div class="flex-1 bg-gray-900 overflow-hidden relative" id="scan-details">
-        <div class="absolute inset-0 flex flex-col items-center justify-center text-gray-600">
-            <div class="bg-gray-800/50 p-8 rounded-2xl border border-gray-700/50 text-center max-w-md">
-                <svg class="w-16 h-16 mb-4 mx-auto text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                        d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z">
-                    </path>
-                </svg>
-                <h3 class="text-lg font-medium text-gray-300 mb-2">No Scan Selected</h3>
-                <p class="text-sm">Select a scan from the sidebar to view detailed findings, logs, and remediation
-                    steps.</p>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}

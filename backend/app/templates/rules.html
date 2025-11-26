@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Static Detection Rules</h1>
+                <p class="text-gray-400 text-sm mt-1">Regex patterns that detect vulnerabilities without LLM analysis</p>
+            </div>
+            <button onclick="document.getElementById('add-rule-modal').classList.remove('hidden')"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+                Add Rule
+            </button>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-white">{{ rules|length }}</div>
+                <div class="text-sm text-gray-400">Total Rules</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-green-400">{{ rules|selectattr('enabled')|list|length }}</div>
+                <div class="text-sm text-gray-400">Enabled</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-blue-400">{{ rules|selectattr('built_in')|list|length }}</div>
+                <div class="text-sm text-gray-400">Built-in</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-2xl font-bold text-purple-400">{{ rules|rejectattr('built_in')|list|length }}</div>
+                <div class="text-sm text-gray-400">Custom</div>
+            </div>
+        </div>
+
+        <!-- Filter -->
+        <div class="mb-4 flex gap-4">
+            <input type="text" id="rule-search" placeholder="Search rules..."
+                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onkeyup="filterRules()">
+            <select id="severity-filter" onchange="filterRules()"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">All Severities</option>
+                <option value="Critical">Critical</option>
+                <option value="High">High</option>
+                <option value="Medium">Medium</option>
+                <option value="Low">Low</option>
+            </select>
+            <select id="language-filter" onchange="filterRules()"
+                class="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">All Languages</option>
+                <option value="c">C</option>
+                <option value="cpp">C++</option>
+                <option value="py">Python</option>
+                <option value="js">JavaScript</option>
+                <option value="java">Java</option>
+            </select>
+        </div>
+
+        <!-- Rules Table -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <table class="w-full">
+                <thead class="bg-gray-900/50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Name</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Severity</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Languages</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Matches</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="rules-list" class="divide-y divide-gray-700">
+                    {% for rule in rules %}
+                    {% include "partials/rule_row.html" %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add Rule Modal -->
+<div id="add-rule-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add Detection Rule</h2>
+            <button onclick="document.getElementById('add-rule-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <form hx-post="/rules" hx-target="#rules-list" hx-swap="innerHTML"
+              hx-on::after-request="if(event.detail.successful) document.getElementById('add-rule-modal').classList.add('hidden')">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Rule Name</label>
+                    <input type="text" name="name" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., Dangerous eval() usage">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Regex Pattern</label>
+                    <input type="text" name="pattern" required
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., eval\s*\(\s*request\.">
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Languages (comma-separated)</label>
+                        <input type="text" name="languages" required
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="c, cpp, py">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">CWE ID (optional)</label>
+                        <input type="text" name="cwe_id"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="CWE-78">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Vulnerability Type</label>
+                        <input type="text" name="vulnerability_type" required
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Command Injection">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Severity</label>
+                        <select name="severity"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="Critical">Critical</option>
+                            <option value="High" selected>High</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Description</label>
+                    <textarea name="description" rows="2"
+                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Describe what this rule detects and why it's dangerous"></textarea>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" name="is_definite" id="is_definite" value="true" checked
+                        class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">
+                    <label for="is_definite" class="text-sm text-gray-300">Auto-create finding (skip LLM verification)</label>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-rule-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                    Cancel
+                </button>
+                <button type="submit"
+                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                    Create Rule
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Test Rule Modal -->
+<div id="test-rule-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Test Pattern</h2>
+            <button onclick="document.getElementById('test-rule-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Pattern</label>
+                <input type="text" id="test-pattern"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-300 mb-1">Test Code</label>
+                <textarea id="test-code" rows="8"
+                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Paste code to test the pattern against..."></textarea>
+            </div>
+            <button onclick="testPattern()"
+                class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors">
+                Test Pattern
+            </button>
+            <div id="test-results" class="mt-4 p-4 bg-gray-900 rounded-lg hidden">
+                <h3 class="text-sm font-medium text-gray-300 mb-2">Results</h3>
+                <pre id="test-output" class="text-sm text-gray-400 whitespace-pre-wrap"></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function filterRules() {
+    const search = document.getElementById('rule-search').value.toLowerCase();
+    const severity = document.getElementById('severity-filter').value;
+    const language = document.getElementById('language-filter').value;
+
+    document.querySelectorAll('#rules-list tr').forEach(row => {
+        const name = row.dataset.name?.toLowerCase() || '';
+        const rowSeverity = row.dataset.severity || '';
+        const languages = row.dataset.languages || '';
+
+        const matchesSearch = name.includes(search);
+        const matchesSeverity = !severity || rowSeverity === severity;
+        const matchesLanguage = !language || languages.includes(language);
+
+        row.style.display = (matchesSearch && matchesSeverity && matchesLanguage) ? '' : 'none';
+    });
+}
+
+function openTestModal(pattern) {
+    document.getElementById('test-pattern').value = pattern || '';
+    document.getElementById('test-results').classList.add('hidden');
+    document.getElementById('test-rule-modal').classList.remove('hidden');
+}
+
+async function testPattern() {
+    const pattern = document.getElementById('test-pattern').value;
+    const testCode = document.getElementById('test-code').value;
+
+    const formData = new FormData();
+    formData.append('pattern', pattern);
+    formData.append('test_code', testCode);
+
+    try {
+        const response = await fetch('/rules/test', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        document.getElementById('test-results').classList.remove('hidden');
+        if (result.valid) {
+            if (result.count > 0) {
+                let output = `Found ${result.count} match(es):\n\n`;
+                result.matches.forEach((m, i) => {
+                    output += `${i+1}. Line ${m.line}: "${m.match}"\n`;
+                });
+                document.getElementById('test-output').textContent = output;
+                document.getElementById('test-output').className = 'text-sm text-green-400 whitespace-pre-wrap';
+            } else {
+                document.getElementById('test-output').textContent = 'No matches found';
+                document.getElementById('test-output').className = 'text-sm text-yellow-400 whitespace-pre-wrap';
+            }
+        } else {
+            document.getElementById('test-output').textContent = `Invalid pattern: ${result.error}`;
+            document.getElementById('test-output').className = 'text-sm text-red-400 whitespace-pre-wrap';
+        }
+    } catch (e) {
+        document.getElementById('test-output').textContent = `Error: ${e.message}`;
+        document.getElementById('test-output').className = 'text-sm text-red-400 whitespace-pre-wrap';
+    }
+}
+</script>
+{% endblock %}
