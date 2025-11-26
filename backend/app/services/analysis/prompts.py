@@ -1,6 +1,22 @@
 """
 Default analyzer prompts for different scan profiles.
 Prompts support placeholders: {code}, {language}, {file_path}, {context}
+
+All prompts use MARKER FORMAT (*FIELD: value) for reliable parsing.
+"""
+
+# Output format instructions shared across prompts
+MARKER_FORMAT_INSTRUCTIONS = """
+=== OUTPUT FORMAT ===
+*DRAFT: descriptive title
+*TYPE: CWE-XXX or vulnerability category
+*SEVERITY: Critical/High/Medium/Low
+*LINE: exact line number from the code
+*SNIPPET: the vulnerable code
+*REASON: one sentence explanation of why this is vulnerable
+*END_DRAFT
+
+Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
 """
 
 # General security analysis prompt - works for all languages
@@ -21,22 +37,28 @@ Look for:
 - Race conditions
 - Resource leaks
 
-For each vulnerability found, respond with JSON:
-```json
-[
-  {{
-    "title": "Brief descriptive title",
-    "vulnerability_type": "CWE-XXX or category name",
-    "severity": "Critical|High|Medium|Low",
-    "line_number": <line number in the code>,
-    "snippet": "relevant code snippet",
-    "reason": "detailed explanation of why this is vulnerable"
-  }}
-]
-```
+=== EXAMPLES ===
 
-If no vulnerabilities found, respond with: []
-"""
+ 42 | query = "SELECT * FROM users WHERE id = " + user_id
+
+*DRAFT: SQL Injection via String Concatenation
+*TYPE: CWE-89 SQL Injection
+*SEVERITY: Critical
+*LINE: 42
+*SNIPPET: query = "SELECT * FROM users WHERE id = " + user_id
+*REASON: User input directly concatenated into SQL query without parameterization
+*END_DRAFT
+
+ 15 | os.system("rm -rf " + user_path)
+
+*DRAFT: Command Injection via os.system
+*TYPE: CWE-78 OS Command Injection
+*SEVERITY: Critical
+*LINE: 15
+*SNIPPET: os.system("rm -rf " + user_path)
+*REASON: User-controlled path passed to shell command without sanitization
+*END_DRAFT
+""" + MARKER_FORMAT_INSTRUCTIONS
 
 # C/C++ specific memory safety prompt
 C_MEMORY_SAFETY_PROMPT = """Analyze this C/C++ code for memory safety vulnerabilities.
@@ -58,22 +80,30 @@ Focus specifically on:
 - Out-of-bounds reads/writes
 - Memory leaks in error paths
 
-For each vulnerability found, respond with JSON:
-```json
-[
-  {{
-    "title": "Brief descriptive title",
-    "vulnerability_type": "CWE-XXX",
-    "severity": "Critical|High|Medium|Low",
-    "line_number": <line number>,
-    "snippet": "vulnerable code snippet",
-    "reason": "detailed explanation including potential exploit scenario"
-  }}
-]
-```
+=== EXAMPLES ===
 
-If no vulnerabilities found, respond with: []
-"""
+ 331 | strcpy(credentials, username);
+ 332 | strcat(credentials, password);
+
+*DRAFT: Buffer Overflow in Credential Handling
+*TYPE: CWE-120 Buffer Overflow
+*SEVERITY: High
+*LINE: 331
+*SNIPPET: strcpy(credentials, username);
+*REASON: Unbounded copy of username into fixed-size buffer without length check
+*END_DRAFT
+
+ 410 | free(block);
+ 411 | process_data(block->data);
+
+*DRAFT: Use-After-Free Memory Access
+*TYPE: CWE-416 Use After Free
+*SEVERITY: High
+*LINE: 411
+*SNIPPET: process_data(block->data);
+*REASON: Accessing block->data after block was freed on previous line
+*END_DRAFT
+""" + MARKER_FORMAT_INSTRUCTIONS
 
 # Signal handler safety prompt - specifically for CVE-2024-6387 type bugs
 SIGNAL_HANDLER_PROMPT = """Analyze this C/C++ code for signal handler safety issues.
@@ -107,22 +137,21 @@ Race condition pattern to detect:
 2. Handler calls any async-signal-unsafe function
 3. This creates exploitable race condition (potential RCE)
 
-For each issue found, respond with JSON:
-```json
-[
-  {{
-    "title": "Async-signal-unsafe function in signal handler",
-    "vulnerability_type": "CWE-364 Signal Handler Race Condition",
-    "severity": "Critical",
-    "line_number": <line of the unsafe call>,
-    "snippet": "the signal handler code",
-    "reason": "Signal handler 'X' calls async-signal-unsafe function 'Y'. This can cause a race condition if the signal interrupts Y or a function that holds locks Y needs. Can lead to RCE (CVE-2024-6387 pattern)."
-  }}
-]
-```
+=== EXAMPLE ===
 
-If no vulnerabilities found, respond with: []
-"""
+ 100 | void sigalarm_handler(int sig) {
+ 101 |     syslog(LOG_WARNING, "Timeout reached");
+ 102 |     cleanup_connection();
+ 103 | }
+
+*DRAFT: Async-Signal-Unsafe Function in Signal Handler
+*TYPE: CWE-364 Signal Handler Race Condition
+*SEVERITY: Critical
+*LINE: 101
+*SNIPPET: syslog(LOG_WARNING, "Timeout reached");
+*REASON: Signal handler calls syslog() which is async-signal-unsafe, creating exploitable race condition (CVE-2024-6387 pattern)
+*END_DRAFT
+""" + MARKER_FORMAT_INSTRUCTIONS
 
 # Python specific prompt
 PYTHON_SECURITY_PROMPT = """Analyze this Python code for security vulnerabilities.
@@ -144,22 +173,28 @@ Focus on:
 - Insecure random (random module for crypto)
 - XML vulnerabilities (XXE with lxml/xml.etree)
 
-For each vulnerability found, respond with JSON:
-```json
-[
-  {{
-    "title": "Brief descriptive title",
-    "vulnerability_type": "CWE-XXX or category",
-    "severity": "Critical|High|Medium|Low",
-    "line_number": <line number>,
-    "snippet": "vulnerable code",
-    "reason": "detailed explanation"
-  }}
-]
-```
+=== EXAMPLES ===
 
-If no vulnerabilities found, respond with: []
-"""
+ 25 | result = eval(user_expression)
+
+*DRAFT: Code Injection via eval()
+*TYPE: CWE-94 Code Injection
+*SEVERITY: Critical
+*LINE: 25
+*SNIPPET: result = eval(user_expression)
+*REASON: User input passed directly to eval() allows arbitrary code execution
+*END_DRAFT
+
+ 88 | data = pickle.loads(request.data)
+
+*DRAFT: Insecure Deserialization
+*TYPE: CWE-502 Deserialization of Untrusted Data
+*SEVERITY: Critical
+*LINE: 88
+*SNIPPET: data = pickle.loads(request.data)
+*REASON: Deserializing untrusted data with pickle allows arbitrary code execution
+*END_DRAFT
+""" + MARKER_FORMAT_INSTRUCTIONS
 
 # Cryptographic weakness prompt
 CRYPTO_AUDIT_PROMPT = """Analyze this code for cryptographic weaknesses.
@@ -182,22 +217,28 @@ Look for:
 - Certificate validation disabled
 - Timing-vulnerable comparisons for secrets
 
-For each weakness found, respond with JSON:
-```json
-[
-  {{
-    "title": "Brief descriptive title",
-    "vulnerability_type": "CWE-327 or specific CWE",
-    "severity": "Critical|High|Medium|Low",
-    "line_number": <line number>,
-    "snippet": "weak crypto code",
-    "reason": "explanation of the weakness and recommended fix"
-  }}
-]
-```
+=== EXAMPLES ===
 
-If no vulnerabilities found, respond with: []
-"""
+ 45 | hash = hashlib.md5(password.encode()).hexdigest()
+
+*DRAFT: Weak Password Hashing with MD5
+*TYPE: CWE-327 Use of Broken Crypto Algorithm
+*SEVERITY: High
+*LINE: 45
+*SNIPPET: hash = hashlib.md5(password.encode()).hexdigest()
+*REASON: MD5 is cryptographically broken; use bcrypt/scrypt/argon2 for passwords
+*END_DRAFT
+
+ 72 | SECRET_KEY = "hardcoded_secret_123"
+
+*DRAFT: Hardcoded Cryptographic Key
+*TYPE: CWE-798 Hardcoded Credentials
+*SEVERITY: High
+*LINE: 72
+*SNIPPET: SECRET_KEY = "hardcoded_secret_123"
+*REASON: Cryptographic key hardcoded in source code; should use environment variables or key management
+*END_DRAFT
+""" + MARKER_FORMAT_INSTRUCTIONS
 
 # Race condition prompt
 RACE_CONDITION_PROMPT = """Analyze this code for race conditions and concurrency vulnerabilities.
@@ -218,24 +259,31 @@ Look for:
 - Double-checked locking anti-pattern
 - Atomic operation assumptions on non-atomic types
 
-For each race condition found, respond with JSON:
-```json
-[
-  {{
-    "title": "Brief descriptive title",
-    "vulnerability_type": "CWE-362 or specific CWE",
-    "severity": "Critical|High|Medium|Low",
-    "line_number": <line number>,
-    "snippet": "code with race condition",
-    "reason": "detailed explanation of the race and exploit scenario"
-  }}
-]
-```
+=== EXAMPLES ===
 
-If no vulnerabilities found, respond with: []
-"""
+ 55 | if os.path.exists(filepath):
+ 56 |     with open(filepath, 'r') as f:
 
-# Verification prompt
+*DRAFT: TOCTOU Race Condition
+*TYPE: CWE-367 Time-of-check Time-of-use
+*SEVERITY: Medium
+*LINE: 55
+*SNIPPET: if os.path.exists(filepath):
+*REASON: File existence check and open are not atomic; file could be modified between check and use
+*END_DRAFT
+
+ 120 | temp_file = "/tmp/app_" + str(random.randint(0, 1000))
+
+*DRAFT: Predictable Temporary File Name
+*TYPE: CWE-377 Insecure Temporary File
+*SEVERITY: Medium
+*LINE: 120
+*SNIPPET: temp_file = "/tmp/app_" + str(random.randint(0, 1000))
+*REASON: Predictable temp filename enables symlink attacks; use tempfile.mkstemp()
+*END_DRAFT
+""" + MARKER_FORMAT_INSTRUCTIONS
+
+# Verification prompt - uses *VERIFIED/*REJECTED markers
 VERIFICATION_PROMPT = """You are verifying a potential security vulnerability.
 
 File: {file_path}
@@ -260,15 +308,19 @@ Consider:
 3. Is this code reachable with attacker-controlled input?
 4. Are there mitigating factors (sandboxing, permissions)?
 
-Respond with JSON:
-```json
-{{
-  "verdict": "true_positive|false_positive",
-  "confidence": <1-10>,
-  "reasoning": "detailed explanation of your verdict",
-  "adjusted_severity": "Critical|High|Medium|Low|null"
-}}
-```
+=== OUTPUT FORMAT ===
+If TRUE POSITIVE:
+*VERIFIED: finding title
+*CONFIDENCE: 0-100
+*ATTACK_VECTOR: how an attacker could exploit this
+*DATA_FLOW: trace from input to vulnerable sink
+*ADJUSTED_SEVERITY: Critical/High/Medium/Low (if different from reported)
+*END_VERIFIED
+
+If FALSE POSITIVE:
+*REJECTED: finding title
+*REASON: why this is not actually vulnerable
+*END_REJECTED
 """
 
 # All prompts indexed by name for easy lookup
