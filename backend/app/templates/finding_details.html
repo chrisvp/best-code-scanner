@@ -1,12 +1,38 @@
 {% extends "base.html" %}
 
-{% block content %}
-<!-- Include highlight.js for syntax highlighting -->
+{% block head %}
+<!-- Markdown rendering library -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<!-- Markdown content styles -->
+<style>
+    .markdown-content h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.5rem; color: #f3f4f6; }
+    .markdown-content h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: #f3f4f6; }
+    .markdown-content h3 { font-size: 1.1rem; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; color: #e5e7eb; }
+    .markdown-content h4 { font-size: 1rem; font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.25rem; color: #d1d5db; }
+    .markdown-content p { margin-bottom: 0.5rem; color: #d1d5db; }
+    .markdown-content ul, .markdown-content ol { margin-left: 1.5rem; margin-bottom: 0.5rem; }
+    .markdown-content li { margin-bottom: 0.25rem; }
+    .markdown-content ul { list-style-type: disc; }
+    .markdown-content ol { list-style-type: decimal; }
+    .markdown-content code:not(pre code) { background: rgba(31, 41, 55, 0.8); padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875em; color: #93c5fd; }
+    .markdown-content pre { background: rgba(17, 24, 39, 0.8); padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.5rem 0; border: 1px solid rgba(55, 65, 81, 0.5); }
+    .markdown-content pre code { background: transparent; padding: 0; color: #e5e7eb; }
+    .markdown-content blockquote { border-left: 3px solid #4b5563; padding-left: 1rem; margin: 0.5rem 0; color: #9ca3af; }
+    .markdown-content a { color: #60a5fa; text-decoration: underline; }
+    .markdown-content strong { color: #f3f4f6; font-weight: 600; }
+    .markdown-content hr { border-color: #374151; margin: 1rem 0; }
+    .markdown-content table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; }
+    .markdown-content th, .markdown-content td { border: 1px solid #374151; padding: 0.5rem; text-align: left; }
+    .markdown-content th { background: rgba(31, 41, 55, 0.5); }
+</style>
 
 <div class="flex h-full overflow-hidden">
     <!-- Left Panel: Finding Details -->
@@ -237,7 +263,7 @@
                     </svg>
                     Vulnerability Details
                 </h3>
-                <p class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{{ finding.vulnerability_details }}</p>
+                <div class="text-sm leading-relaxed markdown-content" data-markdown='{{ finding.vulnerability_details | tojson }}'></div>
             </div>
             {% endif %}
 
@@ -263,7 +289,7 @@
                     </svg>
                     Remediation Steps
                 </h3>
-                <p class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{{ finding.remediation_steps }}</p>
+                <div class="text-sm leading-relaxed markdown-content" data-markdown='{{ finding.remediation_steps | tojson }}'></div>
             </div>
             {% elif finding.remediation %}
             <div class="bg-green-900/20 rounded-lg p-4 border border-green-700/50">
@@ -273,7 +299,7 @@
                     </svg>
                     Recommended Fix
                 </h3>
-                <p class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{{ finding.remediation }}</p>
+                <div class="text-sm leading-relaxed markdown-content" data-markdown='{{ finding.remediation | tojson }}'></div>
             </div>
             {% endif %}
 
@@ -286,7 +312,7 @@
                     </svg>
                     References
                 </h3>
-                <p class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{{ finding.references }}</p>
+                <div class="text-sm leading-relaxed markdown-content" data-markdown='{{ finding.references | tojson }}'></div>
             </div>
             {% endif %}
         </div>
@@ -402,9 +428,45 @@ async function deleteFinding() {
     }
 }
 
+// Configure marked for markdown rendering
+if (typeof marked !== 'undefined') {
+    marked.setOptions({
+        breaks: true,
+        gfm: true
+    });
+}
+
+function renderMarkdownContent() {
+    // Find all elements with data-markdown attribute and render
+    document.querySelectorAll('.markdown-content[data-markdown]').forEach(function(el) {
+        const rawValue = el.getAttribute('data-markdown');
+        if (rawValue && rawValue !== 'null') {
+            try {
+                // Parse the JSON-encoded string
+                const markdown = JSON.parse(rawValue);
+                if (markdown) {
+                    el.innerHTML = marked.parse(markdown);
+                }
+            } catch (e) {
+                console.error('Failed to parse markdown:', e);
+                el.textContent = rawValue;
+            }
+        }
+    });
+
+    // Highlight any code blocks
+    if (typeof hljs !== 'undefined') {
+        document.querySelectorAll('.markdown-content pre code').forEach(function(block) {
+            hljs.highlightElement(block);
+        });
+    }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     hljs.highlightAll();
+    // Render markdown content
+    renderMarkdownContent();
     // Hide the floating global chat widget since this page has its own chat panel
     const floatingChat = document.getElementById('quick-chat');
     if (floatingChat) {
