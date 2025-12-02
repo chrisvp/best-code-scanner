@@ -224,6 +224,36 @@ sqlite3 /tmp/scans.db "SELECT * FROM scans ORDER BY id DESC LIMIT 5;"
 sqlite3 /tmp/scans.db "SELECT * FROM draft_findings WHERE scan_id=X;"
 ```
 
+### Database Migrations
+
+For GitHub support (added November 2025), run:
+```sql
+-- Create github_repos table
+CREATE TABLE IF NOT EXISTS github_repos (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    github_url VARCHAR NOT NULL DEFAULT 'https://api.github.com',
+    github_token VARCHAR,
+    owner VARCHAR NOT NULL,
+    repo VARCHAR NOT NULL,
+    description VARCHAR,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- Add provider fields to repo_watchers
+ALTER TABLE repo_watchers ADD COLUMN provider VARCHAR DEFAULT 'gitlab';
+ALTER TABLE repo_watchers ADD COLUMN github_repo_id INTEGER REFERENCES github_repos(id);
+ALTER TABLE repo_watchers ADD COLUMN github_url VARCHAR DEFAULT 'https://api.github.com';
+ALTER TABLE repo_watchers ADD COLUMN github_token VARCHAR;
+ALTER TABLE repo_watchers ADD COLUMN github_owner VARCHAR;
+ALTER TABLE repo_watchers ADD COLUMN github_repo VARCHAR;
+
+-- Add provider fields to mr_reviews
+ALTER TABLE mr_reviews ADD COLUMN provider VARCHAR DEFAULT 'gitlab';
+ALTER TABLE mr_reviews ADD COLUMN github_repo_id INTEGER REFERENCES github_repos(id);
+```
+
 ## Future Features
 
 See `backend/docs/FEATURE_ROADMAP.md` for planned features:

@@ -98,6 +98,14 @@
                         <input type="hidden" name="form_type" value="defaults">
 
                         <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1.5">Scanner URL Prefix</label>
+                            <input type="text" name="scanner_url_prefix" value="{{ settings.SCANNER_URL_PREFIX }}"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                placeholder="http://localhost:8000">
+                            <p class="text-xs text-gray-500 mt-1">Base URL for links in MR comments (e.g., http://scanner.example.com)</p>
+                        </div>
+
+                        <div>
                             <label class="block text-xs font-medium text-gray-400 mb-1.5">Max Concurrent Requests</label>
                             <input type="number" name="max_concurrent" value="{{ settings.MAX_CONCURRENT_REQUESTS }}" min="1" max="50"
                                 class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50">

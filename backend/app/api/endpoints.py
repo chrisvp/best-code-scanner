@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.core.database import get_db, engine, Base, SessionLocal
-from app.models.models import Scan, Finding
+from app.models.models import Scan, Finding, GeneratedFix
 from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
@@ -95,11 +95,15 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     # Get all findings from both sources
     all_findings = db.query(Finding).order_by(Finding.id.desc()).all()
 
+    # Get scan profiles for the dropdown
+    profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "scans": scans,
         "mr_reviews": mr_reviews,
-        "all_findings": all_findings
+        "all_findings": all_findings,
+        "profiles": profiles
     })
 
 
@@ -175,6 +179,131 @@ async def start_scan(
 async def get_scan_details(request: Request, scan_id: int, db: Session = Depends(get_db)):
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     return templates.TemplateResponse("partials/scan_details.html", {"request": request, "scan": scan})
+
+
+# ============ Finding Details & Chat ============
+
+@router.get("/finding/{finding_id}", response_class=HTMLResponse)
+async def get_finding_details(request: Request, finding_id: int, db: Session = Depends(get_db)):
+    """Get the finding details page with AI chat"""
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return HTMLResponse(content="<h1>Finding not found</h1>", status_code=404)
+
+    # Get available models for the fix generator
+    models = db.query(ModelConfig).order_by(ModelConfig.name).all()
+
+    # Get scan info if available
+    scan = None
+    if finding.scan_id:
+        scan = db.query(Scan).filter(Scan.id == finding.scan_id).first()
+
+    # Get MR review info if available
+    mr_review = None
+    if finding.mr_review_id:
+        mr_review = db.query(MRReview).filter(MRReview.id == finding.mr_review_id).first()
+
+    return templates.TemplateResponse("finding_details.html", {
+        "request": request,
+        "finding": finding,
+        "models": models,
+        "scan": scan,
+        "mr_review": mr_review
+    })
+
+
+@router.post("/finding/{finding_id}/chat")
+async def finding_chat(finding_id: int, request: Request, db: Session = Depends(get_db)):
+    """Chat about a specific finding with AI context"""
+    from app.services.llm_provider import LLMProvider
+    from app.core.config import settings
+
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return JSONResponse({"error": "Finding not found"}, status_code=404)
+
+    try:
+        data = await request.json()
+        user_message = data.get("message", "")
+        history = data.get("history", [])
+        model_id = data.get("model_id")
+
+        if not user_message:
+            return JSONResponse({"error": "No message provided"}, status_code=400)
+
+        # Build context about the finding
+        context = f"""You are a security expert assistant helping analyze a vulnerability finding.
+
+## Finding Context
+- **File**: {finding.file_path}
+- **Line**: {finding.line_number or 'N/A'}
+- **Severity**: {finding.severity}
+- **Category**: {finding.category or 'N/A'}
+- **Description**: {finding.description}
+
+"""
+        if finding.snippet:
+            context += f"""## Vulnerable Code
+```
+{finding.snippet}
+```
+
+"""
+        if finding.remediation:
+            context += f"""## Current Remediation Suggestion
+{finding.remediation}
+
+"""
+        if finding.vulnerability_details:
+            context += f"""## Additional Details
+{finding.vulnerability_details}
+
+"""
+
+        context += """## Your Role
+Help the user understand this vulnerability, explain attack vectors, suggest fixes,
+generate tests, or provide alternative remediation strategies. Be specific and provide
+code examples when relevant. Format responses with markdown for code blocks."""
+
+        # Build messages for the LLM
+        messages = [{"role": "system", "content": context}]
+
+        # Add chat history (limited)
+        for msg in history[-8:]:
+            messages.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+
+        # Add current message
+        messages.append({"role": "user", "content": user_message})
+
+        # Get model config - use specified model_id, or prefer model with is_chat role, fall back to any model
+        model_config = None
+        if model_id:
+            model_config = db.query(ModelConfig).filter(ModelConfig.id == int(model_id)).first()
+
+        if not model_config:
+            model_config = db.query(ModelConfig).filter(ModelConfig.is_chat == True).first()
+
+        if not model_config:
+            # Fall back to any configured model
+            model_config = db.query(ModelConfig).first()
+
+        # Use the model name if we have a config, otherwise use default
+        model_name = model_config.name if model_config else None
+
+        # Call LLM using the global provider
+        from app.services.llm_provider import llm_provider
+        result = await llm_provider.chat_completion(
+            messages=messages,
+            model=model_name,
+            max_tokens=2000
+        )
+
+        return {"response": result.get("content", "")}
+
+    except Exception as e:
+        import traceback
+        print(f"Chat error: {traceback.format_exc()}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.get("/scan/{scan_id}/config")
@@ -833,53 +962,208 @@ from fastapi.responses import StreamingResponse
 # from app.services.report_service import report_service  # TODO: install xhtml2pdf
 
 
-@router.post("/finding/{finding_id}/generate-fix", response_class=HTMLResponse)
-async def generate_fix(finding_id: int, db: Session = Depends(get_db)):
-    """Generate a fix for a finding on-demand"""
-    from app.services.analysis.enricher import FindingEnricher
-    from app.services.orchestration.model_orchestrator import ModelOrchestrator
+@router.get("/finding/{finding_id}/code-context")
+async def get_code_context(finding_id: int, context_lines: int = 10, db: Session = Depends(get_db)):
+    """Get code context around the vulnerable line with line numbers"""
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return {"error": "Finding not found"}
+
+    file_path = finding.file_path
+    line_number = finding.line_number or 1
+
+    # Try to find the actual file
+    possible_paths = [
+        file_path,
+        os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend", file_path),
+        os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox", file_path),
+    ]
+
+    actual_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            actual_path = p
+            break
+
+    if not actual_path:
+        # Return just the snippet if file not found
+        return {
+            "lines": [{"number": line_number, "content": finding.snippet or "", "is_vulnerable": True}],
+            "file_found": False
+        }
+
+    try:
+        with open(actual_path, 'r', encoding='utf-8', errors='ignore') as f:
+            all_lines = f.readlines()
+
+        total_lines = len(all_lines)
+        start = max(0, line_number - context_lines - 1)
+        end = min(total_lines, line_number + context_lines)
+
+        lines = []
+        for i in range(start, end):
+            lines.append({
+                "number": i + 1,
+                "content": all_lines[i].rstrip('\n\r'),
+                "is_vulnerable": i + 1 == line_number
+            })
+
+        return {
+            "lines": lines,
+            "file_found": True,
+            "vulnerable_line": line_number
+        }
+    except Exception as e:
+        return {"error": str(e), "file_found": False}
+
+
+@router.get("/finding/{finding_id}/fixes")
+async def list_fixes(finding_id: int, db: Session = Depends(get_db)):
+    """List all generated fixes for a finding"""
+    fixes = db.query(GeneratedFix).filter(GeneratedFix.finding_id == finding_id).order_by(GeneratedFix.created_at.desc()).all()
+    return {
+        "fixes": [
+            {
+                "id": f.id,
+                "fix_type": f.fix_type,
+                "model_name": f.model_name,
+                "code": f.code,
+                "reasoning": f.reasoning,
+                "created_at": f.created_at.isoformat() if f.created_at else None
+            }
+            for f in fixes
+        ],
+        "count": len(fixes)
+    }
+
+
+@router.post("/finding/{finding_id}/generate-fix")
+async def generate_fix(finding_id: int, request: Request, db: Session = Depends(get_db)):
+    """Generate a quick fix with full file context (single-shot LLM call)"""
+    import json
+    from app.services.fix_generator import FixGenerator
+
+    # Parse JSON body for model_id
+    model_id = None
+    try:
+        body = await request.json()
+        model_id = body.get("model_id")
+    except:
+        pass
 
     # Get the finding
     finding = db.query(Finding).filter(Finding.id == finding_id).first()
     if not finding:
-        return HTMLResponse(content='<div class="text-red-400 text-sm">Finding not found</div>')
+        return {"error": "Finding not found"}
 
-    # Initialize model orchestrator to get analyzer
-    orchestrator = ModelOrchestrator(db)
-    await orchestrator.initialize()
+    # Get model name if specified
+    model_name = None
+    if model_id:
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == int(model_id)).first()
+        if model_config:
+            model_name = model_config.name
 
     try:
-        model_pool = orchestrator.get_primary_analyzer()
-        if not model_pool:
-            return HTMLResponse(content='<div class="text-red-400 text-sm">No analyzer model configured</div>')
+        generator = FixGenerator(db)
+        fix = await generator.quick_fix(finding, model=model_name)
 
-        enricher = FindingEnricher(model_pool, db)
-        fix = await enricher.generate_fix(
-            title=finding.description,
-            impacted_code=finding.snippet,
-            vulnerability_details=finding.vulnerability_details or finding.description
+        # Save to GeneratedFix table
+        generated_fix = GeneratedFix(
+            finding_id=finding_id,
+            fix_type="quick",
+            model_name=model_name,
+            code=fix
         )
+        db.add(generated_fix)
 
-        # Save the fix to the finding
+        # Also update finding's corrected_code
         finding.corrected_code = fix
         db.commit()
 
-        # Return HTML partial for HTMX
-        html = f'''
-        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">Corrected Code</h4>
-        <div class="bg-green-950/30 rounded p-2 font-mono text-xs text-green-300 border border-green-900/50 mb-2">
-            <pre class="whitespace-pre-wrap">{strip_code_blocks(fix)}</pre>
-        </div>
-        <button hx-post="/finding/{finding_id}/generate-fix"
-                hx-target="#fix-container-{finding_id}"
-                hx-swap="innerHTML"
-                class="text-xs px-3 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
-            Regenerate Fix
-        </button>
-        '''
-        return HTMLResponse(content=html)
-    finally:
-        await orchestrator.shutdown()
+        # Get total count of fixes
+        fix_count = db.query(GeneratedFix).filter(GeneratedFix.finding_id == finding_id).count()
+
+        return {
+            "corrected_code": fix,
+            "fix_id": generated_fix.id,
+            "fix_index": 0,
+            "fix_count": fix_count
+        }
+    except Exception as e:
+        import traceback
+        print(f"Quick fix error: {traceback.format_exc()}")
+        return {"error": str(e)}
+
+
+@router.post("/finding/{finding_id}/agent-fix")
+async def agent_fix(finding_id: int, request: Request, db: Session = Depends(get_db)):
+    """Generate a fix using agentic approach with tool use (multi-turn, more accurate)"""
+    import json
+    from app.services.fix_generator import FixGenerator
+
+    # Parse JSON body for model_id
+    model_id = None
+    try:
+        body = await request.json()
+        model_id = body.get("model_id")
+    except:
+        pass
+
+    # Get the finding
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return {"error": "Finding not found"}
+
+    # Get model name if specified
+    model_name = None
+    if model_id:
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == int(model_id)).first()
+        if model_config:
+            model_name = model_config.name
+
+    try:
+        generator = FixGenerator(db)
+        result = await generator.agent_fix(finding, model=model_name)
+
+        fix = result.get("fix", "")
+        reasoning = result.get("reasoning", [])
+
+        # Save to GeneratedFix table
+        if fix:
+            generated_fix = GeneratedFix(
+                finding_id=finding_id,
+                fix_type="agent",
+                model_name=model_name,
+                code=fix,
+                reasoning=json.dumps(reasoning) if reasoning else None
+            )
+            db.add(generated_fix)
+
+            # Also update finding's corrected_code
+            finding.corrected_code = fix
+            db.commit()
+
+            # Get total count of fixes
+            fix_count = db.query(GeneratedFix).filter(GeneratedFix.finding_id == finding_id).count()
+
+            return {
+                "corrected_code": fix,
+                "reasoning": reasoning,
+                "iterations": result.get("iterations", 0),
+                "fix_id": generated_fix.id,
+                "fix_index": 0,
+                "fix_count": fix_count
+            }
+
+        return {
+            "corrected_code": fix,
+            "reasoning": reasoning,
+            "iterations": result.get("iterations", 0)
+        }
+    except Exception as e:
+        import traceback
+        print(f"Agent fix error: {traceback.format_exc()}")
+        return {"error": str(e)}
 
 
 @router.get("/scan/{scan_id}/report/html")
@@ -984,7 +1268,8 @@ async def update_config(
     llm_base_url: str = Form(None),
     llm_api_key: str = Form(None),
     llm_verify_ssl: bool = Form(False),
-    max_concurrent: int = Form(None)
+    max_concurrent: int = Form(None),
+    scanner_url_prefix: str = Form(None)
 ):
     from app.core.config import settings
     message = "Configuration saved!"
@@ -1005,6 +1290,9 @@ async def update_config(
         message = "Connection settings saved!"
 
     elif form_type == "defaults":
+        if scanner_url_prefix is not None:
+            # Strip trailing slash if present
+            settings.SCANNER_URL_PREFIX = scanner_url_prefix.rstrip('/')
         if max_concurrent:
             settings.MAX_CONCURRENT_REQUESTS = max_concurrent
         message = "Default settings saved!"
@@ -2324,15 +2612,9 @@ async def analyze_mr(
 
 @router.get("/mr-reviews", response_class=HTMLResponse)
 async def mr_reviews_list_page(request: Request, db: Session = Depends(get_db)):
-    """List all MR reviews with their findings"""
-    from app.models.models import Finding
-
-    # Get all MR reviews with their findings eagerly loaded
+    """List all MR reviews with their findings from database"""
+    # Get all MR reviews - findings are loaded via relationship
     reviews = db.query(MRReview).order_by(MRReview.created_at.desc()).all()
-
-    # For each review, attach the findings from the findings table
-    for review in reviews:
-        review.findings = db.query(Finding).filter(Finding.mr_review_id == review.id).all()
 
     return templates.TemplateResponse("mr_reviews.html", {
         "request": request,
@@ -2355,10 +2637,12 @@ async def mr_review_details(request: Request, review_id: int, db: Session = Depe
 
     # Parse stored JSON data if available
     generated_comments = []
+    summary_comment = None
     if review.generated_comments:
         try:
-            comments_data = json.loads(review.generated_comments)
+            comments_data = json.loads(review.generated_comments) if isinstance(review.generated_comments, str) else review.generated_comments
             generated_comments = comments_data.get("inline_comments", [])
+            summary_comment = comments_data.get("summary_comment")
         except:
             pass
 
@@ -2366,8 +2650,57 @@ async def mr_review_details(request: Request, review_id: int, db: Session = Depe
         "request": request,
         "review": review,
         "findings": findings,
-        "generated_comments": generated_comments
+        "generated_comments": generated_comments,
+        "summary_comment": summary_comment
     })
+
+
+@router.post("/mr-reviews/{review_id}/rerun")
+async def rerun_mr_review(review_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Re-run an MR review (temporary endpoint for testing)"""
+    from app.models.models import Finding
+    from app.services.mr_reviewer_service import MRReviewerService
+
+    review = db.query(MRReview).filter(MRReview.id == review_id).first()
+    if not review:
+        return {"success": False, "error": "Review not found"}
+
+    watcher = db.query(RepoWatcher).filter(RepoWatcher.id == review.watcher_id).first()
+    if not watcher:
+        return {"success": False, "error": "Watcher not found"}
+
+    # Delete existing findings for this review
+    db.query(Finding).filter(Finding.mr_review_id == review_id).delete()
+
+    # Reset review status
+    review.status = "pending"
+    review.diff_summary = None
+    review.generated_comments = None
+    review.files_reviewed = 0
+    review.comments_posted = False
+    review.diff_reviewed_at = None
+    db.commit()
+
+    async def run_review():
+        service = MRReviewerService(db)
+        # Build MR info from the review record
+        # Include both iid (GitLab) and number (GitHub) for compatibility
+        mr_info = {
+            "iid": review.mr_iid,
+            "number": review.mr_iid,  # GitHub uses "number" for PR number
+            "title": review.mr_title,
+            "source_branch": review.source_branch,
+            "target_branch": review.target_branch,
+            "author": {"username": review.mr_author} if review.mr_author else None,
+            "web_url": review.mr_url,
+            "head": {"sha": None},  # GitHub PR structure
+            "base": {"ref": review.target_branch},  # GitHub PR structure
+        }
+        await service.review_mr_diff(watcher, mr_info)
+
+    background_tasks.add_task(run_review)
+
+    return {"success": True, "message": "Review re-run started"}
 
 
 # ============== Saved GitLab Repos ==============
@@ -2495,20 +2828,147 @@ async def get_gitlab_repo(repo_id: int, db: Session = Depends(get_db)):
     }
 
 
-# ============== GitLab Repo Watchers ==============
+# ============== Saved GitHub Repos ==============
+
+@router.get("/github-repos")
+async def list_github_repos(db: Session = Depends(get_db)):
+    """List all saved GitHub repos"""
+    from app.models.scanner_models import GitHubRepo
+    repos = db.query(GitHubRepo).order_by(GitHubRepo.name).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "github_url": r.github_url,
+            "owner": r.owner,
+            "repo": r.repo,
+            "description": r.description,
+            "created_at": r.created_at.isoformat() if r.created_at else None
+        }
+        for r in repos
+    ]
+
+
+@router.post("/github-repos")
+async def create_github_repo(
+    name: str = Form(...),
+    github_url: str = Form("https://api.github.com"),
+    github_token: str = Form(...),
+    owner: str = Form(...),
+    repo: str = Form(...),
+    description: str = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Create a new saved GitHub repo"""
+    from app.models.scanner_models import GitHubRepo
+
+    github_repo = GitHubRepo(
+        name=name,
+        github_url=github_url.rstrip('/'),
+        github_token=github_token,
+        owner=owner,
+        repo=repo,
+        description=description
+    )
+    db.add(github_repo)
+    db.commit()
+    db.refresh(github_repo)
+
+    return {
+        "id": github_repo.id,
+        "name": github_repo.name,
+        "github_url": github_repo.github_url,
+        "owner": github_repo.owner,
+        "repo": github_repo.repo,
+        "description": github_repo.description
+    }
+
+
+@router.put("/github-repos/{repo_id}")
+async def update_github_repo(
+    repo_id: int,
+    name: str = Form(None),
+    github_url: str = Form(None),
+    github_token: str = Form(None),
+    owner: str = Form(None),
+    repo: str = Form(None),
+    description: str = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Update a saved GitHub repo"""
+    from app.models.scanner_models import GitHubRepo
+
+    github_repo = db.query(GitHubRepo).filter(GitHubRepo.id == repo_id).first()
+    if not github_repo:
+        return JSONResponse({"error": "GitHub repo not found"}, status_code=404)
+
+    if name:
+        github_repo.name = name
+    if github_url:
+        github_repo.github_url = github_url.rstrip('/')
+    if github_token:
+        github_repo.github_token = github_token
+    if owner:
+        github_repo.owner = owner
+    if repo:
+        github_repo.repo = repo
+    if description is not None:
+        github_repo.description = description
+
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/github-repos/{repo_id}")
+async def delete_github_repo(repo_id: int, db: Session = Depends(get_db)):
+    """Delete a saved GitHub repo"""
+    from app.models.scanner_models import GitHubRepo
+
+    github_repo = db.query(GitHubRepo).filter(GitHubRepo.id == repo_id).first()
+    if not github_repo:
+        return JSONResponse({"error": "GitHub repo not found"}, status_code=404)
+
+    db.delete(github_repo)
+    db.commit()
+    return {"status": "ok"}
+
+
+@router.get("/github-repos/{repo_id}")
+async def get_github_repo(repo_id: int, db: Session = Depends(get_db)):
+    """Get a single GitHub repo by ID"""
+    from app.models.scanner_models import GitHubRepo
+
+    github_repo = db.query(GitHubRepo).filter(GitHubRepo.id == repo_id).first()
+    if not github_repo:
+        return JSONResponse({"error": "GitHub repo not found"}, status_code=404)
+
+    return {
+        "id": github_repo.id,
+        "name": github_repo.name,
+        "github_url": github_repo.github_url,
+        "github_token": github_repo.github_token,  # Include for form population
+        "owner": github_repo.owner,
+        "repo": github_repo.repo,
+        "description": github_repo.description
+    }
+
+
+# ============== Repository Watchers ==============
 
 @router.get("/watchers/page", response_class=HTMLResponse)
 async def watchers_page(request: Request, db: Session = Depends(get_db)):
     """Repo watchers management page"""
-    from app.models.scanner_models import GitLabRepo
+    from app.models.scanner_models import GitLabRepo, GitHubRepo
     watchers = db.query(RepoWatcher).order_by(RepoWatcher.created_at.desc()).all()
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
     gitlab_repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
+    github_repos = db.query(GitHubRepo).order_by(GitHubRepo.name).all()
     return templates.TemplateResponse("watchers.html", {
         "request": request,
         "watchers": watchers,
         "profiles": profiles,
-        "gitlab_repos": gitlab_repos
+        "gitlab_repos": gitlab_repos,
+        "github_repos": github_repos
     })
 
 
@@ -2520,8 +2980,12 @@ async def list_watchers(db: Session = Depends(get_db)):
         {
             "id": w.id,
             "name": w.name,
+            "provider": w.provider or "gitlab",
             "gitlab_url": w.gitlab_url,
             "project_id": w.project_id,
+            "github_url": w.github_url,
+            "github_owner": w.github_owner,
+            "github_repo_name": w.github_repo_name,
             "branch_filter": w.branch_filter,
             "label_filter": w.label_filter,
             "scan_profile_id": w.scan_profile_id,
@@ -2545,41 +3009,91 @@ async def list_watchers(db: Session = Depends(get_db)):
 async def create_watcher(
     request: Request,
     name: str = Form(...),
+    provider: str = Form("gitlab"),
+    # GitLab fields
     gitlab_url: str = Form("https://gitlab.com"),
-    gitlab_token: str = Form(...),
-    project_id: str = Form(...),
+    gitlab_token: str = Form(None),
+    project_id: str = Form(None),
+    gitlab_repo_id: int = Form(None),
+    # GitHub fields
+    github_url: str = Form("https://api.github.com"),
+    github_token: str = Form(None),
+    github_owner: str = Form(None),
+    github_repo_name: str = Form(None),
+    github_repo_id: int = Form(None),
+    # Common fields
     branch_filter: str = Form(None),
     label_filter: str = Form(None),
     scan_profile_id: int = Form(None),
     review_model_id: int = Form(None),
     poll_interval: int = Form(300),
+    max_files_to_review: int = Form(100),
+    mr_lookback_days: int = Form(7),
     post_comments: bool = Form(False),
     db: Session = Depends(get_db)
 ):
-    """Create a new repo watcher"""
-    # Validate URL
-    if not gitlab_url.startswith(("http://", "https://")):
-        return JSONResponse({"error": "GitLab URL must start with http:// or https://"}, status_code=400)
+    """Create a new repo watcher (supports GitLab and GitHub)"""
+    from app.models.scanner_models import GitLabRepo, GitHubRepo
 
     # Check for duplicate name
     existing = db.query(RepoWatcher).filter(RepoWatcher.name == name).first()
     if existing:
         return JSONResponse({"error": f"Watcher '{name}' already exists"}, status_code=400)
 
+    # Create base watcher
     watcher = RepoWatcher(
         name=name,
-        gitlab_url=gitlab_url.rstrip('/'),
-        gitlab_token=gitlab_token,
-        project_id=project_id,
+        provider=provider,
         branch_filter=branch_filter if branch_filter else None,
         label_filter=label_filter if label_filter else None,
         scan_profile_id=scan_profile_id if scan_profile_id else None,
         review_model_id=review_model_id if review_model_id else None,
-        poll_interval=max(60, poll_interval),  # Minimum 60 seconds
+        poll_interval=max(60, poll_interval),
+        max_files_to_review=max(1, min(1000, max_files_to_review)),
+        mr_lookback_days=max(0, min(365, mr_lookback_days)),
         post_comments=post_comments,
         status="paused",
         enabled=True
     )
+
+    if provider == "github":
+        # Handle GitHub watcher
+        # Set default values for GitLab fields to satisfy NOT NULL constraints
+        watcher.gitlab_url = ""
+        watcher.project_id = ""
+
+        if github_repo_id:
+            # Using saved GitHub repo
+            saved_repo = db.query(GitHubRepo).filter(GitHubRepo.id == github_repo_id).first()
+            if not saved_repo:
+                return JSONResponse({"error": "Saved GitHub repository not found"}, status_code=400)
+            watcher.github_repo_id = github_repo_id
+        else:
+            # Manual entry
+            if not github_owner or not github_repo_name:
+                return JSONResponse({"error": "GitHub owner and repo are required"}, status_code=400)
+            watcher.github_url = github_url.rstrip('/') if github_url else "https://api.github.com"
+            watcher.github_token = github_token
+            watcher.github_owner = github_owner
+            watcher.github_repo_name = github_repo_name
+    else:
+        # Handle GitLab watcher (default)
+        if gitlab_repo_id:
+            # Using saved GitLab repo
+            saved_repo = db.query(GitLabRepo).filter(GitLabRepo.id == gitlab_repo_id).first()
+            if not saved_repo:
+                return JSONResponse({"error": "Saved GitLab repository not found"}, status_code=400)
+            watcher.gitlab_repo_id = gitlab_repo_id
+        else:
+            # Manual entry
+            if not gitlab_url.startswith(("http://", "https://")):
+                return JSONResponse({"error": "GitLab URL must start with http:// or https://"}, status_code=400)
+            if not project_id:
+                return JSONResponse({"error": "GitLab project ID is required"}, status_code=400)
+            watcher.gitlab_url = gitlab_url.rstrip('/')
+            watcher.gitlab_token = gitlab_token
+            watcher.project_id = project_id
+
     db.add(watcher)
     db.commit()
     db.refresh(watcher)
@@ -2638,6 +3152,8 @@ async def update_watcher(
     scan_profile_id: int = Form(None),
     review_model_id: int = Form(None),
     poll_interval: int = Form(None),
+    max_files_to_review: int = Form(None),
+    mr_lookback_days: int = Form(None),
     enabled: bool = Form(None),
     post_comments: bool = Form(None),
     db: Session = Depends(get_db)
@@ -2682,6 +3198,12 @@ async def update_watcher(
 
     if poll_interval is not None:
         watcher.poll_interval = max(60, poll_interval)
+
+    if max_files_to_review is not None:
+        watcher.max_files_to_review = max(1, min(1000, max_files_to_review))
+
+    if mr_lookback_days is not None:
+        watcher.mr_lookback_days = max(0, min(365, mr_lookback_days))
 
     if enabled is not None:
         watcher.enabled = enabled
@@ -2760,24 +3282,46 @@ async def stop_watcher(request: Request, watcher_id: int, db: Session = Depends(
 
 
 @router.post("/watchers/{watcher_id}/poll")
-async def poll_watcher(
+async def poll_watcher_now(
     watcher_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Force poll for new MRs now"""
+    """Force poll for new MRs/PRs now"""
+    from app.services.mr_reviewer_service import MRReviewerService
+    from datetime import datetime
+    import logging
+
     watcher = db.query(RepoWatcher).filter(RepoWatcher.id == watcher_id).first()
     if not watcher:
         return JSONResponse({"error": "Watcher not found"}, status_code=404)
 
-    # Queue the poll task
-    # Note: In a real implementation, this would trigger the GitLab MR polling service
-    # For now, we just update the last_check timestamp
-    from datetime import datetime
-    watcher.last_check = datetime.utcnow()
-    db.commit()
+    # Create service and poll
+    service = MRReviewerService(db)
 
-    return {"id": watcher.id, "status": "poll_queued", "message": "Poll task queued"}
+    try:
+        logging.info(f"Starting poll for watcher {watcher.name} (provider: {watcher.provider})")
+        reviews = await service.poll_watcher(watcher)
+        # Update last_check timestamp
+        watcher.last_check = datetime.utcnow()
+        watcher.last_error = None
+        db.commit()
+        logging.info(f"Poll completed for watcher {watcher.name}: {len(reviews)} reviews")
+        return {
+            "id": watcher.id,
+            "status": "poll_completed",
+            "message": f"Found {len(reviews)} PRs to review",
+            "reviews": len(reviews)
+        }
+    except Exception as e:
+        import traceback
+        logging.error(f"Poll error for watcher {watcher.name}: {e}\n{traceback.format_exc()}")
+        watcher.last_error = str(e)
+        watcher.last_check = datetime.utcnow()
+        db.commit()
+        return JSONResponse(
+            {"error": str(e), "id": watcher.id, "status": "error"},
+            status_code=500
+        )
 
 
 # ============== MR Reviews ==============

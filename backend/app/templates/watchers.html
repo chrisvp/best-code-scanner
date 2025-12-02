@@ -6,8 +6,8 @@
         <!-- Header -->
         <div class="flex justify-between items-center mb-6">
             <div>
-                <h1 class="text-2xl font-bold text-white">GitLab MR Watchers</h1>
-                <p class="text-gray-400 text-sm mt-1">Automatically scan merge requests for security vulnerabilities</p>
+                <h1 class="text-2xl font-bold text-white">Repository Watchers</h1>
+                <p class="text-gray-400 text-sm mt-1">Automatically scan merge requests and pull requests for security vulnerabilities</p>
             </div>
             <button onclick="document.getElementById('add-watcher-modal').classList.remove('hidden')"
                 class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors">
@@ -77,7 +77,7 @@
 <div id="add-watcher-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
     <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
         <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-bold text-white">Add GitLab Watcher</h2>
+            <h2 class="text-xl font-bold text-white">Add Repository Watcher</h2>
             <button onclick="document.getElementById('add-watcher-modal').classList.add('hidden')"
                 class="text-gray-400 hover:text-white">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -96,23 +96,46 @@
                         placeholder="e.g., Main Project Watcher">
                 </div>
 
-                <!-- Saved Repo Selection -->
-                {% if gitlab_repos %}
+                <!-- Provider Toggle -->
                 <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Saved Repository</label>
-                    <select name="gitlab_repo_id" id="add-watcher-repo-id" onchange="selectAddWatcherRepo(this.value)"
-                        class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="">-- Select a saved repo or enter manually --</option>
-                        {% for repo in gitlab_repos %}
-                        <option value="{{ repo.id }}">{{ repo.name }} ({{ repo.project_id }})</option>
-                        {% endfor %}
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">Select a saved repo to auto-fill connection details</p>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Repository Type</label>
+                    <div class="flex gap-4">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="provider" value="gitlab" checked onchange="toggleAddWatcherProvider('gitlab')"
+                                class="w-4 h-4 text-orange-500 bg-gray-700 border-gray-600 focus:ring-orange-500">
+                            <span class="ml-2 text-sm text-gray-300">
+                                <span class="font-medium text-orange-400">Internal</span> (GitLab)
+                            </span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="provider" value="github" onchange="toggleAddWatcherProvider('github')"
+                                class="w-4 h-4 text-green-500 bg-gray-700 border-gray-600 focus:ring-green-500">
+                            <span class="ml-2 text-sm text-gray-300">
+                                <span class="font-medium text-green-400">External</span> (GitHub)
+                            </span>
+                        </label>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2">Internal: Self-hosted GitLab for private repos. External: Public GitHub repos.</p>
                 </div>
-                {% endif %}
 
-                <div id="add-watcher-manual-fields">
-                    <div class="space-y-4">
+                <!-- GitLab Fields -->
+                <div id="add-watcher-gitlab-section">
+                    <!-- Saved GitLab Repo Selection -->
+                    {% if gitlab_repos %}
+                    <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700 mb-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Saved GitLab Repository</label>
+                        <select name="gitlab_repo_id" id="add-watcher-repo-id" onchange="selectAddWatcherRepo(this.value)"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">-- Select a saved repo or enter manually --</option>
+                            {% for repo in gitlab_repos %}
+                            <option value="{{ repo.id }}">{{ repo.name }} ({{ repo.project_id }})</option>
+                            {% endfor %}
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Select a saved repo to auto-fill connection details</p>
+                    </div>
+                    {% endif %}
+
+                    <div id="add-watcher-gitlab-manual-fields" class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">GitLab URL</label>
                             <input type="text" name="gitlab_url" id="add-watcher-url" value="https://192.168.33.158"
@@ -135,6 +158,59 @@
                                 class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                                 placeholder="12345 or group/project">
                             <p class="text-xs text-gray-500 mt-1">Numeric ID or full path like "mygroup/myproject"</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GitHub Fields (hidden by default) -->
+                <div id="add-watcher-github-section" class="hidden">
+                    <!-- Saved GitHub Repo Selection -->
+                    {% if github_repos %}
+                    <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700 mb-4">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Saved GitHub Repository</label>
+                        <select name="github_repo_id" id="add-watcher-github-repo-id" onchange="selectAddWatcherGitHubRepo(this.value)"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <option value="">-- Select a saved repo or enter manually --</option>
+                            {% for repo in github_repos %}
+                            <option value="{{ repo.id }}">{{ repo.name }} ({{ repo.owner }}/{{ repo.repo }})</option>
+                            {% endfor %}
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Select a saved repo to auto-fill connection details</p>
+                    </div>
+                    {% endif %}
+
+                    <div id="add-watcher-github-manual-fields" class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">GitHub API URL</label>
+                            <input type="text" name="github_url" id="add-watcher-github-url" value="https://api.github.com"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="https://api.github.com">
+                            <p class="text-xs text-gray-500 mt-1">Use default for github.com or your GitHub Enterprise URL</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">GitHub Token <span id="add-watcher-github-token-req">*</span></label>
+                            <input type="password" name="github_token" id="add-watcher-github-token"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="ghp_xxxxxxxxxxxx">
+                            <p class="text-xs text-gray-500 mt-1">Personal access token with repo scope (or fine-grained token)</p>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Repository Owner <span class="text-red-400">*</span></label>
+                                <input type="text" name="github_owner" id="add-watcher-github-owner"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="torvalds">
+                                <p class="text-xs text-gray-500 mt-1">User or organization</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Repository Name <span class="text-red-400">*</span></label>
+                                <input type="text" name="github_repo_name" id="add-watcher-github-repo"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="linux">
+                                <p class="text-xs text-gray-500 mt-1">Repository name</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -166,11 +242,26 @@
                     </select>
                 </div>
 
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Poll Interval (seconds)</label>
+                        <input type="number" name="poll_interval" value="300" min="60" max="86400"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">Default: 300 (5 min)</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Files to Review</label>
+                        <input type="number" name="max_files_to_review" value="100" min="1" max="1000"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">Skip MRs with more files</p>
+                    </div>
+                </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Poll Interval (seconds)</label>
-                    <input type="number" name="poll_interval" value="300" min="60" max="86400"
+                    <label class="block text-sm font-medium text-gray-300 mb-1">MR Lookback (days)</label>
+                    <input type="number" name="mr_lookback_days" value="7" min="0" max="365"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <p class="text-xs text-gray-500 mt-1">Minimum 60 seconds. Default: 300 (5 minutes)</p>
+                    <p class="text-xs text-gray-500 mt-1">Only review MRs created in the last N days (0 = no limit)</p>
                 </div>
 
                 <!-- Post Comments Toggle -->
@@ -287,14 +378,29 @@
                     </div>
                 </div>
 
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Files to Review</label>
+                        <input type="number" name="max_files_to_review" id="edit-watcher-max-files" min="1" max="1000"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">MRs with more files will be skipped</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
+                        <select name="scan_profile_id" id="edit-watcher-profile"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            {% for profile in profiles %}
+                            <option value="{{ profile.id }}" {% if profile.name == 'Quick Scan' %}selected{% endif %}>{{ profile.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Scan Profile</label>
-                    <select name="scan_profile_id" id="edit-watcher-profile"
+                    <label class="block text-sm font-medium text-gray-300 mb-1">MR Lookback (days)</label>
+                    <input type="number" name="mr_lookback_days" id="edit-watcher-lookback" min="0" max="365"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        {% for profile in profiles %}
-                        <option value="{{ profile.id }}" {% if profile.name == 'Quick Scan' %}selected{% endif %}>{{ profile.name }}</option>
-                        {% endfor %}
-                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Only review MRs created in the last N days (0 = no limit)</p>
                 </div>
 
                 <!-- Post Comments Toggle -->
@@ -320,8 +426,8 @@
 </div>
 
 <script>
-// Saved repos data for auto-fill
-const savedRepos = {
+// Saved GitLab repos data for auto-fill
+const savedGitLabRepos = {
     {% for repo in gitlab_repos %}
     {{ repo.id }}: {
         gitlab_url: "{{ repo.gitlab_url }}",
@@ -330,21 +436,96 @@ const savedRepos = {
     {% endfor %}
 };
 
+// Saved GitHub repos data for auto-fill
+const savedGitHubRepos = {
+    {% for repo in github_repos %}
+    {{ repo.id }}: {
+        github_url: "{{ repo.github_url }}",
+        owner: "{{ repo.owner }}",
+        repo: "{{ repo.repo }}"
+    },
+    {% endfor %}
+};
+
+// Alias for backwards compatibility
+const savedRepos = savedGitLabRepos;
+
 // Store watcher data for editing
 const watchersData = {
     {% for watcher in watchers %}
     {{ watcher.id }}: {
         name: "{{ watcher.name }}",
-        gitlab_url: "{{ watcher.gitlab_url }}",
-        project_id: "{{ watcher.project_id }}",
+        provider: "{{ watcher.provider or 'gitlab' }}",
+        gitlab_url: "{{ watcher.gitlab_url or '' }}",
+        project_id: "{{ watcher.project_id or '' }}",
+        github_url: "{{ watcher.github_url or 'https://api.github.com' }}",
+        github_owner: "{{ watcher.github_owner or '' }}",
+        github_repo_name: "{{ watcher.github_repo_name or '' }}",
         branch_filter: "{{ watcher.branch_filter or '' }}",
         poll_interval: {{ watcher.poll_interval }},
         post_comments: {{ 'true' if watcher.post_comments else 'false' }},
         scan_profile_id: {{ watcher.scan_profile_id or 'null' }},
-        gitlab_repo_id: {{ watcher.gitlab_repo_id or 'null' }}
+        gitlab_repo_id: {{ watcher.gitlab_repo_id or 'null' }},
+        github_repo_id: {{ watcher.github_repo_id or 'null' }},
+        max_files_to_review: {{ watcher.max_files_to_review or 100 }},
+        mr_lookback_days: {{ watcher.mr_lookback_days if watcher.mr_lookback_days is not none else 7 }}
     },
     {% endfor %}
 };
+
+// Toggle provider sections in add modal
+function toggleAddWatcherProvider(provider) {
+    const gitlabSection = document.getElementById('add-watcher-gitlab-section');
+    const githubSection = document.getElementById('add-watcher-github-section');
+
+    if (provider === 'github') {
+        gitlabSection.classList.add('hidden');
+        githubSection.classList.remove('hidden');
+    } else {
+        gitlabSection.classList.remove('hidden');
+        githubSection.classList.add('hidden');
+    }
+}
+
+// Toggle provider sections in edit modal
+function toggleEditWatcherProvider(provider) {
+    const gitlabSection = document.getElementById('edit-watcher-gitlab-section');
+    const githubSection = document.getElementById('edit-watcher-github-section');
+
+    if (provider === 'github') {
+        gitlabSection.classList.add('hidden');
+        githubSection.classList.remove('hidden');
+    } else {
+        gitlabSection.classList.remove('hidden');
+        githubSection.classList.add('hidden');
+    }
+}
+
+// Select saved GitHub repo in add modal
+function selectAddWatcherGitHubRepo(repoId) {
+    const urlField = document.getElementById('add-watcher-github-url');
+    const ownerField = document.getElementById('add-watcher-github-owner');
+    const repoField = document.getElementById('add-watcher-github-repo');
+    const tokenField = document.getElementById('add-watcher-github-token');
+    const tokenReq = document.getElementById('add-watcher-github-token-req');
+
+    if (repoId && savedGitHubRepos[repoId]) {
+        const repo = savedGitHubRepos[repoId];
+        urlField.value = repo.github_url;
+        ownerField.value = repo.owner;
+        repoField.value = repo.repo;
+        tokenField.value = '';
+        tokenField.placeholder = 'Using saved token';
+        if (tokenReq) tokenReq.style.display = 'none';
+    } else {
+        urlField.value = 'https://api.github.com';
+        ownerField.value = '';
+        repoField.value = '';
+        tokenField.value = '';
+        tokenField.placeholder = 'ghp_xxxxxxxxxxxx';
+        if (tokenReq) tokenReq.style.display = '';
+    }
+}
 
 function selectAddWatcherRepo(repoId) {
     const urlField = document.getElementById('add-watcher-url');
@@ -399,6 +580,8 @@ function editWatcher(id) {
     document.getElementById('edit-watcher-interval').value = w.poll_interval;
     document.getElementById('edit-watcher-post-comments').checked = w.post_comments;
     document.getElementById('edit-watcher-profile').value = w.scan_profile_id || '';
+    document.getElementById('edit-watcher-max-files').value = w.max_files_to_review || 100;
+    document.getElementById('edit-watcher-lookback').value = w.mr_lookback_days !== undefined ? w.mr_lookback_days : 7;
 
     // Set saved repo dropdown if exists
     const repoSelect = document.getElementById('edit-watcher-repo-id');

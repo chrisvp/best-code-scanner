@@ -216,6 +216,7 @@ class GitLabService:
         project_id: str,
         labels: Optional[List[str]] = None,
         target_branch: Optional[str] = None,
+        created_after: Optional[str] = None,
         per_page: int = 100,
     ) -> List[Dict[str, Any]]:
         """
@@ -225,6 +226,7 @@ class GitLabService:
             project_id: Project ID or URL-encoded path
             labels: Filter by labels (comma-separated)
             target_branch: Filter by target branch
+            created_after: ISO 8601 datetime - only return MRs created after this date
             per_page: Number of results per page
 
         Returns:
@@ -241,6 +243,8 @@ class GitLabService:
             params["labels"] = ",".join(labels)
         if target_branch:
             params["target_branch"] = target_branch
+        if created_after:
+            params["created_after"] = created_after
 
         return await self._request(
             "GET",

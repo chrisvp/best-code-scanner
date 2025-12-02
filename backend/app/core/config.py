@@ -22,7 +22,10 @@ class Settings(BaseSettings):
     
     # Concurrency
     MAX_CONCURRENT_REQUESTS: int = 5
-    
+
+    # Scanner URL (for links in MR comments)
+    SCANNER_URL_PREFIX: str = "http://localhost:8000"
+
     class Config:
         env_file = ".env"
         case_sensitive = True

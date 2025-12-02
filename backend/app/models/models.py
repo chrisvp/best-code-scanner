@@ -48,6 +48,27 @@ class Finding(Base):
     remediation_steps = Column(Text, nullable=True)
     references = Column(Text, nullable=True)
 
+    # Detection metadata
+    source_model = Column(String, nullable=True)  # Model that detected this finding
+    detected_at = Column(DateTime(timezone=True), nullable=True)  # When the finding was detected
+    confidence_score = Column(Float, nullable=True)  # Model's confidence in the finding
+
     scan = relationship("Scan", back_populates="findings")
     # MRReview is defined in scanner_models.py
     mr_review = relationship("MRReview", back_populates="findings")
+    generated_fixes = relationship("GeneratedFix", back_populates="finding", order_by="GeneratedFix.created_at.desc()")
+
+
+class GeneratedFix(Base):
+    """Stores generated fixes for a finding - allows cycling between multiple suggestions"""
+    __tablename__ = "generated_fixes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    finding_id = Column(Integer, ForeignKey("findings.id"), nullable=False)
+    fix_type = Column(String, nullable=False)  # 'quick' or 'agent'
+    model_name = Column(String, nullable=True)
+    code = Column(Text, nullable=False)
+    reasoning = Column(Text, nullable=True)  # JSON list for agent fixes
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    finding = relationship("Finding", back_populates="generated_fixes")

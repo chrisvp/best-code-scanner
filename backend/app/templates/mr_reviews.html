@@ -1,5 +1,12 @@
 {% extends "base.html" %}
 
+{% block head %}
+<!-- Markdown rendering library -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+{% endblock %}
+
 {% block content %}
 <div class="flex h-full overflow-hidden">
     <!-- Sidebar / Review List -->
@@ -153,7 +160,13 @@
                         <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Total Findings</div>
                     </div>
                     <div class="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
-                        <div class="text-2xl font-bold text-green-400">{{ reviews|selectattr('findings', 'equalto', [])|list|length }}</div>
+                        {% set clean_count = namespace(count=0) %}
+                        {% for review in reviews %}
+                            {% if review.findings|length == 0 %}
+                                {% set clean_count.count = clean_count.count + 1 %}
+                            {% endif %}
+                        {% endfor %}
+                        <div class="text-2xl font-bold text-green-400">{{ clean_count.count }}</div>
                         <div class="text-xs text-gray-500 uppercase tracking-wider mt-1">Clean MRs</div>
                     </div>
                 </div>
@@ -170,6 +183,40 @@
 <script>
 let selectedReviewId = null;
 
+// Configure marked for markdown rendering
+if (typeof marked !== 'undefined') {
+    marked.setOptions({
+        breaks: true,
+        gfm: true
+    });
+}
+
+function renderMarkdownContent() {
+    // Find all elements with data-markdown attribute and render
+    document.querySelectorAll('.markdown-content[data-markdown]').forEach(function(el) {
+        const rawValue = el.getAttribute('data-markdown');
+        if (rawValue && rawValue !== 'null') {
+            try {
+                // Parse the JSON-encoded string
+                const markdown = JSON.parse(rawValue);
+                if (markdown) {
+                    el.innerHTML = marked.parse(markdown);
+                }
+            } catch (e) {
+                console.error('Failed to parse markdown:', e);
+                el.textContent = rawValue;
+            }
+        }
+    });
+
+    // Highlight any code blocks
+    if (typeof hljs !== 'undefined') {
+        document.querySelectorAll('.markdown-content pre code').forEach(function(block) {
+            hljs.highlightElement(block);
+        });
+    }
+}
+
 function filterReviews() {
     const search = document.getElementById('review-search').value.toLowerCase();
     const items = document.querySelectorAll('.review-item');
@@ -178,6 +225,50 @@ function filterReviews() {
         const title = item.getAttribute('data-mr-title')?.toLowerCase() || '';
         item.style.display = title.includes(search) ? '' : 'none';
     });
+}
+
+async function rerunReview(reviewId) {
+    const btn = document.getElementById(`rerun-btn-${reviewId}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle>
+            </svg>
+            Running...
+        `;
+    }
+
+    try {
+        const response = await fetch(`/mr-reviews/${reviewId}/rerun`, { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            // Reload the details after a short delay
+            setTimeout(() => selectReview(reviewId), 1000);
+        } else {
+            alert('Error: ' + (result.error || 'Unknown error'));
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Re-run
+                `;
+            }
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Re-run
+            `;
+        }
+    }
 }
 
 async function selectReview(reviewId) {
@@ -206,6 +297,8 @@ async function selectReview(reviewId) {
         const response = await fetch(`/mr-reviews/${reviewId}/details`);
         const html = await response.text();
         content.innerHTML = html;
+        // Render markdown content after inserting HTML
+        renderMarkdownContent();
     } catch (error) {
         content.innerHTML = `
             <div class="text-center text-red-400 p-8">

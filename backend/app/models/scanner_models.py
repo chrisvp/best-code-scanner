@@ -424,12 +424,34 @@ class GitLabRepo(Base):
     watchers = relationship("RepoWatcher", back_populates="gitlab_repo")
 
 
+class GitHubRepo(Base):
+    """Stored GitHub repository connection for reuse across PR reviews and watchers"""
+    __tablename__ = "github_repos"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)  # Human-readable name (e.g., "Linux Kernel")
+    github_url = Column(String, nullable=False, default="https://api.github.com")  # GitHub API URL
+    github_token = Column(String)  # Personal access token or fine-grained token
+    owner = Column(String, nullable=False)  # Repository owner (user or org)
+    repo = Column(String, nullable=False)  # Repository name
+    description = Column(String, nullable=True)  # Optional description
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    watchers = relationship("RepoWatcher", back_populates="github_repo")
+
+
 class RepoWatcher(Base):
-    """Configuration for watching a GitLab repository for MR security reviews"""
+    """Configuration for watching a Git repository (GitLab or GitHub) for MR/PR security reviews"""
     __tablename__ = "repo_watchers"
 
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)  # Human-readable name for this watcher
+
+    # Provider type: "gitlab" (internal) or "github" (external)
+    provider = Column(String, default="gitlab")  # gitlab or github
 
     # GitLab connection - can use saved repo or manual entry
     gitlab_repo_id = Column(Integer, ForeignKey("gitlab_repos.id"), nullable=True)
@@ -438,8 +460,16 @@ class RepoWatcher(Base):
     gitlab_token = Column(String, nullable=True)  # Encrypted access token
     project_id = Column(String, nullable=True)  # GitLab project ID or path (e.g., "group/project")
 
+    # GitHub connection - can use saved repo or manual entry
+    github_repo_id = Column(Integer, ForeignKey("github_repos.id"), nullable=True)
+    # Fallback fields for GitHub manual entry
+    github_url = Column(String, nullable=True, default="https://api.github.com")  # GitHub API URL
+    github_token = Column(String, nullable=True)  # Personal access token
+    github_owner = Column(String, nullable=True)  # Repository owner (user or org)
+    github_repo_name = Column(String, nullable=True)  # Repository name
+
     branch_filter = Column(String, nullable=True)  # Regex or glob pattern for branches to watch
-    label_filter = Column(String, nullable=True)  # Comma-separated labels to filter MRs
+    label_filter = Column(String, nullable=True)  # Comma-separated labels to filter MRs/PRs
 
     # Configuration references
     scan_profile_id = Column(Integer, ForeignKey("scan_profiles.id"), nullable=True)
@@ -451,6 +481,8 @@ class RepoWatcher(Base):
     enabled = Column(Boolean, default=True)
     poll_interval = Column(Integer, default=300)  # Seconds between checks
     post_comments = Column(Boolean, default=False)  # If False, only track findings locally (dry run mode)
+    max_files_to_review = Column(Integer, default=100)  # Skip MRs/PRs with more changed files than this (prevents rebase floods)
+    mr_lookback_days = Column(Integer, default=7)  # Only review MRs/PRs created in the last N days (0 = no limit)
     last_check = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(String, nullable=True)
 
@@ -459,6 +491,7 @@ class RepoWatcher(Base):
 
     # Relationships
     gitlab_repo = relationship("GitLabRepo", back_populates="watchers")
+    github_repo = relationship("GitHubRepo", back_populates="watchers")
     scan_profile = relationship("ScanProfile")
     review_model = relationship("ModelConfig")
     webhook = relationship("WebhookConfig")
@@ -466,15 +499,19 @@ class RepoWatcher(Base):
 
 
 class MRReview(Base):
-    """Tracking for individual merge request reviews"""
+    """Tracking for individual merge request / pull request reviews"""
     __tablename__ = "mr_reviews"
 
     id = Column(Integer, primary_key=True)
     watcher_id = Column(Integer, ForeignKey("repo_watchers.id"), nullable=True, index=True)  # Nullable for manual reviews
     gitlab_repo_id = Column(Integer, ForeignKey("gitlab_repos.id"), nullable=True, index=True)  # For manual reviews with saved repo
+    github_repo_id = Column(Integer, ForeignKey("github_repos.id"), nullable=True, index=True)  # For GitHub PR reviews
 
-    # GitLab MR identification
-    mr_iid = Column(Integer, nullable=False)  # GitLab MR internal ID within project
+    # Provider type: "gitlab" or "github"
+    provider = Column(String, default="gitlab")  # gitlab or github
+
+    # MR/PR identification (works for both GitLab MRs and GitHub PRs)
+    mr_iid = Column(Integer, nullable=False)  # MR/PR number within project
     mr_title = Column(String, nullable=True)
     mr_url = Column(String, nullable=True)
     mr_author = Column(String, nullable=True)
@@ -484,7 +521,7 @@ class MRReview(Base):
     # Review status
     status = Column(String, default="pending")  # pending, reviewing, completed, error
     files_reviewed = Column(Integer, default=0)  # Number of files analyzed
-    post_comments = Column(Boolean, default=False)  # Whether to post comments to GitLab
+    post_comments = Column(Boolean, default=False)  # Whether to post comments to GitLab/GitHub
 
     # Phase 1: Diff review results (fast inline feedback)
     diff_findings = Column(JSON, nullable=True)  # List of inline comments from diff analysis
@@ -496,8 +533,8 @@ class MRReview(Base):
     scan_started_at = Column(DateTime(timezone=True), nullable=True)
     scan_completed_at = Column(DateTime(timezone=True), nullable=True)
 
-    # GitLab interaction tracking
-    generated_comments = Column(JSON, nullable=True)  # Pre-formatted comments ready for GitLab (stored even in dry-run)
+    # Git provider interaction tracking
+    generated_comments = Column(JSON, nullable=True)  # Pre-formatted comments ready for GitLab/GitHub (stored even in dry-run)
     comments_posted = Column(JSON, nullable=True)  # List of posted comment IDs for deduplication
     approval_status = Column(String, nullable=True)  # approved, changes_requested, pending
 
@@ -510,5 +547,6 @@ class MRReview(Base):
     # Relationships
     watcher = relationship("RepoWatcher", back_populates="reviews")
     gitlab_repo = relationship("GitLabRepo")
+    github_repo = relationship("GitHubRepo")
     scan = relationship("Scan")
     findings = relationship("Finding", back_populates="mr_review")
