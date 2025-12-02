@@ -128,17 +128,40 @@ class ModelPool:
                         else:
                             url = f"{base}/v1/chat/completions"
 
+                        request_payload = {
+                            "model": self.config.name,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "max_tokens": self.config.max_tokens,
+                            "temperature": 0.1
+                        }
+
                         response = await client.post(
                             url,
-                            json={
-                                "model": self.config.name,
-                                "messages": [{"role": "user", "content": prompt}],
-                                "max_tokens": self.config.max_tokens,
-                                "temperature": 0.1
-                            },
+                            json=request_payload,
                             headers={"Authorization": f"Bearer {self.config.api_key}"}
                         )
-                        response.raise_for_status()
+
+                        # Check for errors and get detailed error message
+                        if response.status_code >= 400:
+                            try:
+                                error_body = response.json()
+                                error_detail = error_body.get("error", {})
+                                if isinstance(error_detail, dict):
+                                    error_message = error_detail.get("message", str(error_body))
+                                else:
+                                    error_message = str(error_detail) or str(error_body)
+                            except Exception:
+                                error_message = response.text[:500]
+
+                            prompt_len = len(prompt)
+                            print(f"[LLM ERROR] {self.config.name} returned {response.status_code}: {error_message}")
+                            print(f"[LLM ERROR] Prompt length: {prompt_len} chars, max_tokens: {self.config.max_tokens}")
+                            if prompt_len > 1000:
+                                print(f"[LLM ERROR] Prompt preview: {prompt[:500]}...{prompt[-200:]}")
+
+                            duration_ms = (time.time() - start_time) * 1000
+                            return ("", prompt, duration_ms, None, None, f"HTTP {response.status_code}: {error_message}")
+
                         data = response.json()
 
                         # Extract token usage if available
