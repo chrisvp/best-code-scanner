@@ -423,15 +423,18 @@ class EnrichmentParser:
 
         for alias in aliases:
             alias_lower = alias.lower()
-            # Try different possible markers
+            # Try different possible markers - order matters (more specific first)
             for marker in [
-                f'\n{alias_lower}:',
-                f'\n*{alias_lower}:',
-                f'\n**{alias_lower}:',
-                f'\n## {alias_lower}:',
-                f'\n## **{alias_lower}:',
-                f'\n[]{alias_lower}:',
-                f'{alias_lower}:',  # At start of text
+                f'\n*{alias_lower}:',         # *category:
+                f'\n**{alias_lower}:**',      # **category:**
+                f'\n**{alias_lower}:',        # **category:
+                f'\n**{alias_lower}**',       # **category** (markdown bold, no colon)
+                f'\n{alias_lower}**',         # category** (markdown suffix, no colon)
+                f'\n## {alias_lower}:',       # ## category:
+                f'\n## **{alias_lower}:',     # ## **category:
+                f'\n{alias_lower}:',          # category:
+                f'\n[]{alias_lower}:',        # []category:
+                f'{alias_lower}:',            # At start of text
             ]:
                 pos = text_lower.find(marker)
                 if pos != -1 and (best_pos == -1 or pos < best_pos):
@@ -458,11 +461,14 @@ class EnrichmentParser:
             if next_field.upper() == field:
                 continue
             for marker in [
-                f'\n{next_field.lower()}:',
                 f'\n*{next_field.lower()}:',
+                f'\n**{next_field.lower()}:**',
                 f'\n**{next_field.lower()}:',
+                f'\n**{next_field.lower()}**',
+                f'\n{next_field.lower()}**',
                 f'\n## {next_field.lower()}:',
                 f'\n## **{next_field.lower()}:',
+                f'\n{next_field.lower()}:',
                 f'\n[]{next_field.lower()}:',
             ]:
                 pos = content.lower().find(marker)

@@ -19,8 +19,11 @@ class CategoryMatcher:
         if not raw_category:
             return "Unknown"
 
-        # Extract CWE ID if present
-        cwe_match = re.search(r'CWE-(\d+)', raw_category, re.IGNORECASE)
+        # Normalize unicode dashes to regular hyphens for CWE matching
+        normalized = raw_category.replace('‑', '-').replace('–', '-').replace('—', '-')
+
+        # Extract CWE ID if present (handles various dash types after normalization)
+        cwe_match = re.search(r'CWE-(\d+)', normalized, re.IGNORECASE)
         cwe_id = f"CWE-{cwe_match.group(1)}" if cwe_match else None
 
         # Try exact CWE match first
@@ -34,7 +37,7 @@ class CategoryMatcher:
                 return existing.name
 
         # Try fuzzy keyword match
-        raw_lower = raw_category.lower()
+        raw_lower = normalized.lower()
         keywords = self._extract_keywords(raw_lower)
 
         all_cats = self.db.query(VulnerabilityCategory).all()
@@ -43,12 +46,15 @@ class CategoryMatcher:
 
         for cat in all_cats:
             if cat.keywords:
-                score = sum(1 for kw in cat.keywords if kw in raw_lower)
-                if score > best_score:
-                    best_score = score
+                # Count keyword matches, but exclude generic terms like "cwe", "buffer", etc.
+                generic_terms = {'cwe', 'buffer', 'code', 'copy', 'size', 'check', 'related', 'also'}
+                meaningful_matches = sum(1 for kw in cat.keywords if kw in raw_lower and kw not in generic_terms)
+                if meaningful_matches > best_score:
+                    best_score = meaningful_matches
                     best_match = cat
 
-        if best_match and best_score >= 1:
+        # Require at least 2 meaningful keyword matches to use existing category
+        if best_match and best_score >= 2:
             best_match.usage_count += 1
             self.db.commit()
             return best_match.name

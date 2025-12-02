@@ -218,6 +218,18 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
     })
 
 
+@router.delete("/finding/{finding_id}")
+async def delete_finding(finding_id: int, db: Session = Depends(get_db)):
+    """Delete a finding"""
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return JSONResponse({"error": "Finding not found"}, status_code=404)
+
+    db.delete(finding)
+    db.commit()
+    return JSONResponse({"success": True, "message": "Finding deleted"})
+
+
 @router.post("/finding/{finding_id}/chat")
 async def finding_chat(finding_id: int, request: Request, db: Session = Depends(get_db)):
     """Chat about a specific finding with AI context"""
