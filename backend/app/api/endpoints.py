@@ -12,7 +12,7 @@ from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
     ScanProfile, ProfileAnalyzer, WebhookConfig, WebhookDeliveryLog,
-    RepoWatcher, MRReview
+    RepoWatcher, MRReview, LLMRequestLog
 )
 
 # Create tables
@@ -3486,3 +3486,159 @@ async def retry_review(
 
     # Note: In a real implementation, this would re-queue the review for processing
     return {"id": review.id, "status": "retry_queued"}
+
+
+# ============================================================================
+# LLM Request Logs - Debugging endpoints
+# ============================================================================
+
+@router.get("/llm-logs", response_class=HTMLResponse)
+async def llm_logs_page(request: Request, db: Session = Depends(get_db)):
+    """LLM request logs page for debugging parsing issues"""
+    return templates.TemplateResponse("llm_logs.html", {
+        "request": request,
+    })
+
+
+@router.get("/llm-logs/list")
+async def get_llm_logs(
+    scan_id: Optional[int] = None,
+    phase: Optional[str] = None,
+    model: Optional[str] = None,
+    parse_success: Optional[bool] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """Get LLM request logs with optional filtering"""
+    query = db.query(LLMRequestLog).order_by(LLMRequestLog.created_at.desc())
+
+    if scan_id is not None:
+        query = query.filter(LLMRequestLog.scan_id == scan_id)
+    if phase:
+        query = query.filter(LLMRequestLog.phase == phase)
+    if model:
+        query = query.filter(LLMRequestLog.model_name == model)
+    if parse_success is not None:
+        query = query.filter(LLMRequestLog.parse_success == parse_success)
+
+    total = query.count()
+    logs = query.offset(offset).limit(limit).all()
+
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "logs": [
+            {
+                "id": log.id,
+                "scan_id": log.scan_id,
+                "model_name": log.model_name,
+                "phase": log.phase,
+                "analyzer_name": log.analyzer_name,
+                "file_path": log.file_path,
+                "chunk_id": log.chunk_id,
+                "parse_success": log.parse_success,
+                "parse_error": log.parse_error,
+                "findings_count": log.findings_count,
+                "tokens_in": log.tokens_in,
+                "tokens_out": log.tokens_out,
+                "duration_ms": log.duration_ms,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                # Truncate for list view
+                "request_preview": (log.request_prompt[:200] + "...") if log.request_prompt and len(log.request_prompt) > 200 else log.request_prompt,
+                "response_preview": (log.raw_response[:200] + "...") if log.raw_response and len(log.raw_response) > 200 else log.raw_response,
+            }
+            for log in logs
+        ]
+    }
+
+
+@router.get("/llm-logs/{log_id}")
+async def get_llm_log_detail(log_id: int, db: Session = Depends(get_db)):
+    """Get full details of a single LLM request log"""
+    log = db.query(LLMRequestLog).filter(LLMRequestLog.id == log_id).first()
+    if not log:
+        return JSONResponse({"error": "Log not found"}, status_code=404)
+
+    return {
+        "id": log.id,
+        "scan_id": log.scan_id,
+        "mr_review_id": log.mr_review_id,
+        "model_name": log.model_name,
+        "phase": log.phase,
+        "analyzer_name": log.analyzer_name,
+        "file_path": log.file_path,
+        "chunk_id": log.chunk_id,
+        "request_prompt": log.request_prompt,
+        "raw_response": log.raw_response,
+        "parsed_result": log.parsed_result,
+        "parse_success": log.parse_success,
+        "parse_error": log.parse_error,
+        "findings_count": log.findings_count,
+        "tokens_in": log.tokens_in,
+        "tokens_out": log.tokens_out,
+        "duration_ms": log.duration_ms,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+
+
+@router.delete("/llm-logs")
+async def clear_llm_logs(
+    scan_id: Optional[int] = None,
+    older_than_days: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """Clear LLM logs, optionally filtered by scan_id or age"""
+    from datetime import datetime, timedelta
+
+    query = db.query(LLMRequestLog)
+
+    if scan_id is not None:
+        query = query.filter(LLMRequestLog.scan_id == scan_id)
+
+    if older_than_days is not None:
+        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+        query = query.filter(LLMRequestLog.created_at < cutoff)
+
+    count = query.count()
+    query.delete()
+    db.commit()
+
+    return {"deleted": count}
+
+
+@router.get("/llm-logs/stats")
+async def get_llm_log_stats(db: Session = Depends(get_db)):
+    """Get statistics about LLM logs"""
+    total = db.query(LLMRequestLog).count()
+    failed = db.query(LLMRequestLog).filter(LLMRequestLog.parse_success == False).count()
+
+    # Get counts by phase
+    phase_counts = db.query(
+        LLMRequestLog.phase,
+        func.count(LLMRequestLog.id)
+    ).group_by(LLMRequestLog.phase).all()
+
+    # Get counts by model
+    model_counts = db.query(
+        LLMRequestLog.model_name,
+        func.count(LLMRequestLog.id)
+    ).group_by(LLMRequestLog.model_name).all()
+
+    # Get recent scans with logs
+    recent_scans = db.query(
+        LLMRequestLog.scan_id,
+        func.count(LLMRequestLog.id).label('log_count')
+    ).filter(LLMRequestLog.scan_id.isnot(None)).group_by(
+        LLMRequestLog.scan_id
+    ).order_by(func.max(LLMRequestLog.created_at).desc()).limit(20).all()
+
+    return {
+        "total": total,
+        "failed_parses": failed,
+        "success_rate": round((total - failed) / total * 100, 1) if total > 0 else 100,
+        "by_phase": {phase: count for phase, count in phase_counts},
+        "by_model": {model: count for model, count in model_counts},
+        "recent_scans": [{"scan_id": s, "log_count": c} for s, c in recent_scans if s],
+    }

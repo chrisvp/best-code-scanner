@@ -498,6 +498,41 @@ class RepoWatcher(Base):
     reviews = relationship("MRReview", back_populates="watcher")
 
 
+class LLMRequestLog(Base):
+    """Log of all LLM requests and responses for debugging parsing issues"""
+    __tablename__ = "llm_request_logs"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
+    mr_review_id = Column(Integer, ForeignKey("mr_reviews.id"), nullable=True, index=True)
+
+    # Request context
+    model_name = Column(String, index=True)
+    phase = Column(String, index=True)  # "scanner", "verifier", "enricher", "chat", "cleanup", "mr_review"
+    analyzer_name = Column(String, nullable=True)  # Name of the analyzer/profile used
+
+    # File context
+    file_path = Column(String, nullable=True)
+    chunk_id = Column(Integer, nullable=True)
+
+    # Request/Response content
+    request_prompt = Column(Text)  # The full prompt sent to the LLM
+    raw_response = Column(Text)  # The raw response from the LLM
+    parsed_result = Column(JSON, nullable=True)  # What was successfully parsed (findings, etc.)
+
+    # Parsing status
+    parse_success = Column(Boolean, default=True)
+    parse_error = Column(Text, nullable=True)  # Error message if parsing failed
+    findings_count = Column(Integer, default=0)  # Number of findings parsed
+
+    # Performance metrics
+    tokens_in = Column(Integer, nullable=True)
+    tokens_out = Column(Integer, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class MRReview(Base):
     """Tracking for individual merge request / pull request reviews"""
     __tablename__ = "mr_reviews"

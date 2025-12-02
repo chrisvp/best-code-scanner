@@ -1,7 +1,9 @@
 import asyncio
 import httpx
-from typing import List, Dict, Optional
+import time
+from typing import List, Dict, Optional, Any
 from app.models.scanner_models import ModelConfig
+from app.services.llm_logger import llm_logger
 
 
 class ModelPool:
@@ -15,6 +17,8 @@ class ModelPool:
         self.batch_timeout = 0.5  # Seconds to wait for batch to fill
         self._batch_task: Optional[asyncio.Task] = None
         self._running = False
+        # Logging context (set by caller before making calls)
+        self._log_context: Dict[str, Any] = {}
 
     async def start(self):
         """Start the batch processor"""
@@ -37,9 +41,15 @@ class ModelPool:
         await self.batch_queue.put((prompt, future))
         return await future
 
-    async def call_batch(self, prompts: List[str]) -> List[str]:
+    async def call_batch(self, prompts: List[str], log_context: Optional[Dict[str, Any]] = None) -> List[str]:
         """Direct batch call - bypasses queue"""
+        if log_context:
+            self._log_context = log_context
         return await self._send_batch(prompts)
+
+    def set_log_context(self, **kwargs):
+        """Set logging context for subsequent calls (scan_id, phase, analyzer_name, etc.)"""
+        self._log_context.update(kwargs)
 
     async def _batch_processor(self):
         """Collects prompts and sends in batches"""
@@ -98,10 +108,19 @@ class ModelPool:
 
     async def _send_batch(self, prompts: List[str]) -> List[str]:
         """Send batch to vLLM using chat completions"""
+        results = []
+        log_context = self._log_context.copy()
+
         async with httpx.AsyncClient(timeout=600.0, verify=False) as client:
             # Rate-limited concurrent requests
-            async def send_one(prompt: str) -> str:
+            async def send_one(prompt: str, idx: int) -> tuple:
+                """Returns (response_content, prompt, duration_ms, tokens_in, tokens_out, error)"""
                 async with self.semaphore:
+                    start_time = time.time()
+                    tokens_in = None
+                    tokens_out = None
+                    error = None
+
                     try:
                         base = self.config.base_url.rstrip('/')
                         if base.endswith('/v1'):
@@ -121,6 +140,12 @@ class ModelPool:
                         )
                         response.raise_for_status()
                         data = response.json()
+
+                        # Extract token usage if available
+                        usage = data.get("usage", {})
+                        tokens_in = usage.get("prompt_tokens")
+                        tokens_out = usage.get("completion_tokens")
+
                         choices = data.get("choices", [])
                         if choices:
                             message = choices[0].get("message", {})
@@ -135,17 +160,48 @@ class ModelPool:
                             reasoning = thinking or reasoning_content
                             if reasoning:
                                 # Wrap reasoning in tags for parser consistency
-                                return f"<thinking>{reasoning}</thinking>\n{content}"
-                            return content
-                        return ""
+                                content = f"<thinking>{reasoning}</thinking>\n{content}"
+
+                            duration_ms = (time.time() - start_time) * 1000
+                            return (content, prompt, duration_ms, tokens_in, tokens_out, None)
+
+                        duration_ms = (time.time() - start_time) * 1000
+                        return ("", prompt, duration_ms, tokens_in, tokens_out, None)
+
                     except Exception as e:
                         import traceback
-                        print(f"Request failed for {self.config.name}: {type(e).__name__}: {e}")
+                        error_msg = f"{type(e).__name__}: {e}"
+                        print(f"Request failed for {self.config.name}: {error_msg}")
                         traceback.print_exc()
-                        return ""
+                        duration_ms = (time.time() - start_time) * 1000
+                        return ("", prompt, duration_ms, tokens_in, tokens_out, error_msg)
 
-            tasks = [send_one(prompt) for prompt in prompts]
-            return await asyncio.gather(*tasks)
+            tasks = [send_one(prompt, i) for i, prompt in enumerate(prompts)]
+            batch_results = await asyncio.gather(*tasks)
+
+            # Log all results
+            for content, prompt, duration_ms, tokens_in, tokens_out, error in batch_results:
+                results.append(content)
+
+                # Log this request/response
+                llm_logger.log(
+                    model_name=self.config.name,
+                    phase=log_context.get('phase', 'unknown'),
+                    request_prompt=prompt,
+                    raw_response=content,
+                    scan_id=log_context.get('scan_id'),
+                    mr_review_id=log_context.get('mr_review_id'),
+                    analyzer_name=log_context.get('analyzer_name'),
+                    file_path=log_context.get('file_path'),
+                    chunk_id=log_context.get('chunk_id'),
+                    parse_success=error is None,
+                    parse_error=error,
+                    tokens_in=tokens_in,
+                    tokens_out=tokens_out,
+                    duration_ms=duration_ms,
+                )
+
+        return results
 
 
 class ModelOrchestrator:

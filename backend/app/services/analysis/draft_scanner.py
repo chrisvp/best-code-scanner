@@ -191,6 +191,13 @@ class ProfileAwareScanner:
                     prompts.append(prompt)
                     prompt_chunk_ids.append(chunk_id)
 
+                # Set logging context for the model pool
+                pool.set_log_context(
+                    scan_id=self.scan_id,
+                    phase='scanner',
+                    analyzer_name=analyzer.name,
+                )
+
                 # Call model
                 try:
                     responses = await pool.call_batch(prompts)
@@ -515,7 +522,7 @@ Report all findings. If none found: *DRAFT:NONE"""
                     try:
                         # Use custom prompt if configured, else default
                         template = pool.config.analysis_prompt_template or self.SCAN_PROMPT
-                        
+
                         # Generate prompts specific to this model
                         model_prompts = []
                         for item in to_llm:
@@ -527,7 +534,13 @@ Report all findings. If none found: *DRAFT:NONE"""
                             except KeyError:
                                 # Fallback if template doesn't use {language}
                                 model_prompts.append(template.format(code=item['code']))
-                        
+
+                        # Set logging context for the model pool
+                        pool.set_log_context(
+                            scan_id=self.scan_id,
+                            phase='scanner',
+                        )
+
                         responses = await pool.call_batch(model_prompts)
                         return (pool.config.name, responses)
                     except Exception as e:

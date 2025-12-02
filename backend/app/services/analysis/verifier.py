@@ -152,10 +152,16 @@ REJECT if:
             try:
                 # Use custom prompt if configured, else default
                 template = pool.config.verification_prompt_template or self.VOTE_PROMPT
-                
+
                 # Generate prompts specific to this model
                 model_prompts = [template.format(**ctx) for ctx in draft_contexts]
-                
+
+                # Set logging context for the model pool
+                pool.set_log_context(
+                    scan_id=self.scan_id,
+                    phase='verifier',
+                )
+
                 responses = await pool.call_batch(model_prompts)
                 return (pool.config.name, responses)
             except Exception as e:

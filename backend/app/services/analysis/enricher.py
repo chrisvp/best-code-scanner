@@ -229,6 +229,13 @@ The fix should address the security issue while maintaining the original functio
             )
             prompts.append(prompt)
 
+        # Set logging context
+        scan_id = verified_list[0].scan_id if verified_list else None
+        self.model_pool.set_log_context(
+            scan_id=scan_id,
+            phase='enricher',
+        )
+
         # Batch call for enrichment
         try:
             responses = await self.model_pool.call_batch(prompts)
