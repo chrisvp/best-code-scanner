@@ -103,9 +103,20 @@
         </button>
         {% endif %}
 
+        {% if scan.status in ['completed', 'failed', 'stopped'] %}
+        <!-- Rescan Button -->
+        <button onclick="rescanScan({{ scan.id }}, event)" id="rescan-btn-{{ scan.id }}"
+            class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Rescan
+        </button>
+        {% endif %}
+
         <!-- Delete Button -->
         <button onclick="deleteScan({{ scan.id }}, event)"
-            class="{% if scan.status in ['running', 'paused', 'queued'] %}flex-1{% else %}w-full{% endif %} flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-gray-400 bg-gray-700/50 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 border border-gray-600/50 rounded transition-colors"
+            class="{% if scan.status in ['running', 'paused', 'queued', 'completed', 'failed', 'stopped'] %}flex-1{% else %}w-full{% endif %} flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-gray-400 bg-gray-700/50 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 border border-gray-600/50 rounded transition-colors"
             {% if scan.status == 'running' %}title="Stop the scan first" disabled{% endif %}>
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -176,6 +187,62 @@ async function deleteScan(scanId, event) {
         }
     } catch (err) {
         alert('Error deleting scan: ' + err.message);
+    }
+}
+
+async function rescanScan(scanId, event) {
+    event.stopPropagation();
+    if (!confirm('Rescan this repository? This will reset all findings and start a fresh scan.')) return;
+
+    const btn = document.getElementById(`rescan-btn-${scanId}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `
+            <svg class="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle>
+            </svg>
+            Starting...
+        `;
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('reset_all', 'true');
+
+        const response = await fetch(`/scan/${scanId}/rerun`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.status === 'restarted' || data.scan_id) {
+            // Refresh the scan list to show the updated status
+            htmx.ajax('GET', '/', { target: '#scan-list', swap: 'innerHTML', select: '#scan-list > *' });
+            // Also refresh the details pane
+            htmx.ajax('GET', `/scan/${scanId}`, { target: '#scan-details' });
+        } else {
+            alert(data.error || 'Failed to start rescan');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Rescan
+                `;
+            }
+        }
+    } catch (err) {
+        alert('Error starting rescan: ' + err.message);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Rescan
+            `;
+        }
     }
 }
 </script>

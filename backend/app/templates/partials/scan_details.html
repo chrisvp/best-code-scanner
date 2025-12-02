@@ -27,8 +27,17 @@
                 </div>
             </div>
 
-            <!-- Export Buttons -->
+            <!-- Action Buttons -->
             <div class="flex items-center gap-2">
+                {% if scan.status in ['completed', 'failed', 'stopped'] %}
+                <button onclick="rescanFromDetails({{ scan.id }})" id="rescan-details-btn"
+                    class="px-3 py-1.5 text-xs font-medium text-blue-300 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Rescan
+                </button>
+                {% endif %}
                 <button onclick="exportFindings('csv')" class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors flex items-center gap-1.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -751,6 +760,60 @@
         code = code.replace(/<\/?think>/gi, '');
         // Then strip markdown code fences
         return code.replace(/^```[\w]*\n?/gm, '').replace(/```$/gm, '').trim();
+    }
+
+    async function rescanFromDetails(scanId) {
+        if (!confirm('Rescan this repository? This will reset all findings and start a fresh scan.')) return;
+
+        const btn = document.getElementById('rescan-details-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `
+                <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle>
+                </svg>
+                Starting...
+            `;
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('reset_all', 'true');
+
+            const response = await fetch(`/scan/${scanId}/rerun`, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+
+            if (data.status === 'restarted' || data.scan_id) {
+                // Refresh the scan list and details
+                htmx.ajax('GET', '/', { target: '#scan-list', swap: 'innerHTML', select: '#scan-list > *' });
+                htmx.ajax('GET', `/scan/${scanId}`, { target: '#scan-details' });
+            } else {
+                alert(data.error || 'Failed to start rescan');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = `
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        Rescan
+                    `;
+                }
+            }
+        } catch (err) {
+            alert('Error starting rescan: ' + err.message);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = `
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Rescan
+                `;
+            }
+        }
     }
 
     function exportFindings(format) {
