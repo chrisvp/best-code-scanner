@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
-from app.models.scanner_models import RepoWatcher, MRReview, ScanProfile
+import fnmatch
+from app.models.scanner_models import RepoWatcher, MRReview, ScanProfile, ProfileAnalyzer
 from app.models.models import Scan, Finding, ScanStatus
 from app.services.gitlab_service import GitLabService, GitLabError
 from app.services.github_service import GitHubService, GitHubError
@@ -390,6 +391,147 @@ class MRReviewerService:
             logger.error(f"Error analyzing file {file_path}: {e}")
             return []
 
+    def _get_applicable_analyzers(
+        self,
+        profile: ScanProfile,
+        file_path: str,
+    ) -> List[ProfileAnalyzer]:
+        """
+        Get analyzers from a profile that are applicable to a file.
+
+        Args:
+            profile: Scan profile with analyzers
+            file_path: Path to check against file_filter patterns
+
+        Returns:
+            List of applicable ProfileAnalyzer objects
+        """
+        applicable = []
+        filename = os.path.basename(file_path)
+        language = self._detect_language(file_path)
+
+        for analyzer in profile.analyzers:
+            if not analyzer.enabled:
+                continue
+
+            # Check file filter
+            if analyzer.file_filter:
+                patterns = [p.strip() for p in analyzer.file_filter.split(',') if p.strip()]
+                matched = False
+                for pattern in patterns:
+                    if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(file_path, pattern):
+                        matched = True
+                        break
+                if not matched:
+                    continue
+
+            # Check language filter
+            if analyzer.language_filter:
+                if language.lower() not in [lang.lower() for lang in analyzer.language_filter]:
+                    continue
+
+            applicable.append(analyzer)
+
+        return applicable
+
+    async def _analyze_file_with_profile(
+        self,
+        file_path: str,
+        file_content: str,
+        profile: ScanProfile,
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyze a file using the scan profile's configured analyzers.
+
+        This runs each applicable analyzer from the profile against the file,
+        using the analyzer's specific model and prompt template.
+
+        Args:
+            file_path: Path to the file
+            file_content: Complete file content
+            profile: ScanProfile with configured analyzers
+
+        Returns:
+            List of findings from all applicable analyzers
+        """
+        language = self._detect_language(file_path)
+        all_findings = []
+
+        # Get applicable analyzers for this file
+        analyzers = self._get_applicable_analyzers(profile, file_path)
+
+        if not analyzers:
+            logger.info(f"No applicable analyzers for {file_path}, using default analysis")
+            return await self._analyze_file_with_llm(file_path, file_content)
+
+        for analyzer in analyzers:
+            logger.info(f"Running analyzer '{analyzer.name}' on {file_path}")
+
+            try:
+                # Truncate content based on analyzer's chunk_size
+                max_chars = (analyzer.chunk_size or 6000) * 4  # Rough token to char conversion
+                truncated_content = file_content[:max_chars]
+                if len(file_content) > max_chars:
+                    truncated_content += f"\n\n... (truncated, {len(file_content) - max_chars} chars omitted)"
+
+                # Escape curly braces in content for format string
+                escaped_content = truncated_content.replace("{", "{{").replace("}", "}}")
+
+                # Build prompt from analyzer's template
+                if analyzer.prompt_template:
+                    # Use the analyzer's custom prompt template
+                    prompt = analyzer.prompt_template.format(
+                        code=escaped_content,
+                        language=language,
+                        file_path=file_path,
+                    )
+                else:
+                    # Fallback to default file review prompt
+                    prompt = FILE_REVIEW_PROMPT.format(
+                        file_path=file_path,
+                        language=language,
+                        file_content=escaped_content,
+                    )
+
+                # Get the model name from the analyzer's linked model
+                model_name = analyzer.model.name if analyzer.model else None
+
+                # Call LLM with the specific model
+                response = await llm_provider.chat_completion(
+                    [{"role": "user", "content": prompt}],
+                    model=model_name,
+                )
+
+                content = response.get("content", "")
+
+                # Check for "no findings" response
+                if "*DRAFT:NONE" in content or not content.strip():
+                    continue
+
+                # Parse marker format using DraftParser
+                parser = DraftParser()
+                parsed_findings = parser.parse(content)
+
+                # Transform parsed findings to expected format
+                for finding in parsed_findings:
+                    all_findings.append({
+                        "title": finding.get("title", finding.get("draft", "Unknown Issue")),
+                        "type": finding.get("type", "Unknown"),
+                        "severity": finding.get("severity", "MEDIUM").upper(),
+                        "line": int(finding.get("line", 1)) if finding.get("line") else 1,
+                        "snippet": finding.get("snippet", ""),
+                        "description": finding.get("reason", "No description provided."),
+                        "recommendation": finding.get("reason", "Review this code for security implications."),
+                        "analyzer": analyzer.name,
+                        "model": model_name,
+                    })
+
+            except Exception as e:
+                logger.error(f"Error running analyzer '{analyzer.name}' on {file_path}: {e}")
+                continue
+
+        return all_findings
+
     def _save_findings_to_db(
         self,
         review: MRReview,
@@ -646,7 +788,12 @@ class MRReviewerService:
                     )
 
                     # Analyze with LLM using full file content
-                    findings = await self._analyze_file_with_llm(file_path, file_content)
+                    # Use scan profile if configured on the watcher
+                    if watcher.scan_profile:
+                        logger.info(f"Using scan profile '{watcher.scan_profile.name}' for {file_path}")
+                        findings = await self._analyze_file_with_profile(file_path, file_content, watcher.scan_profile)
+                    else:
+                        findings = await self._analyze_file_with_llm(file_path, file_content)
 
                     # Add file path to each finding
                     for finding in findings:
@@ -874,7 +1021,12 @@ class MRReviewerService:
                     file_content = await github.get_file_content(owner, repo_name, file_path, source_branch)
 
                     # Analyze with LLM using full file content
-                    findings = await self._analyze_file_with_llm(file_path, file_content)
+                    # Use scan profile if configured on the watcher
+                    if watcher.scan_profile:
+                        logger.info(f"Using scan profile '{watcher.scan_profile.name}' for {file_path}")
+                        findings = await self._analyze_file_with_profile(file_path, file_content, watcher.scan_profile)
+                    else:
+                        findings = await self._analyze_file_with_llm(file_path, file_content)
 
                     # Add file path to each finding
                     for finding in findings:
