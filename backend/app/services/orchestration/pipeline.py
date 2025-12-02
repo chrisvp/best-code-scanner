@@ -232,6 +232,7 @@ class ScanPipeline:
         """Discover files and create chunks for scanning"""
         from app.services.analysis.file_chunker import FileChunker
         import fnmatch
+        from pathlib import PurePath
 
         # Use configured chunk size and strategy
         chunk_size = self.config.chunk_size or 3000
@@ -239,8 +240,26 @@ class ScanPipeline:
         chunker = FileChunker(max_tokens=chunk_size, strategy=chunk_strategy)
         supported_extensions = {'.py', '.c', '.cpp', '.h', '.hpp'}
 
-        # Get file filter pattern(s) from config
+        # Get file filter pattern(s) from config or profile
         file_filter = getattr(self.config, 'file_filter', None)
+
+        # If no explicit file_filter but using a profile, get combined filters from profile's analyzers
+        if not file_filter and self.config.profile_id:
+            profile = self.db.query(ScanProfile).filter(
+                ScanProfile.id == self.config.profile_id
+            ).first()
+            if profile and profile.analyzers:
+                # Collect unique file filters from all enabled analyzers
+                profile_filters = set()
+                for analyzer in profile.analyzers:
+                    if analyzer.enabled and analyzer.file_filter:
+                        for f in analyzer.file_filter.split(','):
+                            if f.strip():
+                                profile_filters.add(f.strip())
+                if profile_filters:
+                    file_filter = ','.join(profile_filters)
+                    print(f"[Scan {self.scan_id}] Using file filter from profile analyzers: {profile_filters}")
+
         filter_patterns = []
         if file_filter:
             # Support comma-separated patterns: "sshd.c,auth.c" or single: "*.c"
@@ -249,13 +268,16 @@ class ScanPipeline:
 
         # Track chunk sizes for metrics
         chunk_token_sizes = []
+        files_checked = 0
+        files_matched = 0
 
         for root, _, files in os.walk(root_dir):
             for filename in files:
-                ext = os.path.splitext(filename)[1]
+                ext = os.path.splitext(filename)[1].lower()  # Case-insensitive extension check
                 if ext not in supported_extensions:
                     continue
 
+                files_checked += 1
                 file_path = os.path.join(root, filename)
 
                 # Apply file filter if specified
@@ -264,12 +286,22 @@ class ScanPipeline:
                     rel_path = os.path.relpath(file_path, root_dir)
                     matched = False
                     for pattern in filter_patterns:
-                        # Match against filename or relative path
-                        if fnmatch.fnmatch(filename, pattern) or fnmatch.fnmatch(rel_path, pattern):
+                        # For simple extension patterns like *.c, match against filename
+                        # For path patterns, use PurePath.match() which supports ** globs
+                        if fnmatch.fnmatch(filename.lower(), pattern.lower()):
+                            matched = True
+                            break
+                        if fnmatch.fnmatch(rel_path.lower(), pattern.lower()):
+                            matched = True
+                            break
+                        # Also try PurePath.match for recursive patterns
+                        if PurePath(rel_path).match(pattern):
                             matched = True
                             break
                     if not matched:
                         continue
+
+                files_matched += 1
 
                 try:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -317,19 +349,32 @@ class ScanPipeline:
                     print(f"Error processing {file_path}: {e}")
                     continue
 
+        # Log file filter results
+        if filter_patterns:
+            print(f"[Scan {self.scan_id}] File filter: {files_checked} supported files checked, {files_matched} matched filter")
+
         self.db.commit()
 
-        # Save chunk metrics
+        # Save chunk metrics (update if exists, insert if not)
         if chunk_token_sizes:
-            scan_metrics = ScanMetrics(
-                scan_id=self.scan_id,
-                total_chunks=len(chunk_token_sizes),
-                avg_chunk_tokens=sum(chunk_token_sizes) / len(chunk_token_sizes),
-                min_chunk_tokens=min(chunk_token_sizes),
-                max_chunk_tokens=max(chunk_token_sizes),
-                chunk_size_setting=chunk_size
-            )
-            self.db.add(scan_metrics)
+            existing_metrics = self.db.query(ScanMetrics).filter(ScanMetrics.scan_id == self.scan_id).first()
+            if existing_metrics:
+                existing_metrics.total_chunks = len(chunk_token_sizes)
+                existing_metrics.avg_chunk_tokens = sum(chunk_token_sizes) / len(chunk_token_sizes)
+                existing_metrics.min_chunk_tokens = min(chunk_token_sizes)
+                existing_metrics.max_chunk_tokens = max(chunk_token_sizes)
+                existing_metrics.chunk_size_setting = chunk_size
+                scan_metrics = existing_metrics
+            else:
+                scan_metrics = ScanMetrics(
+                    scan_id=self.scan_id,
+                    total_chunks=len(chunk_token_sizes),
+                    avg_chunk_tokens=sum(chunk_token_sizes) / len(chunk_token_sizes),
+                    min_chunk_tokens=min(chunk_token_sizes),
+                    max_chunk_tokens=max(chunk_token_sizes),
+                    chunk_size_setting=chunk_size
+                )
+                self.db.add(scan_metrics)
             self.db.commit()
             print(f"[Scan {self.scan_id}] Chunks: {len(chunk_token_sizes)}, avg tokens: {scan_metrics.avg_chunk_tokens:.0f}")
 

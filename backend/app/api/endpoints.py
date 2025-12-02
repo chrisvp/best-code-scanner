@@ -110,7 +110,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 @router.post("/scan/start")
 async def start_scan(
     background_tasks: BackgroundTasks,
-    target_url: str = Form(...),
+    target_url: str = Form(""),  # Optional if archive is provided
     archive: UploadFile = File(None),  # Optional file upload
     analysis_mode: str = Form("primary_verifiers"),
     scope: str = Form("full"),
@@ -130,9 +130,15 @@ async def start_scan(
     profile_id: int = Form(None),  # Use a scan profile with custom analyzers
     db: Session = Depends(get_db)
 ):
+    # Validate: either target_url or archive must be provided
+    has_archive = archive and archive.filename
+    has_url = target_url and target_url.strip()
+    if not has_archive and not has_url:
+        raise HTTPException(status_code=400, detail="Either a Git URL or an archive file must be provided")
+
     # Handle file upload if provided
     actual_target = target_url
-    if archive and archive.filename:
+    if has_archive:
         # Save uploaded file to sandbox directory
         sandbox_dir = os.path.join(os.path.dirname(__file__), "..", "..", "sandbox")
         os.makedirs(sandbox_dir, exist_ok=True)
@@ -1692,8 +1698,12 @@ def seed_default_profiles(db: Session):
     if existing > 0:
         return
 
-    # Get default analyzer model
+    # Get default analyzer model - required for creating profiles
     default_model = db.query(ModelConfig).filter(ModelConfig.is_analyzer == True).first()
+    if not default_model:
+        # Can't create profiles without at least one analyzer model
+        print("Skipping profile seeding - no analyzer models configured yet")
+        return
 
     # Profile 1: Quick Scan (single general pass)
     quick = ScanProfile(name="Quick Scan", description="Fast general security scan", chunk_size=4000, chunk_strategy="smart")
@@ -1701,7 +1711,7 @@ def seed_default_profiles(db: Session):
     db.flush()
     db.add(ProfileAnalyzer(
         profile_id=quick.id, name="General Security", prompt_template=PROMPTS["general_security"],
-        model_id=default_model.id if default_model else None, run_order=1
+        model_id=default_model.id, run_order=1
     ))
 
     # Profile 2: Deep C Audit (general + C-specific + signal handler)
@@ -1710,15 +1720,15 @@ def seed_default_profiles(db: Session):
     db.flush()
     db.add(ProfileAnalyzer(
         profile_id=deep_c.id, name="General Security", prompt_template=PROMPTS["general_security"],
-        model_id=default_model.id if default_model else None, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=1
+        model_id=default_model.id, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=1
     ))
     db.add(ProfileAnalyzer(
         profile_id=deep_c.id, name="C Memory Safety", prompt_template=PROMPTS["c_memory_safety"],
-        model_id=default_model.id if default_model else None, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=2
+        model_id=default_model.id, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=2
     ))
     db.add(ProfileAnalyzer(
         profile_id=deep_c.id, name="Signal Handler Audit", prompt_template=PROMPTS["signal_handler"],
-        model_id=default_model.id if default_model else None, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=3
+        model_id=default_model.id, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=3
     ))
 
     # Profile 3: Python Audit
@@ -1727,7 +1737,7 @@ def seed_default_profiles(db: Session):
     db.flush()
     db.add(ProfileAnalyzer(
         profile_id=python_audit.id, name="Python Security", prompt_template=PROMPTS["python_security"],
-        model_id=default_model.id if default_model else None, file_filter="*.py", run_order=1
+        model_id=default_model.id, file_filter="*.py", run_order=1
     ))
 
     # Profile 4: Crypto Audit
@@ -1736,7 +1746,7 @@ def seed_default_profiles(db: Session):
     db.flush()
     db.add(ProfileAnalyzer(
         profile_id=crypto_audit.id, name="Crypto Analysis", prompt_template=PROMPTS["crypto_audit"],
-        model_id=default_model.id if default_model else None, run_order=1
+        model_id=default_model.id, run_order=1
     ))
 
     # Profile 5: CVE Hunt (race conditions + signal handlers - for catching CVE-2024-6387)
@@ -1745,11 +1755,11 @@ def seed_default_profiles(db: Session):
     db.flush()
     db.add(ProfileAnalyzer(
         profile_id=cve_hunt.id, name="Race Condition Analysis", prompt_template=PROMPTS["race_condition"],
-        model_id=default_model.id if default_model else None, run_order=1
+        model_id=default_model.id, run_order=1
     ))
     db.add(ProfileAnalyzer(
         profile_id=cve_hunt.id, name="Signal Handler Audit", prompt_template=PROMPTS["signal_handler"],
-        model_id=default_model.id if default_model else None, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=2
+        model_id=default_model.id, file_filter="*.c,*.cpp,*.h,*.hpp", run_order=2
     ))
 
     db.commit()

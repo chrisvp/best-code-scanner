@@ -14,19 +14,20 @@
             </h2>
             <form hx-post="/scan/start" hx-target="#scan-list" hx-swap="innerHTML" hx-encoding="multipart/form-data" class="space-y-3">
                 <div>
-                    <input type="text" name="target_url" placeholder="https://github.com/user/repo.git" required
+                    <input type="text" name="target_url" id="target-url-input" placeholder="https://github.com/user/repo.git"
                         class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all">
                 </div>
 
                 <!-- File Upload (subtle) -->
                 <div class="relative">
                     <input type="file" name="archive" accept=".zip,.tar.gz,.tgz" id="archive-upload"
-                        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
-                    <div class="flex items-center gap-2 px-3 py-2 bg-gray-900/50 border border-dashed border-gray-600 rounded-lg text-xs text-gray-400 hover:border-gray-500 transition-colors">
+                        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        onchange="handleArchiveSelect(this)">
+                    <div id="upload-box" class="flex items-center gap-2 px-3 py-2 bg-gray-900/50 border border-dashed border-gray-600 rounded-lg text-xs text-gray-400 hover:border-gray-500 transition-colors">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
                         </svg>
-                        <span id="upload-label">Or drop archive (.zip, .tar.gz)</span>
+                        <span id="upload-label">Or upload archive (.zip, .tar.gz)</span>
                     </div>
                 </div>
 
@@ -412,17 +413,27 @@ let currentTab = 'scans';
 let selectedSourceType = null;
 let selectedSourceId = null;
 
-// File upload label update
-document.getElementById('archive-upload')?.addEventListener('change', function(e) {
+// File upload handling - shows filename and clears URL requirement
+function handleArchiveSelect(input) {
     const label = document.getElementById('upload-label');
-    if (this.files.length > 0) {
-        label.textContent = this.files[0].name;
+    const urlInput = document.getElementById('target-url-input');
+    const uploadBox = document.getElementById('upload-box');
+
+    if (input.files.length > 0) {
+        label.textContent = input.files[0].name;
         label.classList.add('text-blue-400');
+        uploadBox.classList.remove('border-gray-600');
+        uploadBox.classList.add('border-blue-500', 'bg-blue-900/20');
+        // Clear URL field since we're using uploaded file
+        if (urlInput) urlInput.placeholder = '(using uploaded file)';
     } else {
-        label.textContent = 'Or drop archive (.zip, .tar.gz)';
+        label.textContent = 'Or upload archive (.zip, .tar.gz)';
         label.classList.remove('text-blue-400');
+        uploadBox.classList.add('border-gray-600');
+        uploadBox.classList.remove('border-blue-500', 'bg-blue-900/20');
+        if (urlInput) urlInput.placeholder = 'https://github.com/user/repo.git';
     }
-});
+}
 
 function switchTab(tab) {
     currentTab = tab;
