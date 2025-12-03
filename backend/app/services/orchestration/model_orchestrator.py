@@ -4,6 +4,7 @@ import time
 from typing import List, Dict, Optional, Any, Callable
 from app.models.scanner_models import ModelConfig, ScanErrorLog
 from app.services.llm_logger import llm_logger
+from app.core.config import settings
 
 
 class ModelPool:
@@ -125,12 +126,15 @@ class ModelPool:
                     error = None
 
                     try:
-                        # Validate model config has required fields
-                        if not self.config.base_url:
-                            duration_ms = (time.time() - start_time) * 1000
-                            return ("", prompt, duration_ms, None, None, f"Model '{self.config.name}' has no base_url configured")
+                        # Fall back to default settings if model config is missing values
+                        base_url = self.config.base_url or settings.LLM_BASE_URL
+                        api_key = self.config.api_key or settings.LLM_API_KEY
 
-                        base = self.config.base_url.rstrip('/')
+                        if not base_url:
+                            duration_ms = (time.time() - start_time) * 1000
+                            return ("", prompt, duration_ms, None, None, f"Model '{self.config.name}' has no base_url configured and no default set")
+
+                        base = base_url.rstrip('/')
                         if base.endswith('/v1'):
                             url = f"{base}/chat/completions"
                         else:
@@ -146,7 +150,7 @@ class ModelPool:
                         response = await client.post(
                             url,
                             json=request_payload,
-                            headers={"Authorization": f"Bearer {self.config.api_key}"}
+                            headers={"Authorization": f"Bearer {api_key}"}
                         )
 
                         # Check for errors and get detailed error message
