@@ -768,6 +768,8 @@ class ScanPipeline:
                     ).first()
 
                     if agentic_model_config:
+                        # Detach from session to avoid refresh errors later
+                        self.db.expunge(agentic_model_config)
                         agentic_model_pool = ModelPool(agentic_model_config)
                         await agentic_model_pool.start()
                         print(f"[Scan {self.scan_id}] Agentic verifier: {agentic_mode} mode with {agentic_model_config.name} (max {agentic_max_steps} steps)")

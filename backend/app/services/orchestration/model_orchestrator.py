@@ -1,15 +1,15 @@
 import asyncio
 import httpx
 import time
-from typing import List, Dict, Optional, Any
-from app.models.scanner_models import ModelConfig
+from typing import List, Dict, Optional, Any, Callable
+from app.models.scanner_models import ModelConfig, ScanErrorLog
 from app.services.llm_logger import llm_logger
 
 
 class ModelPool:
     """Manages concurrent access to a single model with batching support"""
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, error_callback: Optional[Callable] = None):
         self.config = config
         self.semaphore = asyncio.Semaphore(config.max_concurrent)  # Default 2
         self.batch_queue: asyncio.Queue = asyncio.Queue()
@@ -19,6 +19,9 @@ class ModelPool:
         self._running = False
         # Logging context (set by caller before making calls)
         self._log_context: Dict[str, Any] = {}
+        # Error tracking
+        self._consecutive_failures = 0
+        self._error_callback = error_callback  # Called on error with (model_name, error_type, error_msg)
 
     async def start(self):
         """Start the batch processor"""
@@ -202,6 +205,18 @@ class ModelPool:
             tasks = [send_one(prompt, i) for i, prompt in enumerate(prompts)]
             batch_results = await asyncio.gather(*tasks)
 
+            # Count errors in this batch
+            batch_errors = sum(1 for _, _, _, _, _, error in batch_results if error)
+            batch_successes = len(batch_results) - batch_errors
+
+            # Update consecutive failure tracking
+            if batch_errors == len(batch_results):
+                # All failed - increment consecutive failures
+                self._consecutive_failures += batch_errors
+            elif batch_successes > 0:
+                # At least one success - reset counter
+                self._consecutive_failures = 0
+
             # Log all results
             for content, prompt, duration_ms, tokens_in, tokens_out, error in batch_results:
                 results.append(content)
@@ -224,22 +239,107 @@ class ModelPool:
                     duration_ms=duration_ms,
                 )
 
+                # Call error callback if there's an error
+                if error and self._error_callback:
+                    error_type = "connection_error" if "ConnectError" in error else "model_error"
+                    self._error_callback(
+                        self.config.name,
+                        error_type,
+                        error,
+                        log_context.get('scan_id'),
+                        log_context.get('phase', 'unknown'),
+                        log_context.get('file_path'),
+                        self._consecutive_failures
+                    )
+
         return results
 
 
 class ModelOrchestrator:
     """Manages all model pools"""
 
-    def __init__(self, db):
+    # Auto-pause after this many consecutive failures across all models
+    FAILURE_THRESHOLD = 10
+
+    def __init__(self, db, profile_id: int = None, scan_id: int = None):
         self.db = db
+        self.profile_id = profile_id
+        self.scan_id = scan_id
         self.pools: Dict[str, ModelPool] = {}
+        self._profile_verifier_model_ids: set = set()  # Model IDs from profile verifiers
+        self._total_consecutive_failures = 0
+        self._should_pause = False
+
+    def _on_model_error(self, model_name: str, error_type: str, error_msg: str,
+                        scan_id: int, phase: str, file_path: str, consecutive_failures: int):
+        """Called when a model encounters an error"""
+        # Log to database
+        if scan_id:
+            try:
+                error_log = ScanErrorLog(
+                    scan_id=scan_id,
+                    phase=phase,
+                    error_type=error_type,
+                    error_message=error_msg[:1000],  # Truncate long messages
+                    model_name=model_name,
+                    file_path=file_path,
+                    retry_count=0
+                )
+                self.db.add(error_log)
+                self.db.commit()
+            except Exception as e:
+                print(f"[ModelOrchestrator] Failed to log error: {e}")
+
+        # Update total consecutive failures
+        self._total_consecutive_failures = max(
+            self._total_consecutive_failures,
+            consecutive_failures
+        )
+
+        # Check if we should auto-pause
+        if self._total_consecutive_failures >= self.FAILURE_THRESHOLD:
+            self._should_pause = True
+            if scan_id:
+                from app.models.models import Scan
+                try:
+                    scan = self.db.query(Scan).filter(Scan.id == scan_id).first()
+                    if scan and scan.status == "running":
+                        scan.status = "paused"
+                        scan.logs = (scan.logs or "") + f"\n[Auto-paused] {self._total_consecutive_failures} consecutive LLM failures detected\n"
+                        self.db.commit()
+                        print(f"[Scan {scan_id}] Auto-paused after {self._total_consecutive_failures} consecutive failures")
+                except Exception as e:
+                    print(f"[ModelOrchestrator] Failed to pause scan: {e}")
+
+    def reset_failure_count(self):
+        """Reset the failure counter (call after successful operations)"""
+        self._total_consecutive_failures = 0
+        self._should_pause = False
+
+    @property
+    def should_pause(self) -> bool:
+        """Check if scan should be paused due to errors"""
+        return self._should_pause
 
     async def initialize(self):
         """Load model configs and create pools"""
+        from app.models.scanner_models import ProfileVerifier
+
         configs = self.db.query(ModelConfig).all()
 
+        # If profile_id is specified, get the verifier model IDs from that profile
+        if self.profile_id:
+            profile_verifiers = self.db.query(ProfileVerifier).filter(
+                ProfileVerifier.profile_id == self.profile_id,
+                ProfileVerifier.enabled == True
+            ).all()
+            self._profile_verifier_model_ids = {pv.model_id for pv in profile_verifiers}
+            print(f"[ModelOrchestrator] Profile {self.profile_id} has {len(self._profile_verifier_model_ids)} verifier models")
+
         for config in configs:
-            pool = ModelPool(config)
+            # Detach config from session to avoid refresh errors when accessed later
+            self.db.expunge(config)
+            pool = ModelPool(config, error_callback=self._on_model_error)
             await pool.start()
             self.pools[config.name] = pool
 
@@ -253,7 +353,15 @@ class ModelOrchestrator:
         return [p for p in self.pools.values() if p.config.is_analyzer]
 
     def get_verifiers(self) -> List[ModelPool]:
-        """Get all verifier model pools"""
+        """Get all verifier model pools.
+
+        If a profile_id was specified, return only models from that profile's verifiers.
+        Otherwise, fall back to models with is_verifier=True.
+        """
+        if self._profile_verifier_model_ids:
+            # Use profile-specific verifiers
+            return [p for p in self.pools.values() if p.config.id in self._profile_verifier_model_ids]
+        # Fall back to global is_verifier flag
         return [p for p in self.pools.values() if p.config.is_verifier]
 
     def get_pool(self, name: str) -> Optional[ModelPool]:

@@ -408,10 +408,67 @@
     </div>
 </div>
 
+<!-- Scan Details Modal -->
+<div id="scan-details-modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+    <div class="bg-gray-900 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-gray-700 flex flex-col">
+        <div class="flex justify-between items-center p-4 border-b border-gray-700 bg-gray-800/50">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+                </svg>
+                Scan Details
+            </h2>
+            <button onclick="hideScanDetailsModal()" class="text-gray-400 hover:text-white transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+        <div id="scan-details" class="flex-1 overflow-y-auto p-4">
+            <!-- Scan details loaded here via HTMX -->
+            <div class="flex items-center justify-center h-32">
+                <svg class="w-8 h-8 text-gray-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle>
+                </svg>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 let currentTab = 'scans';
 let selectedSourceType = null;
 let selectedSourceId = null;
+
+// Scan Details Modal functions
+function showScanDetailsModal() {
+    document.getElementById('scan-details-modal').classList.remove('hidden');
+}
+
+function hideScanDetailsModal() {
+    document.getElementById('scan-details-modal').classList.add('hidden');
+}
+
+// Hook HTMX to show modal when scan details are loaded
+document.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'scan-details') {
+        showScanDetailsModal();
+    }
+});
+
+// Close modal on backdrop click
+document.getElementById('scan-details-modal')?.addEventListener('click', function(evt) {
+    if (evt.target === this) {
+        hideScanDetailsModal();
+    }
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(evt) {
+    if (evt.key === 'Escape' && !document.getElementById('scan-details-modal').classList.contains('hidden')) {
+        hideScanDetailsModal();
+    }
+});
 
 // File upload handling - shows filename and clears URL requirement
 function handleArchiveSelect(input) {

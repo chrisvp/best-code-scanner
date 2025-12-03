@@ -91,6 +91,17 @@
 
     <!-- Action Buttons Row -->
     <div class="px-3 pb-2 flex items-center gap-2 border-b border-gray-700/50 bg-gray-800/30">
+        <!-- View Details Button (always visible) -->
+        <button onclick="event.stopPropagation()"
+            hx-get="/scan/{{ scan.id }}" hx-target="#scan-details"
+            class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded transition-colors"
+            title="View scan details and progress">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+            </svg>
+            View
+        </button>
         {% if scan.status in ['running', 'paused', 'queued'] %}
         <!-- Stop Button -->
         <button onclick="stopScan({{ scan.id }}, event)"
@@ -112,11 +123,20 @@
             </svg>
             Rescan
         </button>
+        <!-- Re-validate Button -->
+        <button onclick="showRevalidateModal({{ scan.id }}, event)" id="revalidate-btn-{{ scan.id }}"
+            class="flex-1 flex items-center justify-center gap-1 px-1.5 py-1.5 text-[10px] font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded transition-colors"
+            title="Re-run validation with a different profile">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Recheck
+        </button>
         {% endif %}
 
         <!-- Delete Button -->
         <button onclick="deleteScan({{ scan.id }}, event)"
-            class="{% if scan.status in ['running', 'paused', 'queued', 'completed', 'failed', 'stopped'] %}flex-1{% else %}w-full{% endif %} flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-gray-400 bg-gray-700/50 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 border border-gray-600/50 rounded transition-colors"
+            class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-gray-400 bg-gray-700/50 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 border border-gray-600/50 rounded transition-colors"
             {% if scan.status == 'running' %}title="Stop the scan first" disabled{% endif %}>
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -245,4 +265,126 @@ async function rescanScan(scanId, event) {
         }
     }
 }
+
+let revalidateScanId = null;
+
+function showRevalidateModal(scanId, event) {
+    event.stopPropagation();
+    revalidateScanId = scanId;
+    document.getElementById('revalidate-modal').classList.remove('hidden');
+}
+
+function hideRevalidateModal() {
+    document.getElementById('revalidate-modal').classList.add('hidden');
+    revalidateScanId = null;
+}
+
+async function submitRevalidation() {
+    const profileSelect = document.getElementById('revalidate-profile-select');
+    const profileId = profileSelect.value;
+
+    if (!profileId) {
+        alert('Please select a scan profile');
+        return;
+    }
+
+    const btn = document.getElementById('revalidate-submit-btn');
+    btn.disabled = true;
+    btn.innerHTML = `
+        <svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+        </svg>
+        Starting...
+    `;
+
+    try {
+        const formData = new URLSearchParams();
+        formData.append('profile_id', profileId);
+
+        const response = await fetch(`/scan/${revalidateScanId}/revalidate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.status === 'revalidation_started') {
+            hideRevalidateModal();
+            // Refresh the page to show the running scan
+            setTimeout(() => window.location.reload(), 500);
+        } else {
+            alert(data.error || 'Failed to start re-validation');
+            btn.disabled = false;
+            btn.innerHTML = 'Start Re-validation';
+        }
+    } catch (err) {
+        alert('Error starting re-validation: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = 'Start Re-validation';
+    }
+}
 </script>
+
+<!-- Revalidate Modal -->
+<div id="revalidate-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 shadow-xl border border-gray-700">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                Re-validate Findings
+            </h2>
+            <button onclick="hideRevalidateModal()" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Warning box -->
+        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4">
+            <div class="flex gap-2">
+                <svg class="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-yellow-400">This will delete existing findings</p>
+                    <p class="text-xs text-yellow-400/70 mt-1">
+                        All verified and final findings will be permanently deleted.
+                        Draft findings will be kept and re-verified with the selected profile's verifiers.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <p class="text-sm text-gray-400 mb-4">
+            Re-run the verification phase using a different scan profile's verifiers.
+        </p>
+
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-300 mb-2">Select Scan Profile</label>
+            <select id="revalidate-profile-select"
+                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <option value="">-- Choose a profile --</option>
+                {% for profile in profiles %}
+                {% if profile.verifiers|length > 0 %}
+                <option value="{{ profile.id }}">{{ profile.name }} ({{ profile.verifiers|length }} verifiers)</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+            <p class="text-xs text-gray-500 mt-1">Only profiles with configured verifiers are shown</p>
+        </div>
+
+        <div class="flex gap-3">
+            <button onclick="hideRevalidateModal()"
+                class="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                Cancel
+            </button>
+            <button id="revalidate-submit-btn" onclick="submitRevalidation()"
+                class="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center justify-center gap-2">
+                Start Re-validation
+            </button>
+        </div>
+    </div>
+</div>

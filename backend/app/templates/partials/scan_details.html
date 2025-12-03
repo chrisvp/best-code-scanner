@@ -65,6 +65,52 @@
     </div>
     {% endif %}
 
+    <!-- Errors Section (if any) -->
+    {% if errors and errors|length > 0 %}
+    <div class="px-6 py-3 border-b border-red-900/50 bg-red-950/30 shrink-0">
+        <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2 text-red-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <span class="text-sm font-medium">{{ errors|length }} Error{% if errors|length > 1 %}s{% endif %}</span>
+            </div>
+            <button onclick="toggleErrors()" class="text-xs text-red-400 hover:text-red-300">
+                <span id="errors-toggle-text">Show Details</span>
+            </button>
+        </div>
+        <div id="errors-list" class="hidden space-y-1 max-h-40 overflow-y-auto">
+            {% for error in errors %}
+            <div class="text-xs bg-red-950/50 rounded px-2 py-1.5 border border-red-900/30">
+                <div class="flex items-center gap-2 text-red-300">
+                    <span class="font-medium">{{ error.model_name or 'Unknown' }}</span>
+                    <span class="text-red-500">|</span>
+                    <span class="text-red-400/70">{{ error.phase }}</span>
+                    <span class="text-red-500">|</span>
+                    <span class="font-mono text-red-400/60">{{ error.created_at.strftime('%H:%M:%S') if error.created_at else '' }}</span>
+                </div>
+                <div class="text-red-400/80 mt-0.5 truncate" title="{{ error.error_message }}">
+                    {{ error.error_message[:100] }}{% if error.error_message|length > 100 %}...{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <script>
+    function toggleErrors() {
+        const list = document.getElementById('errors-list');
+        const text = document.getElementById('errors-toggle-text');
+        if (list.classList.contains('hidden')) {
+            list.classList.remove('hidden');
+            text.textContent = 'Hide Details';
+        } else {
+            list.classList.add('hidden');
+            text.textContent = 'Show Details';
+        }
+    }
+    </script>
+    {% endif %}
+
     <!-- Severity Summary Bar -->
     <div class="px-6 py-4 border-b border-gray-700 bg-gray-900/30 shrink-0">
         <!-- Severity Pills - Click to Filter -->
