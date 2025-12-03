@@ -283,7 +283,12 @@ class ScanPipeline:
             if not skip_ingestion:
                 self._update_phase("ingestion")
                 ingest_start = time.time()
-                if target.endswith(".zip") or target.endswith(".tar.gz"):
+                if target.startswith("copy:"):
+                    # Copy from existing scan: format is "copy:{source_scan_id}:{original_target}"
+                    parts = target.split(":", 2)
+                    source_scan_id = parts[1]
+                    scan_dir = await ingestion_service.copy_from_scan(source_scan_id, str(self.scan_id))
+                elif target.endswith(".zip") or target.endswith(".tar.gz"):
                     scan_dir = await ingestion_service.extract_archive(target, str(self.scan_id))
                 else:
                     scan_dir = await ingestion_service.clone_repo(target, str(self.scan_id))

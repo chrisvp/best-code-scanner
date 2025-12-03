@@ -148,8 +148,9 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 @router.post("/scan/start")
 async def start_scan(
     background_tasks: BackgroundTasks,
-    target_url: str = Form(""),  # Optional if archive is provided
+    target_url: str = Form(""),  # Optional if archive or copy_from_scan_id is provided
     archive: UploadFile = File(None),  # Optional file upload
+    copy_from_scan_id: int = Form(None),  # Copy code from existing scan
     analysis_mode: str = Form("primary_verifiers"),
     scope: str = Form("full"),
     scanner_concurrency: int = Form(20),
@@ -168,15 +169,21 @@ async def start_scan(
     profile_id: int = Form(None),  # Use a scan profile with custom analyzers
     db: Session = Depends(get_db)
 ):
-    # Validate: either target_url or archive must be provided
+    # Validate: one of target_url, archive, or copy_from_scan_id must be provided
     has_archive = archive and archive.filename
     has_url = target_url and target_url.strip()
-    if not has_archive and not has_url:
-        raise HTTPException(status_code=400, detail="Either a Git URL or an archive file must be provided")
+    has_copy_from = copy_from_scan_id is not None and copy_from_scan_id > 0
+    if not has_archive and not has_url and not has_copy_from:
+        raise HTTPException(status_code=400, detail="Either a Git URL, archive file, or source scan must be provided")
 
+    # Handle copy from existing scan
+    if has_copy_from:
+        source_scan = db.query(Scan).filter(Scan.id == copy_from_scan_id).first()
+        if not source_scan:
+            raise HTTPException(status_code=400, detail=f"Source scan {copy_from_scan_id} not found")
+        actual_target = f"copy:{copy_from_scan_id}:{source_scan.target_url}"
     # Handle file upload if provided
-    actual_target = target_url
-    if has_archive:
+    elif has_archive:
         # Save uploaded file to sandbox directory
         sandbox_dir = os.path.join(os.path.dirname(__file__), "..", "..", "sandbox")
         os.makedirs(sandbox_dir, exist_ok=True)
@@ -185,6 +192,8 @@ async def start_scan(
             content = await archive.read()
             f.write(content)
         actual_target = file_path
+    else:
+        actual_target = target_url
 
     # Create Scan Record
     new_scan = Scan(target_url=actual_target, status="queued")

@@ -31,6 +31,22 @@
                     </div>
                 </div>
 
+                <!-- Copy from Existing Scan -->
+                <div>
+                    <select name="copy_from_scan_id" id="copy-from-scan"
+                        onchange="handleCopyFromScan(this)"
+                        class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all">
+                        <option value="">Or copy code from existing scan...</option>
+                        {% for scan in scans %}
+                        {% if scan.status == 'completed' or scan.status == 'paused' %}
+                        <option value="{{ scan.id }}">
+                            #{{ scan.id }}: {{ scan.target_url | truncate(40, True) }}
+                        </option>
+                        {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+
                 <!-- Scan Profile Selector -->
                 <div>
                     <select name="profile_id"
@@ -475,6 +491,7 @@ function handleArchiveSelect(input) {
     const label = document.getElementById('upload-label');
     const urlInput = document.getElementById('target-url-input');
     const uploadBox = document.getElementById('upload-box');
+    const copyFromSelect = document.getElementById('copy-from-scan');
 
     if (input.files.length > 0) {
         label.textContent = input.files[0].name;
@@ -483,11 +500,47 @@ function handleArchiveSelect(input) {
         uploadBox.classList.add('border-blue-500', 'bg-blue-900/20');
         // Clear URL field since we're using uploaded file
         if (urlInput) urlInput.placeholder = '(using uploaded file)';
+        // Clear copy-from selection
+        if (copyFromSelect) copyFromSelect.value = '';
     } else {
         label.textContent = 'Or upload archive (.zip, .tar.gz)';
         label.classList.remove('text-blue-400');
         uploadBox.classList.add('border-gray-600');
         uploadBox.classList.remove('border-blue-500', 'bg-blue-900/20');
+        if (urlInput) urlInput.placeholder = 'https://github.com/user/repo.git';
+    }
+}
+
+// Copy from scan handling - clears other inputs when scan selected
+function handleCopyFromScan(select) {
+    const urlInput = document.getElementById('target-url-input');
+    const uploadBox = document.getElementById('upload-box');
+    const uploadLabel = document.getElementById('upload-label');
+    const archiveInput = document.getElementById('archive-upload');
+
+    if (select.value) {
+        // A scan is selected - highlight this dropdown
+        select.classList.add('border-green-500', 'bg-green-900/20');
+        select.classList.remove('border-gray-600');
+        // Clear URL field
+        if (urlInput) {
+            urlInput.value = '';
+            urlInput.placeholder = '(using code from existing scan)';
+        }
+        // Clear file upload
+        if (archiveInput) archiveInput.value = '';
+        if (uploadLabel) {
+            uploadLabel.textContent = 'Or upload archive (.zip, .tar.gz)';
+            uploadLabel.classList.remove('text-blue-400');
+        }
+        if (uploadBox) {
+            uploadBox.classList.add('border-gray-600');
+            uploadBox.classList.remove('border-blue-500', 'bg-blue-900/20');
+        }
+    } else {
+        // No scan selected - reset styling
+        select.classList.remove('border-green-500', 'bg-green-900/20');
+        select.classList.add('border-gray-600');
         if (urlInput) urlInput.placeholder = 'https://github.com/user/repo.git';
     }
 }
