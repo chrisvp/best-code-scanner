@@ -36,6 +36,55 @@ def parse_cvss_score(cvss_value) -> Optional[float]:
 
     return None
 
+
+def normalize_severity(severity_value: str) -> str:
+    """
+    Normalize severity values to valid options: Critical, High, Medium, Low.
+
+    Handles common LLM output issues:
+    - Trailing asterisks: "High*" -> "High"
+    - Markdown artifacts: "**High**" -> "High"
+    - Case variations: "HIGH" -> "High"
+    - Compound values: "Medium-High" -> "High"
+    - Verbose responses: "High (due to...)" -> "High"
+    """
+    if not severity_value:
+        return "Medium"
+
+    # Clean the value - strip markdown, asterisks, punctuation
+    cleaned = str(severity_value).strip()
+    cleaned = re.sub(r'[\*#\-_]+', '', cleaned)  # Remove *, #, -, _
+    cleaned = re.sub(r'\s*\(.*\)$', '', cleaned)  # Remove trailing (...)
+    cleaned = cleaned.strip()
+
+    # Map to normalized values (case-insensitive)
+    severity_map = {
+        'critical': 'Critical',
+        'crit': 'Critical',
+        'high': 'High',
+        'medium': 'Medium',
+        'med': 'Medium',
+        'moderate': 'Medium',
+        'low': 'Low',
+        'info': 'Low',
+        'informational': 'Low',
+        'weakness': 'Low',
+    }
+
+    cleaned_lower = cleaned.lower()
+
+    # Direct match
+    if cleaned_lower in severity_map:
+        return severity_map[cleaned_lower]
+
+    # Partial match (e.g., "high severity" -> "high")
+    for key, value in severity_map.items():
+        if key in cleaned_lower:
+            return value
+
+    # Default to Medium if unrecognized
+    return "Medium"
+
 from app.models.models import Scan, Finding
 from app.models.scanner_models import (
     ScanConfig, ScanFile, ScanFileChunk, DraftFinding, VerifiedFinding, LLMCallMetric, ScanMetrics, ScanErrorLog,
@@ -184,7 +233,7 @@ class ScanPipeline:
         total_start = time.time()
 
         # Initialize model orchestrator
-        self.model_orchestrator = ModelOrchestrator(self.db)
+        self.model_orchestrator = ModelOrchestrator(self.db, scan_id=self.scan_id)
         await self.model_orchestrator.initialize()
 
         try:
@@ -227,6 +276,49 @@ class ScanPipeline:
             # Clean up scan-specific cache to free memory
             AnalysisCache.cleanup_scan(self.scan_id)
             print(f"[Scan {self.scan_id}] Cache cleaned up")
+
+    async def run_from_verification(self, profile_id: int = None):
+        """Run the pipeline starting from verification phase (skip scanning)
+
+        This is used for re-validation with a different profile's verifiers.
+        Draft findings are kept but reset to pending, then re-verified and enriched.
+        """
+        import time as time_module
+        from app.services.intelligence.code_indexer import CodeIndexer
+
+        total_start = time_module.time()
+
+        # Initialize model orchestrator with the specified profile
+        self.model_orchestrator = ModelOrchestrator(self.db, profile_id=profile_id, scan_id=self.scan_id)
+        await self.model_orchestrator.initialize()
+
+        try:
+            scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+            scan_dir = f"sandbox/{self.scan_id}"
+
+            # Rebuild code index for context retrieval
+            if os.path.exists(scan_dir):
+                index_start = time_module.time()
+                indexer = CodeIndexer(self.scan_id, self.db, self.cache)
+                await indexer.build_index(str(scan_dir))
+                self._log_timing("Re-indexing", time_module.time() - index_start)
+
+            # Mark scanner as complete since we're skipping it
+            self._scanner_complete = True
+
+            # Run verification and enrichment phases
+            phases_start = time_module.time()
+            await asyncio.gather(
+                self._run_verifier_phase(),
+                self._run_enricher_phase()
+            )
+            self._log_timing("Re-validation phases", time_module.time() - phases_start)
+            self._log_timing("Re-validation total", time_module.time() - total_start)
+
+        finally:
+            await self.model_orchestrator.shutdown()
+            AnalysisCache.cleanup_scan(self.scan_id)
+            print(f"[Scan {self.scan_id}] Re-validation cache cleaned up")
 
     async def _discover_and_chunk_files(self, root_dir: str):
         """Discover files and create chunks for scanning"""
@@ -529,7 +621,7 @@ class ScanPipeline:
                             chunk_id=chunk.id,
                             title=f.get('title', 'Unknown'),
                             vulnerability_type=vuln_type,
-                            severity=f.get('severity', 'Medium'),
+                            severity=normalize_severity(f.get('severity', 'Medium')),
                             line_number=line_num,
                             snippet=f.get('snippet', ''),
                             reason=f.get('reason', ''),
@@ -645,6 +737,7 @@ class ScanPipeline:
         """Phase 2: Verify draft findings with context"""
         from app.services.analysis.verifier import FindingVerifier
         from app.services.intelligence.context_retriever import ContextRetriever
+        from app.services.orchestration.model_orchestrator import ModelPool
 
         # Check we have at least one verifier
         if not self.model_orchestrator.get_verifiers():
@@ -653,9 +746,43 @@ class ScanPipeline:
                 self._verifier_complete = True
                 return
 
+        # Load profile for agentic verifier settings
+        profile = None
+        agentic_mode = "skip"
+        agentic_model_pool = None
+        agentic_max_steps = 8
+
+        if self.config.profile_id:
+            profile = self.db.query(ScanProfile).filter(
+                ScanProfile.id == self.config.profile_id
+            ).first()
+
+            if profile:
+                agentic_mode = profile.agentic_verifier_mode or "skip"
+                agentic_max_steps = profile.agentic_verifier_max_steps or 8
+
+                # Create model pool for agentic verifier if configured
+                if agentic_mode != "skip" and profile.agentic_verifier_model_id:
+                    agentic_model_config = self.db.query(ModelConfig).filter(
+                        ModelConfig.id == profile.agentic_verifier_model_id
+                    ).first()
+
+                    if agentic_model_config:
+                        agentic_model_pool = ModelPool(agentic_model_config)
+                        await agentic_model_pool.start()
+                        print(f"[Scan {self.scan_id}] Agentic verifier: {agentic_mode} mode with {agentic_model_config.name} (max {agentic_max_steps} steps)")
+
         context_retriever = ContextRetriever(self.scan_id, self.db)
-        # Pass orchestrator so verifier can use ALL verifier models for voting
-        verifier = FindingVerifier(self.scan_id, self.model_orchestrator, context_retriever)
+        # Pass orchestrator and agentic settings to verifier
+        use_agentic = agentic_mode != "skip" and agentic_model_pool is not None
+        verifier = FindingVerifier(
+            self.scan_id,
+            self.model_orchestrator,
+            context_retriever,
+            use_agentic=use_agentic,
+            agentic_model_pool=agentic_model_pool,
+            agentic_max_steps=agentic_max_steps
+        )
         batch_size = self.config.batch_size or 10
         min_votes = self.config.min_votes_to_verify or 1
 
@@ -712,10 +839,15 @@ class ScanPipeline:
                 draft.status = "verifying"
             self.db.commit()
 
-            # Verify batch with timing
+            # Verify batch with timing (using appropriate method based on agentic mode)
             try:
                 batch_start = time.time()
-                results = await verifier.verify_batch(drafts)
+                if agentic_mode == "full":
+                    results = await verifier.verify_batch_agentic(drafts)
+                elif agentic_mode == "hybrid":
+                    results = await verifier.hybrid_verify_batch(drafts)
+                else:
+                    results = await verifier.verify_batch(drafts)
                 batch_time = (time.time() - batch_start) * 1000  # ms
 
                 # Estimate tokens for this batch (draft snippet + reason)
@@ -738,6 +870,8 @@ class ScanPipeline:
                     reject_count = sum(1 for v in votes if v.get('decision') == 'REJECT')
 
                     if result.get('verified'):
+                        # VERIFY: Real vulnerability, proceed to enrichment
+                        adj_sev = result.get('adjusted_severity')
                         verified = VerifiedFinding(
                             draft_id=draft.id,
                             scan_id=self.scan_id,
@@ -745,14 +879,23 @@ class ScanPipeline:
                             confidence=result.get('confidence', 50),
                             attack_vector=result.get('attack_vector', ''),
                             data_flow=result.get('data_flow', ''),
-                            adjusted_severity=result.get('adjusted_severity'),
+                            adjusted_severity=normalize_severity(adj_sev) if adj_sev else None,
                             status="pending"
                         )
                         self.db.add(verified)
                         draft.status = "verified"
-                        draft.verification_votes = verify_count + weakness_count
+                        draft.verification_votes = verify_count
                         draft.verification_notes = result.get('reasoning', '')[:500]
+
+                    elif result.get('is_weakness'):
+                        # WEAKNESS: Accepted as code quality issue, skip enrichment
+                        # Does NOT create a VerifiedFinding, does NOT count toward findings total
+                        draft.status = "weakness"
+                        draft.verification_votes = weakness_count
+                        draft.verification_notes = result.get('reasoning', result.get('reason', ''))[:500]
+
                     else:
+                        # REJECT: False positive, discarded
                         draft.status = "rejected"
                         draft.verification_votes = reject_count
                         draft.verification_notes = result.get('reason', '')[:500]
@@ -769,6 +912,10 @@ class ScanPipeline:
         for model_name, total_time in model_times.items():
             if model_calls.get(model_name, 0) > 0:
                 self._record_metric(model_name, "verifier", model_calls[model_name], total_time, model_tokens.get(model_name, 0))
+
+        # Cleanup agentic model pool if used
+        if agentic_model_pool:
+            await agentic_model_pool.stop()
 
         self._verifier_complete = True
 
@@ -851,7 +998,7 @@ class ScanPipeline:
                         verified_id=v.id,
                         file_path=scan_file.file_path if scan_file else "unknown",
                         line_number=draft.line_number if draft else 0,
-                        severity=v.adjusted_severity or result.get('severity', 'Medium'),
+                        severity=normalize_severity(v.adjusted_severity or result.get('severity', 'Medium')),
                         description=result.get('finding', v.title),
                         snippet=result.get('impacted_code', draft.snippet if draft else ''),
                         remediation=result.get('remediation_steps', ''),

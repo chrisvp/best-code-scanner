@@ -157,6 +157,13 @@ class DraftFinding(Base):
     """Initial finding from scanning phase"""
     __tablename__ = "draft_findings"
 
+    # Status values:
+    # - pending: Awaiting verification
+    # - verifying: Currently being verified
+    # - verified: Confirmed vulnerability, will be enriched
+    # - weakness: Confirmed code quality issue, skips enrichment, not counted as vulnerability
+    # - rejected: False positive, discarded
+
     id = Column(Integer, primary_key=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), index=True)
     chunk_id = Column(Integer, ForeignKey("scan_file_chunks.id"))
@@ -173,11 +180,14 @@ class DraftFinding(Base):
     source_models = Column(JSON, nullable=True)  # List of model names that detected this finding
     dedup_key = Column(String, index=True)  # Key for deduplication (file+line+type hash)
 
-    status = Column(String, default="pending")  # pending/verifying/verified/rejected
+    status = Column(String, default="pending")  # pending/verifying/verified/weakness/rejected
     verification_notes = Column(Text)  # Verifier reasoning for verify/reject decision
     verification_votes = Column(Integer)  # Number of verifiers that agreed
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationship to votes for debugging
+    votes = relationship("VerificationVote", back_populates="draft_finding")
 
 
 class VerifiedFinding(Base):
@@ -259,11 +269,28 @@ class ScanProfile(Base):
     chunk_size = Column(Integer, default=6000)
     chunk_strategy = Column(String, default="smart")
 
+    # Enricher configuration (single model per profile)
+    enricher_model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)
+    enricher_prompt_template = Column(Text, nullable=True)
+
+    # Agentic verifier configuration
+    agentic_verifier_mode = Column(String, default="skip")  # "skip", "hybrid", "full"
+    agentic_verifier_model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)
+    agentic_verifier_max_steps = Column(Integer, default=8)  # Max reasoning steps
+
+    # Verification settings
+    verification_threshold = Column(Integer, default=2)  # Min votes to verify (e.g., 2 of 3)
+    require_unanimous_reject = Column(Boolean, default=False)  # All must reject to reject
+
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # Relationships
     analyzers = relationship("ProfileAnalyzer", back_populates="profile", order_by="ProfileAnalyzer.run_order")
+    verifiers = relationship("ProfileVerifier", back_populates="profile", order_by="ProfileVerifier.run_order")
+    enricher_model = relationship("ModelConfig", foreign_keys=[enricher_model_id])
+    agentic_verifier_model = relationship("ModelConfig", foreign_keys=[agentic_verifier_model_id])
 
 
 class ProfileAnalyzer(Base):
@@ -585,3 +612,119 @@ class MRReview(Base):
     github_repo = relationship("GitHubRepo")
     scan = relationship("Scan")
     findings = relationship("Finding", back_populates="mr_review")
+
+
+class ProfileVerifier(Base):
+    """Configurable verifier within a profile - pairs prompt with model for verification phase"""
+    __tablename__ = "profile_verifiers"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("scan_profiles.id"), index=True)
+
+    name = Column(String)  # e.g., "Strict Security Verifier", "Memory Safety Expert"
+    description = Column(Text, nullable=True)
+
+    # Model configuration
+    model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=False)
+
+    # Prompt template - supports {title}, {vuln_type}, {severity}, {snippet}, {reason}, {context}
+    prompt_template = Column(Text)
+
+    # Voting configuration
+    vote_weight = Column(Float, default=1.0)  # Weight in voting (e.g., 1.5 for expert models)
+    min_confidence = Column(Integer, default=0)  # Minimum confidence to count vote
+
+    # Ordering and state
+    run_order = Column(Integer, default=1)
+    enabled = Column(Boolean, default=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    profile = relationship("ScanProfile", back_populates="verifiers")
+    model = relationship("ModelConfig")
+
+
+class VerificationVote(Base):
+    """Individual vote record from a verifier model - for debugging and analysis"""
+    __tablename__ = "verification_votes"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), index=True)
+    draft_finding_id = Column(Integer, ForeignKey("draft_findings.id"), index=True)
+
+    # Voter info
+    model_name = Column(String, index=True)
+    verifier_id = Column(Integer, ForeignKey("profile_verifiers.id"), nullable=True)  # Null for legacy votes
+
+    # Vote details
+    decision = Column(String)  # VERIFY, WEAKNESS, REJECT, ABSTAIN
+    confidence = Column(Integer)  # 0-100
+    reasoning = Column(Text, nullable=True)
+    attack_scenario = Column(Text, nullable=True)
+
+    # Parsing metadata
+    raw_response = Column(Text, nullable=True)  # Full response for debugging
+    parse_success = Column(Boolean, default=True)
+    format_detected = Column(String, nullable=True)  # json, marker, unknown
+
+    # Weighting
+    vote_weight = Column(Float, default=1.0)  # Applied weight
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    draft_finding = relationship("DraftFinding")
+    verifier = relationship("ProfileVerifier")
+
+
+class GlobalSetting(Base):
+    """Global application settings - key-value store"""
+    __tablename__ = "global_settings"
+
+    id = Column(Integer, primary_key=True)
+    key = Column(String, unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=True)
+    value_type = Column(String, default="string")  # string, int, bool, json
+    description = Column(Text, nullable=True)
+
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @classmethod
+    def get(cls, db, key: str, default=None):
+        """Get a setting value by key"""
+        setting = db.query(cls).filter(cls.key == key).first()
+        if not setting:
+            return default
+
+        # Type coercion
+        if setting.value_type == "int":
+            return int(setting.value) if setting.value else default
+        elif setting.value_type == "bool":
+            return setting.value.lower() in ("true", "1", "yes") if setting.value else default
+        elif setting.value_type == "json":
+            import json
+            return json.loads(setting.value) if setting.value else default
+        return setting.value
+
+    @classmethod
+    def set(cls, db, key: str, value, value_type: str = "string", description: str = None):
+        """Set a setting value"""
+        import json as json_module
+
+        setting = db.query(cls).filter(cls.key == key).first()
+        if not setting:
+            setting = cls(key=key)
+            db.add(setting)
+
+        setting.value_type = value_type
+        if value_type == "json":
+            setting.value = json_module.dumps(value)
+        else:
+            setting.value = str(value) if value is not None else None
+
+        if description:
+            setting.description = description
+
+        db.commit()
+        return setting

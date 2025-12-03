@@ -41,6 +41,10 @@
                     class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
                     GitLab Repos
                 </button>
+                <button onclick="switchTab('defaults')" id="tab-defaults"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    Other Defaults
+                </button>
             </nav>
         </div>
 
@@ -147,18 +151,6 @@
                             <div class="flex-1">
                                 <div class="flex items-center gap-2 mb-1">
                                     <h3 class="text-white font-medium">{{ model.name }}</h3>
-                                    {% if model.is_analyzer %}
-                                    <span class="px-1.5 py-0.5 text-[10px] bg-blue-500/20 text-blue-400 rounded">Analyzer</span>
-                                    {% endif %}
-                                    {% if model.is_verifier %}
-                                    <span class="px-1.5 py-0.5 text-[10px] bg-green-500/20 text-green-400 rounded">Verifier</span>
-                                    {% endif %}
-                                    {% if model.is_cleanup %}
-                                    <span class="px-1.5 py-0.5 text-[10px] bg-orange-500/20 text-orange-400 rounded">Cleanup</span>
-                                    {% endif %}
-                                    {% if model.is_chat %}
-                                    <span class="px-1.5 py-0.5 text-[10px] bg-cyan-500/20 text-cyan-400 rounded">Chat</span>
-                                    {% endif %}
                                 </div>
                                 <div class="text-xs text-gray-500 font-mono truncate mb-2" title="{{ model.base_url }}">
                                     {{ model.base_url or 'Using default URL' }}
@@ -327,6 +319,131 @@
                             No analyzers. Add one to use this profile.
                         </div>
                         {% endif %}
+                    </div>
+
+                    <!-- Verifiers -->
+                    <div class="p-4 border-t border-gray-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Verifiers ({{ profile.verifiers|length }})</h3>
+                            <button onclick="addVerifier({{ profile.id }})"
+                                class="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
+                                + Add
+                            </button>
+                        </div>
+
+                        {% if profile.verifiers %}
+                        <div class="space-y-2">
+                            {% for verifier in profile.verifiers %}
+                            <div class="bg-gray-900/50 rounded-lg p-3 flex items-center justify-between {% if not verifier.enabled %}opacity-50{% endif %}">
+                                <div class="flex items-center gap-3">
+                                    <span class="w-5 h-5 flex items-center justify-center text-[10px] font-bold text-gray-500 bg-purple-900 rounded">
+                                        {{ verifier.run_order }}
+                                    </span>
+                                    <div>
+                                        <div class="font-medium text-white text-sm">{{ verifier.name }}</div>
+                                        <div class="text-[11px] text-gray-500">
+                                            {{ verifier.model.name }} | weight: {{ verifier.vote_weight }}
+                                            {% if verifier.min_confidence > 0 %} | min: {{ verifier.min_confidence }}%{% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex gap-1">
+                                    <button onclick="editVerifier({{ profile.id }}, {{ verifier.id }})"
+                                        class="p-1 text-gray-400 hover:text-purple-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Edit">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                        </svg>
+                                    </button>
+                                    <button hx-post="/profiles/{{ profile.id }}/verifiers/{{ verifier.id }}/toggle"
+                                        hx-swap="none" hx-on::after-request="location.reload()"
+                                        class="p-1 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Toggle">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            {% if verifier.enabled %}
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                            {% else %}
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                                            {% endif %}
+                                        </svg>
+                                    </button>
+                                    <button onclick="deleteVerifier({{ profile.id }}, {{ verifier.id }}, '{{ verifier.name }}')"
+                                        class="p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Delete">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="text-center py-3 text-gray-500 text-xs">
+                            No verifiers configured. Findings will be auto-verified.
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Enricher -->
+                    <div class="p-4 border-t border-gray-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Enricher</h3>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <select id="enricher-model-{{ profile.id }}"
+                                onchange="updateEnricher({{ profile.id }})"
+                                class="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500">
+                                <option value="">-- No enricher (skip enrichment) --</option>
+                                {% for model in models %}
+                                <option value="{{ model.id }}" {% if profile.enricher_model_id == model.id %}selected{% endif %}>
+                                    {{ model.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <span class="text-xs text-gray-500">
+                                {% if profile.enricher_model %}{{ profile.enricher_model.name }}{% else %}None{% endif %}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Agentic Verifier -->
+                    <div class="p-4 border-t border-gray-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Agentic Verifier</h3>
+                            <span class="text-[10px] text-gray-500 bg-gray-800 px-2 py-0.5 rounded">Multi-turn code analysis</span>
+                        </div>
+                        <div class="space-y-3">
+                            <div class="flex items-center gap-3">
+                                <select id="agentic-mode-{{ profile.id }}"
+                                    onchange="updateAgenticVerifier({{ profile.id }})"
+                                    class="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500">
+                                    <option value="skip" {% if profile.agentic_verifier_mode == 'skip' or not profile.agentic_verifier_mode %}selected{% endif %}>Skip (voting only)</option>
+                                    <option value="hybrid" {% if profile.agentic_verifier_mode == 'hybrid' %}selected{% endif %}>Hybrid (voting + agentic for uncertain)</option>
+                                    <option value="full" {% if profile.agentic_verifier_mode == 'full' %}selected{% endif %}>Full (always use agentic)</option>
+                                </select>
+                            </div>
+                            <div id="agentic-model-row-{{ profile.id }}" class="flex items-center gap-3 {% if profile.agentic_verifier_mode == 'skip' or not profile.agentic_verifier_mode %}hidden{% endif %}">
+                                <select id="agentic-model-{{ profile.id }}"
+                                    onchange="updateAgenticVerifier({{ profile.id }})"
+                                    class="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500">
+                                    <option value="">-- Select model --</option>
+                                    {% for model in models %}
+                                    <option value="{{ model.id }}" {% if profile.agentic_verifier_model_id == model.id %}selected{% endif %}>
+                                        {{ model.name }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <input type="number" id="agentic-steps-{{ profile.id }}"
+                                    value="{{ profile.agentic_verifier_max_steps or 8 }}"
+                                    min="3" max="20"
+                                    onchange="updateAgenticVerifier({{ profile.id }})"
+                                    class="w-20 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                                    title="Max reasoning steps">
+                                <span class="text-xs text-gray-500">steps</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 {% endfor %}
@@ -520,6 +637,116 @@
             </div>
             {% endif %}
         </div>
+
+        <!-- Tab: Other Defaults -->
+        <div id="panel-defaults" class="tab-panel hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Cleanup Model Settings -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            Cleanup Model
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">Model used to fix malformed LLM responses</p>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Cleanup Model</label>
+                            <select id="cleanup-model-select" onchange="updateGlobalSetting('cleanup_model_id', this.value)"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-orange-500">
+                                <option value="">-- Disabled (no cleanup) --</option>
+                                {% for model in models %}
+                                <option value="{{ model.id }}" {% if global_settings.get('cleanup_model_id') == model.id|string %}selected{% endif %}>
+                                    {{ model.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Cleanup Prompt Template</label>
+                            <textarea id="cleanup-prompt-template" rows="8"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-orange-500">{{ global_settings.get('cleanup_prompt_template', 'The following LLM response is malformed and needs to be reformatted. Please extract the relevant information and output it in the correct format.\n\nOriginal response:\n{response}\n\nExpected format:\n{format_template}\n\nOutput only the corrected response, nothing else.') }}</textarea>
+                            <div class="flex justify-end mt-2">
+                                <button onclick="updateGlobalSetting('cleanup_prompt_template', document.getElementById('cleanup-prompt-template').value)"
+                                    class="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-xs font-medium rounded-lg transition-colors">
+                                    Save Template
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Settings -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                            </svg>
+                            Chat Settings
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">Configure chat models for the findings detail page</p>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Default Chat Model</label>
+                            <select id="default-chat-model-select" onchange="updateGlobalSetting('default_chat_model_id', this.value)"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                                <option value="">-- Select default model --</option>
+                                {% for model in models %}
+                                <option value="{{ model.id }}" {% if global_settings.get('default_chat_model_id') == model.id|string %}selected{% endif %}>
+                                    {{ model.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">Pre-selected model when opening chat</p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Available Chat Models</label>
+                            <div class="space-y-2 max-h-40 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                {% for model in models %}
+                                <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white">
+                                    <input type="checkbox" class="chat-model-checkbox w-4 h-4 rounded bg-gray-900 border-gray-600 text-cyan-600 focus:ring-cyan-500"
+                                        value="{{ model.id }}"
+                                        {% if model.id|string in (global_settings.get('chat_model_ids', '')|string).split(',') %}checked{% endif %}
+                                        onchange="updateChatModels()">
+                                    {{ model.name }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Models available in the chat dropdown</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat System Prompt -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden lg:col-span-2">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            Finding Chat System Prompt
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">System prompt used when chatting about a finding on the details page</p>
+                    </div>
+                    <div class="p-4">
+                        <textarea id="finding-chat-prompt-template" rows="12"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">{{ global_settings.get('finding_chat_prompt', 'You are a security expert assistant helping analyze a potential vulnerability finding.\n\n=== FINDING CONTEXT ===\nTitle: {title}\nType: {vulnerability_type}\nSeverity: {severity}\nFile: {file_path}\n\n=== CODE SNIPPET ===\n```\n{snippet}\n```\n\n=== SCANNER REASON ===\n{reason}\n\n=== FULL FINDING REPORT ===\n{full_report}\n\nHelp the user understand this finding, answer questions about exploitability, remediation, and provide additional context. Be concise but thorough.') }}</textarea>
+                        <div class="flex justify-between items-center mt-2">
+                            <p class="text-xs text-gray-500">Variables: {title}, {vulnerability_type}, {severity}, {file_path}, {snippet}, {reason}, {full_report}</p>
+                            <button onclick="updateGlobalSetting('finding_chat_prompt', document.getElementById('finding-chat-prompt-template').value)"
+                                class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors">
+                                Save Prompt
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -683,29 +910,6 @@
                     <input type="number" name="votes" value="1" min="1" max="5"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-                <div class="flex flex-wrap gap-4">
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" name="is_analyzer" value="true" checked
-                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">
-                        Analyzer
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" name="is_verifier" value="true"
-                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-green-600">
-                        Verifier
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer" title="Cleans up malformed LLM responses">
-                        <input type="checkbox" name="is_cleanup" value="true"
-                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-orange-600">
-                        Cleanup
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer" title="Default model for chat interface">
-                        <input type="checkbox" name="is_chat" value="true"
-                            class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-cyan-600">
-                        Chat
-                    </label>
-                </div>
-                <p class="text-xs text-gray-500 mt-2">Cleanup reformats malformed responses. Chat is the default model for the chat interface.</p>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-model-modal').classList.add('hidden')"
@@ -753,20 +957,6 @@
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Votes</label>
                     <input type="number" name="votes" id="edit-model-votes" min="1" max="5" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                </div>
-                <div class="flex flex-wrap gap-4">
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" name="is_analyzer" id="edit-model-is-analyzer" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-600">Analyzer
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                        <input type="checkbox" name="is_verifier" id="edit-model-is-verifier" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-green-600">Verifier
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer" title="Cleans up malformed LLM responses">
-                        <input type="checkbox" name="is_cleanup" id="edit-model-is-cleanup" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-orange-600">Cleanup
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer" title="Default model for chat interface">
-                        <input type="checkbox" name="is_chat" id="edit-model-is-chat" value="true" class="w-4 h-4 rounded bg-gray-900 border-gray-700 text-cyan-600">Chat
-                    </label>
                 </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
@@ -935,6 +1125,131 @@ If none found: []</textarea>
     </div>
 </div>
 
+<!-- Add Verifier Modal -->
+<div id="add-verifier-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Add Verifier</h2>
+            <button onclick="document.getElementById('add-verifier-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="add-verifier-form" hx-swap="none" hx-on::after-request="if(event.detail.successful) location.reload()">
+            <input type="hidden" name="profile_id" id="verifier-profile-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Verifier Name</label>
+                    <input type="text" name="name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="e.g., Security Expert Verifier">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Model *</label>
+                        <select name="model_id" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Vote Weight</label>
+                        <input type="number" name="vote_weight" value="1.0" step="0.1" min="0.1" max="10" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Min Confidence</label>
+                        <input type="number" name="min_confidence" value="0" min="0" max="100" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="0-100">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Run Order</label>
+                        <input type="number" name="run_order" value="1" min="1" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
+                    <textarea name="prompt_template" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500">Review this potential vulnerability finding and vote on whether it is a real security issue.
+
+**Finding:**
+Title: {title}
+Type: {vulnerability_type}
+Severity: {severity}
+File: {file_path}
+
+**Code Snippet:**
+```
+{snippet}
+```
+
+**Reason Reported:**
+{reason}
+
+Vote with one of:
+- VERIFY: Real, exploitable vulnerability
+- WEAKNESS: Code quality issue but not exploitable
+- REJECT: False positive
+
+Respond in JSON format:
+{"vote": "VERIFY|WEAKNESS|REJECT", "confidence": 0-100, "reasoning": "..."}</textarea>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('add-verifier-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit Verifier Modal -->
+<div id="edit-verifier-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-white">Edit Verifier</h2>
+            <button onclick="document.getElementById('edit-verifier-modal').classList.add('hidden')" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+        <form id="edit-verifier-form" onsubmit="submitEditVerifierForm(event)">
+            <input type="hidden" name="profile_id" id="edit-verifier-profile-id">
+            <input type="hidden" name="verifier_id" id="edit-verifier-id">
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Verifier Name</label>
+                    <input type="text" name="name" id="edit-verifier-name" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Model *</label>
+                        <select name="model_id" id="edit-verifier-model" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                            {% for model in models %}<option value="{{ model.id }}">{{ model.name }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Vote Weight</label>
+                        <input type="number" name="vote_weight" id="edit-verifier-weight" value="1.0" step="0.1" min="0.1" max="10" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Min Confidence</label>
+                        <input type="number" name="min_confidence" id="edit-verifier-min-confidence" value="0" min="0" max="100" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Run Order</label>
+                        <input type="number" name="run_order" id="edit-verifier-run-order" value="1" min="1" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
+                    <textarea name="prompt_template" id="edit-verifier-prompt" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button type="button" onclick="document.getElementById('edit-verifier-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Add Rule Modal -->
 <div id="add-rule-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
     <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4">
@@ -988,7 +1303,7 @@ If none found: []</textarea>
 
 <script>
 const modelsData = {
-    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, is_analyzer: {{ 'true' if model.is_analyzer else 'false' }}, is_verifier: {{ 'true' if model.is_verifier else 'false' }}, is_cleanup: {{ 'true' if model.is_cleanup else 'false' }}, is_chat: {{ 'true' if model.is_chat else 'false' }} },{% endfor %}
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }} },{% endfor %}
 };
 
 function switchTab(tab) {
@@ -1012,7 +1327,7 @@ async function submitModelForm(event) {
     event.preventDefault();
     const form = event.target;
     const formData = new FormData(form);
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true', is_chat: formData.get('is_chat') === 'true' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')) };
     const response = await fetch('/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
 }
@@ -1025,10 +1340,6 @@ function editModel(id) {
     document.getElementById('edit-model-max-tokens').value = m.max_tokens;
     document.getElementById('edit-model-max-concurrent').value = m.max_concurrent;
     document.getElementById('edit-model-votes').value = m.votes;
-    document.getElementById('edit-model-is-analyzer').checked = m.is_analyzer;
-    document.getElementById('edit-model-is-verifier').checked = m.is_verifier;
-    document.getElementById('edit-model-is-cleanup').checked = m.is_cleanup;
-    document.getElementById('edit-model-is-chat').checked = m.is_chat;
     document.getElementById('edit-model-modal').classList.remove('hidden');
 }
 
@@ -1037,7 +1348,7 @@ async function submitEditModelForm(event) {
     const form = event.target;
     const formData = new FormData(form);
     const id = formData.get('model_id');
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), is_analyzer: formData.get('is_analyzer') === 'true', is_verifier: formData.get('is_verifier') === 'true', is_cleanup: formData.get('is_cleanup') === 'true', is_chat: formData.get('is_chat') === 'true' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')) };
     if (formData.get('api_key')) data.api_key = formData.get('api_key');
     const response = await fetch(`/models/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
@@ -1046,6 +1357,7 @@ async function submitEditModelForm(event) {
 async function deleteModel(id, name) { if (!confirm(`Delete "${name}"?`)) return; if ((await fetch(`/models/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteProfile(id, name) { if (!confirm(`Delete profile "${name}"?`)) return; if ((await fetch(`/profiles/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteAnalyzer(pid, aid, name) { if (!confirm(`Delete analyzer "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/analyzers/${aid}`, { method: 'DELETE' })).ok) location.reload(); }
+async function deleteVerifier(pid, vid, name) { if (!confirm(`Delete verifier "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/verifiers/${vid}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteRule(id, name) { if (!confirm(`Delete rule "${name}"?`)) return; if ((await fetch(`/rules/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 
 function addAnalyzer(profileId) {
@@ -1112,6 +1424,127 @@ async function submitEditAnalyzerForm(event) {
         }
     } catch (err) {
         alert('Error updating analyzer: ' + err.message);
+    }
+}
+
+// Verifier functions
+function addVerifier(profileId) {
+    document.getElementById('verifier-profile-id').value = profileId;
+    document.getElementById('add-verifier-form').setAttribute('hx-post', `/profiles/${profileId}/verifiers`);
+    htmx.process(document.getElementById('add-verifier-form'));
+    document.getElementById('add-verifier-modal').classList.remove('hidden');
+}
+
+async function editVerifier(profileId, verifierId) {
+    try {
+        const response = await fetch(`/profiles/${profileId}`);
+        if (!response.ok) { alert('Failed to load verifier'); return; }
+        const profile = await response.json();
+
+        const verifier = profile.verifiers.find(v => v.id === verifierId);
+        if (!verifier) { alert('Verifier not found'); return; }
+
+        document.getElementById('edit-verifier-profile-id').value = profileId;
+        document.getElementById('edit-verifier-id').value = verifierId;
+        document.getElementById('edit-verifier-name').value = verifier.name || '';
+        document.getElementById('edit-verifier-model').value = verifier.model_id || '';
+        document.getElementById('edit-verifier-weight').value = verifier.vote_weight || 1.0;
+        document.getElementById('edit-verifier-min-confidence').value = verifier.min_confidence || 0;
+        document.getElementById('edit-verifier-run-order').value = verifier.run_order || 1;
+        document.getElementById('edit-verifier-prompt').value = verifier.prompt_template || '';
+
+        document.getElementById('edit-verifier-modal').classList.remove('hidden');
+    } catch (err) {
+        alert('Error loading verifier: ' + err.message);
+    }
+}
+
+async function submitEditVerifierForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const profileId = formData.get('profile_id');
+    const verifierId = formData.get('verifier_id');
+
+    const params = new URLSearchParams();
+    params.append('name', formData.get('name'));
+    params.append('prompt_template', formData.get('prompt_template'));
+    params.append('model_id', formData.get('model_id'));
+    params.append('vote_weight', formData.get('vote_weight'));
+    params.append('min_confidence', formData.get('min_confidence'));
+    params.append('run_order', formData.get('run_order'));
+
+    try {
+        const response = await fetch(`/profiles/${profileId}/verifiers/${verifierId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params
+        });
+        if (response.ok) {
+            location.reload();
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Failed to update verifier');
+        }
+    } catch (err) {
+        alert('Error updating verifier: ' + err.message);
+    }
+}
+
+async function updateEnricher(profileId) {
+    const select = document.getElementById(`enricher-model-${profileId}`);
+    const modelId = select.value;
+
+    const params = new URLSearchParams();
+    params.append('enricher_model_id', modelId);
+
+    try {
+        const response = await fetch(`/profiles/${profileId}/enricher`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params
+        });
+        if (!response.ok) {
+            const data = await response.json();
+            alert(data.error || 'Failed to update enricher');
+        }
+    } catch (err) {
+        alert('Error updating enricher: ' + err.message);
+    }
+}
+
+async function updateAgenticVerifier(profileId) {
+    const modeSelect = document.getElementById(`agentic-mode-${profileId}`);
+    const modelSelect = document.getElementById(`agentic-model-${profileId}`);
+    const stepsInput = document.getElementById(`agentic-steps-${profileId}`);
+    const modelRow = document.getElementById(`agentic-model-row-${profileId}`);
+
+    const mode = modeSelect.value;
+
+    // Show/hide model selection based on mode
+    if (mode === 'skip') {
+        modelRow.classList.add('hidden');
+    } else {
+        modelRow.classList.remove('hidden');
+    }
+
+    const params = new URLSearchParams();
+    params.append('agentic_verifier_mode', mode);
+    params.append('agentic_verifier_model_id', modelSelect.value || '');
+    params.append('agentic_verifier_max_steps', stepsInput.value || '8');
+
+    try {
+        const response = await fetch(`/profiles/${profileId}/agentic-verifier`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params
+        });
+        if (!response.ok) {
+            const data = await response.json();
+            alert(data.error || 'Failed to update agentic verifier');
+        }
+    } catch (err) {
+        alert('Error updating agentic verifier: ' + err.message);
     }
 }
 
@@ -1182,6 +1615,29 @@ async function submitEditGitlabRepoForm(event) {
 async function deleteGitlabRepo(id, name) {
     if (!confirm(`Delete "${name}"?`)) return;
     if ((await fetch(`/gitlab-repos/${id}`, { method: 'DELETE' })).ok) location.reload();
+}
+
+// Global settings functions
+async function updateGlobalSetting(key, value) {
+    try {
+        const response = await fetch(`/settings/${key}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: value })
+        });
+        if (!response.ok) {
+            const data = await response.json();
+            alert(data.error || 'Failed to update setting');
+        }
+    } catch (err) {
+        alert('Error updating setting: ' + err.message);
+    }
+}
+
+async function updateChatModels() {
+    const checkboxes = document.querySelectorAll('.chat-model-checkbox:checked');
+    const modelIds = Array.from(checkboxes).map(cb => cb.value).join(',');
+    await updateGlobalSetting('chat_model_ids', modelIds);
 }
 </script>
 {% endblock %}

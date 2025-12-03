@@ -11,8 +11,8 @@ from app.models.models import Scan, Finding, GeneratedFix
 from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
-    ScanProfile, ProfileAnalyzer, WebhookConfig, WebhookDeliveryLog,
-    RepoWatcher, MRReview, LLMRequestLog
+    ScanProfile, ProfileAnalyzer, ProfileVerifier, WebhookConfig, WebhookDeliveryLog,
+    RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote
 )
 
 # Create tables
@@ -76,6 +76,44 @@ async def run_pipeline(scan_id: int):
             scan = db.query(Scan).filter(Scan.id == scan_id).first()
             scan.status = "failed"
             scan.logs = (scan.logs or "") + f"\nError: {str(e)}"
+            db.commit()
+        except Exception:
+            db.rollback()
+    finally:
+        db.close()
+
+
+async def run_revalidation_pipeline(scan_id: int, profile_id: int):
+    """Run the revalidation pipeline (verification + enrichment) in background"""
+    from app.services.orchestration.pipeline import ScanPipeline
+
+    db = SessionLocal()
+    try:
+        # Update status
+        scan = db.query(Scan).filter(Scan.id == scan_id).first()
+        scan.status = "running"
+        scan.logs = (scan.logs or "") + f"\n[Re-validation] Starting with profile {profile_id}\n"
+        db.commit()
+
+        # Get config
+        config = db.query(ScanConfig).filter(ScanConfig.scan_id == scan_id).first()
+
+        # Run pipeline from verification phase
+        pipeline = ScanPipeline(scan_id, config, db)
+        await pipeline.run_from_verification(profile_id=profile_id)
+
+        # Update status
+        scan.status = "completed"
+        db.commit()
+
+    except Exception as e:
+        import traceback
+        print(f"Revalidation pipeline error: {traceback.format_exc()}")
+        db.rollback()
+        try:
+            scan = db.query(Scan).filter(Scan.id == scan_id).first()
+            scan.status = "failed"
+            scan.logs = (scan.logs or "") + f"\nRevalidation Error: {str(e)}"
             db.commit()
         except Exception:
             db.rollback()
@@ -183,8 +221,17 @@ async def start_scan(
 
 @router.get("/scan/{scan_id}")
 async def get_scan_details(request: Request, scan_id: int, db: Session = Depends(get_db)):
+    from app.models.scanner_models import ScanErrorLog
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
-    return templates.TemplateResponse("partials/scan_details.html", {"request": request, "scan": scan})
+    # Get recent errors for this scan (last 20)
+    errors = db.query(ScanErrorLog).filter(
+        ScanErrorLog.scan_id == scan_id
+    ).order_by(ScanErrorLog.created_at.desc()).limit(20).all()
+    return templates.TemplateResponse("partials/scan_details.html", {
+        "request": request,
+        "scan": scan,
+        "errors": errors
+    })
 
 
 # ============ Finding Details & Chat ============
@@ -475,6 +522,65 @@ async def rerun_scan(
     }
 
 
+@router.post("/scan/{scan_id}/revalidate")
+async def revalidate_scan(
+    scan_id: int,
+    background_tasks: BackgroundTasks,
+    profile_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Re-validate a scan's findings using a different profile's verifiers.
+
+    This keeps the draft findings but:
+    - Resets their status to pending
+    - Deletes verified findings and final findings
+    - Clears verification votes
+    - Re-runs verification and enrichment with the selected profile
+    """
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return {"error": "Scan not found"}
+
+    if scan.status == "running":
+        return {"error": "Scan is already running"}
+
+    # Verify profile exists and has verifiers
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    if not profile.verifiers:
+        return {"error": "Profile has no verifiers configured"}
+
+    # Delete verified findings and final findings
+    db.query(Finding).filter(Finding.scan_id == scan_id).delete()
+    db.query(VerifiedFinding).filter(VerifiedFinding.scan_id == scan_id).delete()
+
+    # Clear verification votes for this scan
+    db.query(VerificationVote).filter(VerificationVote.scan_id == scan_id).delete()
+
+    # Reset draft findings to pending
+    db.query(DraftFinding).filter(DraftFinding.scan_id == scan_id).update(
+        {"status": "pending", "verification_votes": 0},
+        synchronize_session=False
+    )
+
+    # Update scan status
+    scan.status = "queued"
+    scan.logs = (scan.logs or "") + f"\n[Re-validation] Queued with profile '{profile.name}' (ID: {profile_id})\n"
+    db.commit()
+
+    # Start revalidation pipeline
+    background_tasks.add_task(run_revalidation_pipeline, scan_id, profile_id)
+
+    return {
+        "status": "revalidation_started",
+        "scan_id": scan_id,
+        "profile_id": profile_id,
+        "profile_name": profile.name
+    }
+
+
 @router.get("/scan/{scan_id}/progress")
 async def get_progress(request: Request, scan_id: int, db: Session = Depends(get_db)):
     """Get detailed scan progress"""
@@ -698,11 +804,7 @@ async def create_model(request: Request, db: Session = Depends(get_db)):
         max_tokens=data.get('max_tokens', 4096),
         max_concurrent=data.get('max_concurrent', 2),
         votes=data.get('votes', 1),
-        chunk_size=data.get('chunk_size', 3000),
-        is_analyzer=data.get('is_analyzer', True),
-        is_verifier=data.get('is_verifier', False),
-        is_cleanup=data.get('is_cleanup', False),
-        is_chat=data.get('is_chat', False)
+        chunk_size=data.get('chunk_size', 3000)
     )
     db.add(model)
     db.commit()
@@ -741,14 +843,6 @@ async def update_model(model_id: int, request: Request, db: Session = Depends(ge
         model.votes = data['votes']
     if 'chunk_size' in data:
         model.chunk_size = data['chunk_size']
-    if 'is_analyzer' in data:
-        model.is_analyzer = data['is_analyzer']
-    if 'is_verifier' in data:
-        model.is_verifier = data['is_verifier']
-    if 'is_cleanup' in data:
-        model.is_cleanup = data['is_cleanup']
-    if 'is_chat' in data:
-        model.is_chat = data['is_chat']
 
     db.commit()
     return {"status": "updated", "id": model.id, "name": model.name}
@@ -1268,13 +1362,17 @@ async def get_config(request: Request, db: Session = Depends(get_db)):
     rules = db.query(StaticRule).order_by(StaticRule.severity, StaticRule.name).all()
     gitlab_repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
 
+    # Get global settings
+    global_settings = {s.key: s.value for s in db.query(GlobalSetting).all()}
+
     return templates.TemplateResponse("config.html", {
         "request": request,
         "settings": settings,
         "models": models,
         "profiles": profiles,
         "rules": rules,
-        "gitlab_repos": gitlab_repos
+        "gitlab_repos": gitlab_repos,
+        "global_settings": global_settings
     })
 
 
@@ -1315,9 +1413,13 @@ async def update_config(
             settings.MAX_CONCURRENT_REQUESTS = max_concurrent
         message = "Default settings saved!"
 
+    from app.models.scanner_models import GitLabRepo
+
     models = db.query(ModelConfig).all()
     profiles = db.query(ScanProfile).order_by(ScanProfile.name).all()
     rules = db.query(StaticRule).order_by(StaticRule.severity, StaticRule.name).all()
+    gitlab_repos = db.query(GitLabRepo).order_by(GitLabRepo.name).all()
+    global_settings = {s.key: s.value for s in db.query(GlobalSetting).all()}
 
     return templates.TemplateResponse("config.html", {
         "request": request,
@@ -1325,6 +1427,8 @@ async def update_config(
         "models": models,
         "profiles": profiles,
         "rules": rules,
+        "gitlab_repos": gitlab_repos,
+        "global_settings": global_settings,
         "message": message
     })
 
@@ -1843,6 +1947,10 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
         "chunk_strategy": profile.chunk_strategy,
         "enabled": profile.enabled,
         "is_default": profile.is_default,
+        "enricher_model_id": profile.enricher_model_id,
+        "enricher_model_name": profile.enricher_model.name if profile.enricher_model else None,
+        "verification_threshold": profile.verification_threshold,
+        "require_unanimous_reject": profile.require_unanimous_reject,
         "analyzers": [
             {
                 "id": a.id,
@@ -1861,6 +1969,21 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
                 "min_severity_to_report": a.min_severity_to_report,
             }
             for a in profile.analyzers
+        ],
+        "verifiers": [
+            {
+                "id": v.id,
+                "name": v.name,
+                "description": v.description,
+                "model_id": v.model_id,
+                "model_name": v.model.name if v.model else None,
+                "prompt_template": v.prompt_template,
+                "vote_weight": v.vote_weight,
+                "min_confidence": v.min_confidence,
+                "run_order": v.run_order,
+                "enabled": v.enabled,
+            }
+            for v in profile.verifiers
         ]
     }
 
@@ -2080,6 +2203,242 @@ async def toggle_analyzer(profile_id: int, analyzer_id: int, db: Session = Depen
     db.commit()
 
     return {"id": analyzer.id, "enabled": analyzer.enabled}
+
+
+# ============== Profile Verifiers ==============
+
+@router.post("/profiles/{profile_id}/verifiers")
+async def add_verifier(
+    profile_id: int,
+    request: Request,
+    name: str = Form(...),
+    model_id: int = Form(...),
+    prompt_template: str = Form(None),
+    vote_weight: float = Form(1.0),
+    min_confidence: int = Form(0),
+    run_order: int = Form(1),
+    description: str = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Add a verifier to a profile"""
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    verifier = ProfileVerifier(
+        profile_id=profile_id,
+        name=name,
+        model_id=model_id,
+        prompt_template=prompt_template,
+        vote_weight=vote_weight,
+        min_confidence=min_confidence,
+        run_order=run_order,
+        description=description,
+        enabled=True
+    )
+    db.add(verifier)
+    db.commit()
+
+    return {"id": verifier.id, "name": verifier.name, "status": "created"}
+
+
+@router.put("/profiles/{profile_id}/verifiers/{verifier_id}")
+async def update_verifier(
+    profile_id: int,
+    verifier_id: int,
+    name: str = Form(None),
+    prompt_template: str = Form(None),
+    model_id: int = Form(None),
+    vote_weight: float = Form(None),
+    min_confidence: int = Form(None),
+    run_order: int = Form(None),
+    description: str = Form(None),
+    enabled: bool = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Update a verifier"""
+    verifier = db.query(ProfileVerifier).filter(
+        ProfileVerifier.id == verifier_id,
+        ProfileVerifier.profile_id == profile_id
+    ).first()
+    if not verifier:
+        return {"error": "Verifier not found"}
+
+    if name is not None:
+        verifier.name = name
+    if prompt_template is not None:
+        verifier.prompt_template = prompt_template
+    if model_id is not None:
+        verifier.model_id = model_id
+    if vote_weight is not None:
+        verifier.vote_weight = vote_weight
+    if min_confidence is not None:
+        verifier.min_confidence = min_confidence
+    if run_order is not None:
+        verifier.run_order = run_order
+    if description is not None:
+        verifier.description = description
+    if enabled is not None:
+        verifier.enabled = enabled
+
+    db.commit()
+    return {"id": verifier.id, "name": verifier.name, "status": "updated"}
+
+
+@router.delete("/profiles/{profile_id}/verifiers/{verifier_id}")
+async def delete_verifier(profile_id: int, verifier_id: int, db: Session = Depends(get_db)):
+    """Delete a verifier from a profile"""
+    verifier = db.query(ProfileVerifier).filter(
+        ProfileVerifier.id == verifier_id,
+        ProfileVerifier.profile_id == profile_id
+    ).first()
+    if not verifier:
+        return {"error": "Verifier not found"}
+
+    db.delete(verifier)
+    db.commit()
+
+    return {"status": "deleted", "id": verifier_id}
+
+
+@router.post("/profiles/{profile_id}/verifiers/{verifier_id}/toggle")
+async def toggle_verifier(profile_id: int, verifier_id: int, db: Session = Depends(get_db)):
+    """Toggle a verifier's enabled status"""
+    verifier = db.query(ProfileVerifier).filter(
+        ProfileVerifier.id == verifier_id,
+        ProfileVerifier.profile_id == profile_id
+    ).first()
+    if not verifier:
+        return {"error": "Verifier not found"}
+
+    verifier.enabled = not verifier.enabled
+    db.commit()
+
+    return {"id": verifier.id, "enabled": verifier.enabled}
+
+
+# ============== Profile Enricher ==============
+
+@router.put("/profiles/{profile_id}/enricher")
+async def update_profile_enricher(
+    profile_id: int,
+    enricher_model_id: int = Form(None),
+    enricher_prompt_template: str = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Update a profile's enricher configuration"""
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    # Allow null/empty to clear the enricher
+    profile.enricher_model_id = enricher_model_id if enricher_model_id else None
+    if enricher_prompt_template is not None:
+        profile.enricher_prompt_template = enricher_prompt_template if enricher_prompt_template else None
+
+    db.commit()
+    return {"status": "updated", "enricher_model_id": profile.enricher_model_id}
+
+
+# ============== Profile Agentic Verifier ==============
+
+@router.put("/profiles/{profile_id}/agentic-verifier")
+async def update_profile_agentic_verifier(
+    profile_id: int,
+    agentic_verifier_mode: str = Form("skip"),
+    agentic_verifier_model_id: int = Form(None),
+    agentic_verifier_max_steps: int = Form(8),
+    db: Session = Depends(get_db)
+):
+    """Update a profile's agentic verifier configuration"""
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    # Validate mode
+    if agentic_verifier_mode not in ("skip", "hybrid", "full"):
+        return {"error": "Invalid mode. Must be 'skip', 'hybrid', or 'full'"}
+
+    profile.agentic_verifier_mode = agentic_verifier_mode
+    profile.agentic_verifier_model_id = agentic_verifier_model_id if agentic_verifier_model_id else None
+    profile.agentic_verifier_max_steps = max(3, min(20, agentic_verifier_max_steps))
+
+    db.commit()
+    return {
+        "status": "updated",
+        "agentic_verifier_mode": profile.agentic_verifier_mode,
+        "agentic_verifier_model_id": profile.agentic_verifier_model_id,
+        "agentic_verifier_max_steps": profile.agentic_verifier_max_steps
+    }
+
+
+# ============== Global Settings ==============
+
+@router.get("/settings")
+async def get_global_settings(db: Session = Depends(get_db)):
+    """Get all global settings"""
+    settings = db.query(GlobalSetting).all()
+    return {s.key: {"value": s.value, "type": s.value_type, "description": s.description} for s in settings}
+
+
+@router.get("/settings/{key}")
+async def get_setting(key: str, db: Session = Depends(get_db)):
+    """Get a specific global setting"""
+    setting = db.query(GlobalSetting).filter(GlobalSetting.key == key).first()
+    if not setting:
+        return {"error": "Setting not found"}
+    return {"key": setting.key, "value": setting.value, "type": setting.value_type, "description": setting.description}
+
+
+@router.put("/settings/{key}")
+async def update_setting(
+    key: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Update a global setting (accepts JSON body with 'value' field)"""
+    body = await request.json()
+    value = str(body.get('value', ''))
+    value_type = body.get('value_type', 'string')
+    description = body.get('description')
+
+    setting = db.query(GlobalSetting).filter(GlobalSetting.key == key).first()
+    if not setting:
+        # Create new setting
+        setting = GlobalSetting(key=key)
+        db.add(setting)
+
+    setting.value = value
+    setting.value_type = value_type
+    if description:
+        setting.description = description
+
+    db.commit()
+    return {"key": setting.key, "value": setting.value, "status": "updated"}
+
+
+@router.post("/settings")
+async def create_setting(
+    key: str = Form(...),
+    value: str = Form(...),
+    value_type: str = Form("string"),
+    description: str = Form(None),
+    db: Session = Depends(get_db)
+):
+    """Create a new global setting"""
+    existing = db.query(GlobalSetting).filter(GlobalSetting.key == key).first()
+    if existing:
+        return {"error": "Setting already exists"}
+
+    setting = GlobalSetting(
+        key=key,
+        value=value,
+        value_type=value_type,
+        description=description
+    )
+    db.add(setting)
+    db.commit()
+    return {"key": setting.key, "value": setting.value, "status": "created"}
 
 
 # ============== Webhook Security Alerts ==============

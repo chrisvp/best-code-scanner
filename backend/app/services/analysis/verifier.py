@@ -2,11 +2,12 @@ import asyncio
 import os
 from typing import List, Dict, Optional
 
-from app.models.scanner_models import DraftFinding, ScanFileChunk, ScanFile
+from app.models.scanner_models import DraftFinding, ScanFileChunk, ScanFile, VerificationVote
 from app.models.models import Scan
 from app.services.intelligence.context_retriever import ContextRetriever
 from app.services.orchestration.model_orchestrator import ModelPool, ModelOrchestrator
 from app.core.database import SessionLocal
+from app.services.analysis.universal_parser import VoteParser
 
 # Import agentic verification components
 try:
@@ -95,12 +96,14 @@ REJECT if:
 *END_VOTE"""
 
     def __init__(self, scan_id: int, orchestrator: ModelOrchestrator, context_retriever: ContextRetriever,
-                 use_agentic: bool = False, agentic_model_pool: Optional[ModelPool] = None):
+                 use_agentic: bool = False, agentic_model_pool: Optional[ModelPool] = None,
+                 agentic_max_steps: int = 8):
         self.scan_id = scan_id
         self.orchestrator = orchestrator
         self.context_retriever = context_retriever
         self.use_agentic = use_agentic and AGENTIC_AVAILABLE
         self.agentic_model_pool = agentic_model_pool
+        self.agentic_max_steps = agentic_max_steps
 
         # Initialize agentic verifier if enabled
         self._agentic_verifier = None
@@ -175,11 +178,16 @@ REJECT if:
         results = []
         for draft_idx, draft in enumerate(drafts):
             votes = []
+            raw_responses = []
 
             for model_name, responses in all_votes:
                 response = responses[draft_idx] if draft_idx < len(responses) else ""
+                raw_responses.append(response)
                 vote = self._parse_vote(response, model_name)
                 votes.append(vote)
+
+            # Log votes to database for debugging
+            self._log_votes(draft, votes, raw_responses)
 
             # Aggregate: majority vote wins
             result = self._aggregate_votes(votes, draft)
@@ -187,14 +195,15 @@ REJECT if:
 
         return results
 
-    def _parse_vote(self, response: str, model_name: str) -> dict:
-        """Parse a single model's vote response"""
-        import re
+    # Shared parser instance for vote parsing
+    _vote_parser = VoteParser()
 
+    def _parse_vote(self, response: str, model_name: str) -> dict:
+        """Parse a single model's vote response using universal parser"""
         vote = {
             'model': model_name,
             'decision': 'ABSTAIN',
-            'confidence': 50,  # Default to 50 if not specified
+            'confidence': 50,
             'reasoning': '',
             'attack_scenario': ''
         }
@@ -203,79 +212,66 @@ REJECT if:
             vote['reasoning'] = 'No response from model'
             return vote
 
-        response_lower = response.lower()
+        # Use the universal VoteParser for fuzzy parsing
+        parsed = self._vote_parser.parse_vote(response)
 
-        # Extract vote decision
-        if '*vote:' in response_lower:
-            for line in response.split('\n'):
-                if '*vote:' in line.lower():
-                    line_lower = line.lower()
-                    if 'reject' in line_lower:
-                        vote['decision'] = 'REJECT'
-                    elif 'weakness' in line_lower:
-                        vote['decision'] = 'WEAKNESS'
-                    elif 'verify' in line_lower:
-                        vote['decision'] = 'VERIFY'
-                    break
-
-        # Extract confidence
-        if '*confidence:' in response_lower:
-            for line in response.split('\n'):
-                if '*confidence:' in line.lower():
-                    try:
-                        nums = re.findall(r'\d+', line)
-                        if nums:
-                            vote['confidence'] = min(100, int(nums[0]))
-                    except:
-                        pass
-                    break
-
-        # Extract reasoning (supports both old and new format)
-        reasoning_markers = ['*reasoning:', '*model_reasoning:']
-        for marker in reasoning_markers:
-            if marker in response_lower:
-                start = response_lower.find(marker)
-                # Find end marker
-                end = response_lower.find('*end_vote', start)
-                if end == -1:
-                    end = response_lower.find('*attack_scenario:', start)
-
-                if start != -1:
-                    content_start = start + len(marker)
-                    if end != -1:
-                        vote['reasoning'] = response[content_start:end].strip()
-                    else:
-                        vote['reasoning'] = response[content_start:].strip()[:500]
-                break
-
-        # Extract attack scenario if present
-        if '*attack_scenario:' in response_lower:
-            start = response_lower.find('*attack_scenario:')
-            end = response_lower.find('*end_vote', start)
-            if start != -1:
-                content_start = start + 17
-                if end != -1:
-                    vote['attack_scenario'] = response[content_start:end].strip()
-                else:
-                    vote['attack_scenario'] = response[content_start:].strip()[:500]
+        vote['decision'] = parsed.get('decision', 'ABSTAIN')
+        vote['confidence'] = parsed.get('confidence', 50)
+        vote['reasoning'] = parsed.get('reasoning', '')
+        vote['attack_scenario'] = parsed.get('attack_scenario', '')
 
         return vote
 
+    def _log_votes(self, draft: DraftFinding, votes: List[dict], raw_responses: List[str] = None):
+        """Log individual votes to the verification_votes table for debugging."""
+        db = SessionLocal()
+        try:
+            for i, vote in enumerate(votes):
+                raw_response = raw_responses[i] if raw_responses and i < len(raw_responses) else None
+
+                vote_record = VerificationVote(
+                    scan_id=self.scan_id,
+                    draft_finding_id=draft.id,
+                    model_name=vote.get('model', 'unknown'),
+                    decision=vote.get('decision', 'ABSTAIN'),
+                    confidence=vote.get('confidence', 50),
+                    reasoning=vote.get('reasoning', '')[:2000] if vote.get('reasoning') else None,
+                    attack_scenario=vote.get('attack_scenario', '')[:1000] if vote.get('attack_scenario') else None,
+                    raw_response=raw_response[:5000] if raw_response else None,
+                    parse_success=vote.get('parse_success', True),
+                    format_detected=vote.get('format_detected'),
+                    vote_weight=vote.get('weight', 1.0)
+                )
+                db.add(vote_record)
+
+            db.commit()
+        except Exception as e:
+            print(f"Failed to log votes: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
     def _aggregate_votes(self, votes: List[dict], draft: DraftFinding) -> dict:
         """
-        Aggregate votes from multiple models using 2/3 majority voting.
-        With 3 verifiers, need at least 2 to agree on VERIFY/WEAKNESS.
-        WEAKNESS votes count as partial VERIFY (creates Info/Low findings).
+        Aggregate votes from multiple models.
+
+        Voting logic:
+        - VERIFY: Majority voted VERIFY -> verified vulnerability, proceed to enrichment
+        - WEAKNESS: Majority voted WEAKNESS -> accepted as code quality issue, skip enrichment
+        - REJECT: Majority voted REJECT (or no majority) -> false positive, discarded
+
+        WEAKNESS does NOT count toward VERIFY. They are separate categories.
         """
         verify_count = 0
         weakness_count = 0
         reject_count = 0
+        abstain_count = 0
         verify_score = 0
         weakness_score = 0
         reject_score = 0
 
         for vote in votes:
-            weight = vote['confidence'] / 100.0 if vote['confidence'] > 0 else 0.5
+            weight = vote.get('weight', 1.0) * (vote['confidence'] / 100.0 if vote['confidence'] > 0 else 0.5)
 
             if vote['decision'] == 'VERIFY':
                 verify_count += 1
@@ -286,81 +282,92 @@ REJECT if:
             elif vote['decision'] == 'REJECT':
                 reject_count += 1
                 reject_score += weight
-            # ABSTAIN adds nothing
+            else:  # ABSTAIN
+                abstain_count += 1
 
+        # Only count actual votes (not abstentions)
         total_votes = verify_count + weakness_count + reject_count
 
-        # Count VERIFY+WEAKNESS as "not reject" votes
-        positive_count = verify_count + weakness_count
+        if total_votes == 0:
+            # All abstained - needs cleanup or reject
+            return {
+                'verified': False,
+                'is_weakness': False,
+                'confidence': 0,
+                'votes': votes,
+                'verify_count': 0,
+                'weakness_count': 0,
+                'reject_count': 0,
+                'reason': 'All models abstained (parsing failures)'
+            }
 
-        # Require 2/3 majority for verification (at least 2 out of 3 models)
-        # If only 2 models, require both to agree
-        # If 3 models, require at least 2 to agree
-        majority_threshold = (total_votes + 1) // 2  # Ceiling division for majority
+        # Calculate majority threshold
+        majority_threshold = (total_votes + 1) // 2  # Ceiling for majority
         if total_votes >= 3:
-            majority_threshold = 2  # Explicit: need 2/3 for 3 models
+            majority_threshold = 2  # Need 2/3 for 3+ models
 
-        # WEAKNESS counts as half a VERIFY for weighted scoring
-        combined_verify_score = verify_score + (weakness_score * 0.5)
-        total_score = combined_verify_score + reject_score
+        # Determine outcome - each category needs majority independently
+        # VERIFY wins if it has majority of VERIFY votes
+        # WEAKNESS wins if it has majority AND more than VERIFY
+        # Otherwise REJECT
 
-        # Need majority COUNT (not just weighted score) to verify
-        verified = positive_count >= majority_threshold and total_votes > 0
+        is_verified = verify_count >= majority_threshold
+        is_weakness = weakness_count >= majority_threshold and weakness_count > verify_count
+        is_rejected = reject_count >= majority_threshold or (not is_verified and not is_weakness)
 
-        # If unanimous reject, definitely not verified
-        if reject_count == total_votes:
-            verified = False
-
-        # Determine if primarily weakness (for severity adjustment)
-        is_weakness = weakness_count > verify_count and verified
-
-        # Calculate overall confidence based on agreement
-        if total_votes > 0:
-            agreement_ratio = max(positive_count, reject_count) / total_votes
-            confidence = int(agreement_ratio * 100)
+        # Calculate confidence based on agreement
+        if is_verified:
+            confidence = int((verify_count / total_votes) * 100)
+        elif is_weakness:
+            confidence = int((weakness_count / total_votes) * 100)
+        elif is_rejected:
+            confidence = int((reject_count / total_votes) * 100)
         else:
             confidence = 0
 
-        # Build result with vote details
+        # Build result
         result = {
-            'verified': verified,
+            'verified': is_verified,
             'is_weakness': is_weakness,
+            'rejected': is_rejected,
             'confidence': confidence,
             'votes': votes,
+            'verify_count': verify_count,
+            'weakness_count': weakness_count,
+            'reject_count': reject_count,
+            'abstain_count': abstain_count,
             'verify_score': round(verify_score, 2),
             'weakness_score': round(weakness_score, 2),
             'reject_score': round(reject_score, 2)
         }
 
-        if verified:
-            # Find best verify or weakness vote for details
+        if is_verified:
+            # Find best VERIFY vote for details
             verify_votes = [v for v in votes if v['decision'] == 'VERIFY']
-            weakness_votes = [v for v in votes if v['decision'] == 'WEAKNESS']
-
-            if verify_votes:
-                best_vote = max(verify_votes, key=lambda v: v['confidence'])
-            elif weakness_votes:
-                best_vote = max(weakness_votes, key=lambda v: v['confidence'])
-            else:
-                best_vote = None
+            best_vote = max(verify_votes, key=lambda v: v['confidence']) if verify_votes else None
 
             if best_vote:
                 result['title'] = draft.title
-                result['attack_vector'] = best_vote['attack_scenario']
-                # Mark weaknesses as their own category
-                if is_weakness:
-                    result['adjusted_severity'] = 'Weakness'
-                else:
-                    result['adjusted_severity'] = draft.severity
+                result['attack_vector'] = best_vote.get('attack_scenario', '')
+                result['adjusted_severity'] = draft.severity
                 result['data_flow'] = ''
-                result['reasoning'] = best_vote['reasoning']
+                result['reasoning'] = best_vote.get('reasoning', '')
+
+        elif is_weakness:
+            # Find best WEAKNESS vote for details
+            weakness_votes = [v for v in votes if v['decision'] == 'WEAKNESS']
+            best_vote = max(weakness_votes, key=lambda v: v['confidence']) if weakness_votes else None
+
+            if best_vote:
+                result['title'] = draft.title
+                result['adjusted_severity'] = 'Weakness'
+                result['reasoning'] = best_vote.get('reasoning', '')
+                result['reason'] = best_vote.get('reasoning', '')
+
         else:
-            # Find best reject vote for reason
-            best_reject = max(
-                [v for v in votes if v['decision'] == 'REJECT'],
-                key=lambda v: v['confidence'],
-                default=None
-            )
+            # Rejected - find best reject vote for reason
+            reject_votes = [v for v in votes if v['decision'] == 'REJECT']
+            best_reject = max(reject_votes, key=lambda v: v['confidence']) if reject_votes else None
             if best_reject:
                 result['reason'] = best_reject['reasoning']
             else:
@@ -387,7 +394,7 @@ REJECT if:
             self._agentic_verifier = AgenticVerifier(
                 model_pool=self.agentic_model_pool,
                 tools=self._codebase_tools,
-                max_steps=8
+                max_steps=self.agentic_max_steps
             )
             return True
         except Exception as e:
