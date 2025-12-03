@@ -125,6 +125,11 @@ class ModelPool:
                     error = None
 
                     try:
+                        # Validate model config has required fields
+                        if not self.config.base_url:
+                            duration_ms = (time.time() - start_time) * 1000
+                            return ("", prompt, duration_ms, None, None, f"Model '{self.config.name}' has no base_url configured")
+
                         base = self.config.base_url.rstrip('/')
                         if base.endswith('/v1'):
                             url = f"{base}/chat/completions"
