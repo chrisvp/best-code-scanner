@@ -83,7 +83,7 @@ class ScanFileChunk(Base):
     end_line = Column(Integer)
     content_hash = Column(String, index=True)
 
-    status = Column(String, default="pending")  # pending/scanning/scanned/failed
+    status = Column(String, default="pending", index=True)  # pending/scanning/scanned/failed
     retry_count = Column(Integer, default=0)
     last_error = Column(Text, nullable=True)  # Last error message
     next_retry_at = Column(DateTime(timezone=True), nullable=True)  # For exponential backoff
@@ -180,7 +180,7 @@ class DraftFinding(Base):
     source_models = Column(JSON, nullable=True)  # List of model names that detected this finding
     dedup_key = Column(String, index=True)  # Key for deduplication (file+line+type hash)
 
-    status = Column(String, default="pending")  # pending/verifying/verified/weakness/rejected
+    status = Column(String, default="pending", index=True)  # pending/verifying/verified/weakness/rejected
     verification_notes = Column(Text)  # Verifier reasoning for verify/reject decision
     verification_votes = Column(Integer)  # Number of verifiers that agreed
 
@@ -195,7 +195,7 @@ class VerifiedFinding(Base):
     __tablename__ = "verified_findings"
 
     id = Column(Integer, primary_key=True)
-    draft_id = Column(Integer, ForeignKey("draft_findings.id"))
+    draft_id = Column(Integer, ForeignKey("draft_findings.id"), index=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), index=True)
 
     title = Column(String)

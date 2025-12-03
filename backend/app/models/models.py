@@ -16,7 +16,7 @@ class Scan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     target_url = Column(String, nullable=True) # Git URL or Filename
-    status = Column(String, default=ScanStatus.QUEUED)
+    status = Column(String, default=ScanStatus.QUEUED, index=True)
     consensus_enabled = Column(Boolean, default=False)
     logs = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -28,9 +28,9 @@ class Finding(Base):
     __tablename__ = "findings"
 
     id = Column(Integer, primary_key=True, index=True)
-    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
     verified_id = Column(Integer, ForeignKey("verified_findings.id"), nullable=True)
-    mr_review_id = Column(Integer, ForeignKey("mr_reviews.id"), nullable=True)
+    mr_review_id = Column(Integer, ForeignKey("mr_reviews.id"), nullable=True, index=True)
 
     file_path = Column(String, nullable=False)
     line_number = Column(Integer, nullable=True)
