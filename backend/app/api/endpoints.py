@@ -1287,7 +1287,6 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
     and all data ended up in the description field.
     """
     from app.services.analysis.parsers import EnrichmentParser
-    from app.services.llm_provider import LLMProvider
 
     # Get the finding
     finding = db.query(Finding).filter(Finding.id == finding_id).first()
@@ -1357,13 +1356,13 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
 
     try:
         # Call the cleanup model
-        provider = LLMProvider(db)
-        response = await provider.call(
-            prompt=prompt,
-            model_name=cleanup_model.name,
-            phase="cleanup",
-            scan_id=finding.scan_id
+        from app.services.llm_provider import llm_provider
+
+        result = await llm_provider.chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=cleanup_model.name
         )
+        response = result.get("content", "")
 
         if not response:
             return {"error": "Cleanup model returned empty response"}
