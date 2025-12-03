@@ -386,28 +386,6 @@
                         {% endif %}
                     </div>
 
-                    <!-- Enricher -->
-                    <div class="p-4 border-t border-gray-700">
-                        <div class="flex justify-between items-center mb-3">
-                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Enricher</h3>
-                        </div>
-                        <div class="flex items-center gap-3">
-                            <select id="enricher-model-{{ profile.id }}"
-                                onchange="updateEnricher({{ profile.id }})"
-                                class="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500">
-                                <option value="">-- No enricher (skip enrichment) --</option>
-                                {% for model in models %}
-                                <option value="{{ model.id }}" {% if profile.enricher_model_id == model.id %}selected{% endif %}>
-                                    {{ model.name }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                            <span class="text-xs text-gray-500">
-                                {% if profile.enricher_model %}{{ profile.enricher_model.name }}{% else %}None{% endif %}
-                            </span>
-                        </div>
-                    </div>
-
                     <!-- Agentic Verifier -->
                     <div class="p-4 border-t border-gray-700">
                         <div class="flex justify-between items-center mb-3">
@@ -443,6 +421,28 @@
                                     title="Max reasoning steps">
                                 <span class="text-xs text-gray-500">steps</span>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Enricher -->
+                    <div class="p-4 border-t border-gray-700">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Enricher</h3>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <select id="enricher-model-{{ profile.id }}"
+                                onchange="updateEnricher({{ profile.id }})"
+                                class="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500">
+                                <option value="">-- No enricher (skip enrichment) --</option>
+                                {% for model in models %}
+                                <option value="{{ model.id }}" {% if profile.enricher_model_id == model.id %}selected{% endif %}>
+                                    {{ model.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <span class="text-xs text-gray-500">
+                                {% if profile.enricher_model %}{{ profile.enricher_model.name }}{% else %}None{% endif %}
+                            </span>
                         </div>
                     </div>
                 </div>
