@@ -11,12 +11,25 @@ class ScanStatus(str, enum.Enum):
     COMPLETED = "completed"
     FAILED = "failed"
 
+class ScanPhase(str, enum.Enum):
+    """Tracks which phase of the scan pipeline we're in"""
+    QUEUED = "queued"
+    INGESTION = "ingestion"
+    INDEXING = "indexing"
+    CHUNKING = "chunking"
+    SCANNING = "scanning"
+    VERIFYING = "verifying"
+    ENRICHING = "enriching"
+    COMPLETED = "completed"
+
+
 class Scan(Base):
     __tablename__ = "scans"
 
     id = Column(Integer, primary_key=True, index=True)
     target_url = Column(String, nullable=True) # Git URL or Filename
     status = Column(String, default=ScanStatus.QUEUED, index=True)
+    current_phase = Column(String, default=ScanPhase.QUEUED, index=True)  # Track pipeline progress for resume
     consensus_enabled = Column(Boolean, default=False)
     logs = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())

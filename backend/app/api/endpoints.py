@@ -660,7 +660,8 @@ async def get_progress(request: Request, scan_id: int, db: Session = Depends(get
     progress = {
         "scan_id": scan_id,
         "scan": {
-            "status": scan.status if scan else "unknown"
+            "status": scan.status if scan else "unknown",
+            "current_phase": scan.current_phase if scan else None
         },
         "chunks": {
             "total": total_chunks,

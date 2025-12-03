@@ -1,5 +1,26 @@
 <!-- Three-Phase Pipeline Progress -->
 <div class="space-y-4">
+    <!-- Status & Current Phase -->
+    {% if progress.scan.status == 'paused' %}
+    <div class="flex items-center justify-between bg-yellow-900/30 border border-yellow-700/50 rounded-lg px-3 py-2">
+        <div class="flex items-center gap-2 text-yellow-400">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span class="text-sm font-medium">Paused</span>
+            {% if progress.scan.current_phase %}
+            <span class="text-xs text-yellow-400/70">(at {{ progress.scan.current_phase }})</span>
+            {% endif %}
+        </div>
+        <span class="text-xs text-yellow-400/60">Click Resume to continue</span>
+    </div>
+    {% elif progress.scan.current_phase %}
+    <div class="flex items-center gap-2 text-gray-400 text-xs">
+        <span class="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse"></span>
+        <span>Current phase: <span class="text-blue-400 font-medium">{{ progress.scan.current_phase }}</span></span>
+    </div>
+    {% endif %}
+
     <!-- Phase 1: Scanning -->
     <div>
         <div class="flex justify-between items-center mb-1">

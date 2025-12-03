@@ -226,8 +226,29 @@ class ScanPipeline:
         self.db.add(metric)
         self.db.commit()
 
+    def _update_phase(self, phase: str):
+        """Update the current phase in the database"""
+        scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+        if scan:
+            scan.current_phase = phase
+            self.db.commit()
+            print(f"[Scan {self.scan_id}] Phase: {phase}")
+
+    async def _check_paused(self) -> bool:
+        """Check if scan is paused and wait if so. Returns True if should continue, False if stopped."""
+        while True:
+            scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+            if not scan:
+                return False
+            if scan.status == "paused":
+                await asyncio.sleep(1)
+                continue
+            if scan.status in ("failed", "completed", "stopped"):
+                return False
+            return True
+
     async def run(self):
-        """Run the full scanning pipeline"""
+        """Run the full scanning pipeline with resume support"""
         from app.services.intelligence.code_indexer import CodeIndexer
 
         total_start = time.time()
@@ -237,29 +258,72 @@ class ScanPipeline:
         await self.model_orchestrator.initialize()
 
         try:
-            # Get scan target and ingest
+            # Get scan and determine where to resume from
             scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
             target = scan.target_url
             scan_dir = f"sandbox/{self.scan_id}"
+            current_phase = scan.current_phase or "queued"
 
-            # Ingest code
-            ingest_start = time.time()
-            if target.endswith(".zip") or target.endswith(".tar.gz"):
-                scan_dir = await ingestion_service.extract_archive(target, str(self.scan_id))
+            # Define phase order for comparison
+            phase_order = ["queued", "ingestion", "indexing", "chunking", "scanning", "verifying", "enriching", "completed"]
+            current_phase_idx = phase_order.index(current_phase) if current_phase in phase_order else 0
+
+            # Skip phases that are already complete
+            skip_ingestion = current_phase_idx > phase_order.index("ingestion")
+            skip_indexing = current_phase_idx > phase_order.index("indexing")
+            skip_chunking = current_phase_idx > phase_order.index("chunking")
+
+            print(f"[Scan {self.scan_id}] Resuming from phase: {current_phase}")
+
+            # Check if paused before starting
+            if not await self._check_paused():
+                return
+
+            # Ingest code (skip if already done)
+            if not skip_ingestion:
+                self._update_phase("ingestion")
+                ingest_start = time.time()
+                if target.endswith(".zip") or target.endswith(".tar.gz"):
+                    scan_dir = await ingestion_service.extract_archive(target, str(self.scan_id))
+                else:
+                    scan_dir = await ingestion_service.clone_repo(target, str(self.scan_id))
+                self._log_timing("Ingestion", time.time() - ingest_start)
+
+                if not await self._check_paused():
+                    return
             else:
-                scan_dir = await ingestion_service.clone_repo(target, str(self.scan_id))
-            self._log_timing("Ingestion", time.time() - ingest_start)
+                print(f"[Scan {self.scan_id}] Skipping ingestion (already complete)")
 
-            # Build code index
-            index_start = time.time()
-            indexer = CodeIndexer(self.scan_id, self.db, self.cache)
-            await indexer.build_index(str(scan_dir))
-            self._log_timing("Indexing", time.time() - index_start)
+            # Build code index (skip if already done)
+            if not skip_indexing:
+                self._update_phase("indexing")
+                index_start = time.time()
+                indexer = CodeIndexer(self.scan_id, self.db, self.cache)
+                await indexer.build_index(str(scan_dir))
+                self._log_timing("Indexing", time.time() - index_start)
 
-            # Discover and chunk files
-            chunk_start = time.time()
-            await self._discover_and_chunk_files(str(scan_dir))
-            self._log_timing("Chunking", time.time() - chunk_start)
+                if not await self._check_paused():
+                    return
+            else:
+                print(f"[Scan {self.scan_id}] Skipping indexing (already complete)")
+                # Still need to rebuild cache for context retrieval
+                indexer = CodeIndexer(self.scan_id, self.db, self.cache)
+                await indexer.build_index(str(scan_dir))
+
+            # Discover and chunk files (skip if already done)
+            if not skip_chunking:
+                self._update_phase("chunking")
+                chunk_start = time.time()
+                await self._discover_and_chunk_files(str(scan_dir))
+                self._log_timing("Chunking", time.time() - chunk_start)
+
+                if not await self._check_paused():
+                    return
+            else:
+                print(f"[Scan {self.scan_id}] Skipping chunking (already complete)")
+
+            # Update phase to scanning (the parallel phases track their own progress)
+            self._update_phase("scanning")
 
             # Run three phases in parallel
             phases_start = time.time()
@@ -270,6 +334,9 @@ class ScanPipeline:
             )
             self._log_timing("Analysis phases", time.time() - phases_start)
             self._log_timing("Total", time.time() - total_start)
+
+            # Mark as completed
+            self._update_phase("completed")
 
         finally:
             await self.model_orchestrator.shutdown()
