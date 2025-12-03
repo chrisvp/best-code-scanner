@@ -1279,6 +1279,149 @@ async def agent_fix(finding_id: int, request: Request, db: Session = Depends(get
         return {"error": str(e)}
 
 
+@router.post("/finding/{finding_id}/reparse")
+async def reparse_finding(finding_id: int, request: Request, db: Session = Depends(get_db)):
+    """
+    Reparse a finding using the cleanup model to fix malformed data.
+    This is useful when the enricher produced a response in the wrong format
+    and all data ended up in the description field.
+    """
+    from app.services.analysis.parsers import EnrichmentParser
+    from app.services.llm_provider import LLMProvider
+
+    # Get the finding
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return {"error": "Finding not found"}
+
+    # Get global settings for cleanup model
+    cleanup_model_setting = db.query(GlobalSetting).filter(
+        GlobalSetting.key == "cleanup_model_id"
+    ).first()
+    cleanup_prompt_setting = db.query(GlobalSetting).filter(
+        GlobalSetting.key == "cleanup_prompt_template"
+    ).first()
+
+    if not cleanup_model_setting or not cleanup_model_setting.value:
+        return {"error": "No cleanup model configured. Go to Config > Global Settings to set one."}
+
+    # Get the cleanup model
+    cleanup_model = db.query(ModelConfig).filter(
+        ModelConfig.id == int(cleanup_model_setting.value)
+    ).first()
+    if not cleanup_model:
+        return {"error": "Configured cleanup model not found"}
+
+    # Build the expected format template (enrichment format)
+    format_template = """*FINDING: [vulnerability title]
+*CATEGORY: [CWE category]
+*SEVERITY: [Critical/High/Medium/Low]
+*CVSS: [score 0.0-10.0]
+*IMPACTED_CODE:
+[vulnerable code snippet]
+*VULNERABILITY_DETAILS:
+[detailed explanation]
+*PROOF_OF_CONCEPT:
+[example attack or exploit]
+*REMEDIATION_STEPS:
+1. [first step]
+2. [second step]
+*REFERENCES:
+- [reference URLs]
+*END_FINDING"""
+
+    # Build the cleanup prompt
+    cleanup_prompt = cleanup_prompt_setting.value if cleanup_prompt_setting else (
+        "The following LLM response is malformed and needs to be reformatted. "
+        "Please extract the relevant information and output it in the correct format.\n\n"
+        "Original response:\n{response}\n\n"
+        "Expected format:\n{format_template}\n\n"
+        "Output only the corrected response, nothing else."
+    )
+
+    # The malformed data is likely in the description field
+    malformed_response = finding.description or ""
+
+    # Also check if there's data in other fields that should be combined
+    if finding.vulnerability_details:
+        malformed_response += "\n\nVULNERABILITY_DETAILS:\n" + finding.vulnerability_details
+    if finding.proof_of_concept:
+        malformed_response += "\n\nPROOF_OF_CONCEPT:\n" + finding.proof_of_concept
+    if finding.remediation_steps:
+        malformed_response += "\n\nREMEDIATION_STEPS:\n" + finding.remediation_steps
+
+    prompt = cleanup_prompt.format(
+        response=malformed_response,
+        format_template=format_template
+    )
+
+    try:
+        # Call the cleanup model
+        provider = LLMProvider(db)
+        response = await provider.call(
+            prompt=prompt,
+            model_name=cleanup_model.name,
+            phase="cleanup",
+            scan_id=finding.scan_id
+        )
+
+        if not response:
+            return {"error": "Cleanup model returned empty response"}
+
+        # Parse the cleaned response
+        parser = EnrichmentParser()
+        parsed = parser.parse(response)
+
+        if not parsed:
+            return {"error": "Failed to parse cleaned response", "raw_response": response[:500]}
+
+        # Update the finding with parsed data
+        updates = {}
+        if parsed.get('finding'):
+            finding.description = parsed['finding']
+            updates['description'] = parsed['finding'][:50] + "..."
+        if parsed.get('category'):
+            finding.category = parsed['category']
+            updates['category'] = parsed['category']
+        if parsed.get('severity'):
+            finding.severity = parsed['severity']
+            updates['severity'] = parsed['severity']
+        if parsed.get('cvss'):
+            try:
+                finding.cvss_score = float(parsed['cvss'].split()[0])
+                updates['cvss_score'] = finding.cvss_score
+            except:
+                pass
+        if parsed.get('impacted_code'):
+            finding.snippet = parsed['impacted_code']
+            updates['snippet'] = "updated"
+        if parsed.get('vulnerability_details'):
+            finding.vulnerability_details = parsed['vulnerability_details']
+            updates['vulnerability_details'] = "updated"
+        if parsed.get('proof_of_concept'):
+            finding.proof_of_concept = parsed['proof_of_concept']
+            updates['proof_of_concept'] = "updated"
+        if parsed.get('remediation_steps'):
+            finding.remediation_steps = parsed['remediation_steps']
+            updates['remediation_steps'] = "updated"
+        if parsed.get('references'):
+            finding.references = parsed['references']
+            updates['references'] = "updated"
+
+        db.commit()
+
+        return {
+            "success": True,
+            "updates": updates,
+            "message": f"Successfully reparsed finding with {len(updates)} fields updated"
+        }
+
+    except Exception as e:
+        import traceback
+        print(f"Reparse error: {traceback.format_exc()}")
+        return {"error": str(e)}
+
+
 @router.get("/scan/{scan_id}/report/html")
 async def download_html_report(scan_id: int, db: Session = Depends(get_db)):
     # TODO: Implement report generation

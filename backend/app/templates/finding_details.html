@@ -55,6 +55,12 @@
                         {% else %}bg-blue-500/20 text-blue-400{% endif %}">
                         {{ finding.severity }}
                     </span>
+                    <button onclick="reparseFinding()" id="reparse-btn" class="text-xs px-2 py-1 rounded font-medium bg-orange-600/20 text-orange-400 hover:bg-orange-600/40 transition-colors flex items-center gap-1" title="Use cleanup model to reparse malformed data">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        Reparse
+                    </button>
                     <button onclick="deleteFinding()" class="text-xs px-2 py-1 rounded font-medium bg-red-600/20 text-red-400 hover:bg-red-600/40 transition-colors flex items-center gap-1" title="Delete this finding">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -425,6 +431,45 @@ async function deleteFinding() {
         }
     } catch (err) {
         alert('Error: ' + err.message);
+    }
+}
+
+// Reparse finding using cleanup model
+async function reparseFinding() {
+    const btn = document.getElementById('reparse-btn');
+    const originalHTML = btn.innerHTML;
+
+    btn.disabled = true;
+    btn.innerHTML = `
+        <svg class="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle>
+        </svg>
+        Reparsing...
+    `;
+
+    try {
+        const response = await fetch(`/finding/${findingId}/reparse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Show success message in chat
+            addMessage('assistant', `✓ Successfully reparsed finding!\n\nUpdated fields:\n${Object.entries(data.updates).map(([k, v]) => `• ${k}: ${v}`).join('\n')}\n\nRefreshing page...`);
+
+            // Reload page after short delay to show updated data
+            setTimeout(() => window.location.reload(), 2000);
+        } else {
+            alert('Error reparsing: ' + (data.error || 'Unknown error'));
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
     }
 }
 
