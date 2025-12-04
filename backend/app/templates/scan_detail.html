@@ -1,0 +1,731 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex flex-col h-full">
+    <!-- Header Bar -->
+    <div class="px-6 py-4 border-b border-gray-700 bg-gray-800/50 shrink-0">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-4">
+                <!-- Back Button -->
+                <a href="/" class="text-gray-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-gray-700">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                </a>
+                <div>
+                    <div class="flex items-center gap-3">
+                        <h2 class="text-xl font-semibold text-white">Scan #{{ scan.id }}</h2>
+                        <span id="scan-status-badge" class="px-2.5 py-1 rounded-full text-xs font-medium
+                            {% if scan.status == 'completed' %}bg-green-500/20 text-green-400 ring-1 ring-green-500/30
+                            {% elif scan.status == 'running' %}bg-blue-500/20 text-blue-400 ring-1 ring-blue-500/30 animate-pulse
+                            {% elif scan.status == 'failed' %}bg-red-500/20 text-red-400 ring-1 ring-red-500/30
+                            {% elif scan.status == 'paused' %}bg-yellow-500/20 text-yellow-400 ring-1 ring-yellow-500/30
+                            {% elif scan.status == 'stopped' %}bg-gray-500/20 text-gray-400 ring-1 ring-gray-500/30
+                            {% else %}bg-gray-500/20 text-gray-400 ring-1 ring-gray-500/30{% endif %}">
+                            {{ scan.status }}
+                        </span>
+                    </div>
+                    <p class="text-sm text-gray-500 font-mono mt-1 truncate max-w-xl" title="{{ scan.target_url }}">
+                        {{ scan.target_url }}
+                    </p>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center gap-2" id="action-buttons">
+                {% if scan.status == 'running' %}
+                <button onclick="pauseScan({{ scan.id }})" id="pause-btn"
+                    class="px-3 py-1.5 text-xs font-medium text-yellow-300 bg-yellow-500/20 hover:bg-yellow-500/30 border border-yellow-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Pause
+                </button>
+                <button onclick="stopScan({{ scan.id }})" id="stop-btn"
+                    class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                    </svg>
+                    Stop
+                </button>
+                {% endif %}
+                {% if scan.status == 'paused' %}
+                <button onclick="resumeScan({{ scan.id }})" id="resume-btn"
+                    class="px-3 py-1.5 text-xs font-medium text-green-300 bg-green-500/20 hover:bg-green-500/30 border border-green-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Resume
+                </button>
+                <button onclick="stopScan({{ scan.id }})" id="stop-btn-paused"
+                    class="px-3 py-1.5 text-xs font-medium text-red-300 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path>
+                    </svg>
+                    Stop
+                </button>
+                {% endif %}
+                {% if scan.status in ['completed', 'failed', 'stopped'] %}
+                <button onclick="rescanScan({{ scan.id }})" id="rescan-btn"
+                    class="px-3 py-1.5 text-xs font-medium text-blue-300 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Rescan
+                </button>
+                <button onclick="showRevalidateModal()" id="revalidate-btn"
+                    class="px-3 py-1.5 text-xs font-medium text-purple-300 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Re-validate
+                </button>
+                {% endif %}
+                <button onclick="exportFindings('csv')" class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    CSV
+                </button>
+                <a href="/scan/{{ scan.id }}/report/html" target="_blank" class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    Report
+                </a>
+                <button onclick="deleteScan({{ scan.id }})" class="px-3 py-1.5 text-xs font-medium text-gray-400 bg-gray-700/50 hover:bg-red-500/20 hover:text-red-400 border border-gray-600/50 hover:border-red-500/30 rounded-lg transition-colors flex items-center gap-1.5">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                    </svg>
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Bar (when running) -->
+    {% if scan.status in ['running', 'paused'] %}
+    <div id="progress-container"
+         hx-get="/scan/{{ scan.id }}/progress"
+         hx-trigger="load, every 3s"
+         hx-swap="innerHTML"
+         class="px-6 py-3 border-b border-gray-700 bg-gray-900/50 shrink-0">
+        <div class="text-center text-gray-400 text-sm">Loading progress...</div>
+    </div>
+    {% endif %}
+
+    <!-- Tabs -->
+    <div class="flex border-b border-gray-700 px-6 bg-gray-800/30 shrink-0">
+        <button onclick="switchTab('findings')" id="tab-findings"
+            class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-blue-500 text-blue-400">
+            Findings ({{ scan.findings|length }})
+        </button>
+        <button onclick="switchTab('logs')" id="tab-logs"
+            class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300">
+            Logs ({{ logs|length }})
+        </button>
+        <button onclick="switchTab('errors')" id="tab-errors"
+            class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300 {% if errors|length > 0 %}text-red-400{% endif %}">
+            Errors ({{ errors|length }})
+        </button>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="flex-1 overflow-hidden">
+        <!-- Findings Tab -->
+        <div id="content-findings" class="h-full flex flex-col">
+            {% set critical = scan.findings|selectattr('severity', 'equalto', 'Critical')|list|length %}
+            {% set high = scan.findings|selectattr('severity', 'equalto', 'High')|list|length %}
+            {% set medium = scan.findings|selectattr('severity', 'equalto', 'Medium')|list|length %}
+            {% set low = scan.findings|selectattr('severity', 'equalto', 'Low')|list|length %}
+            {% set total = scan.findings|length %}
+
+            <!-- Severity Summary Bar -->
+            <div class="px-6 py-4 border-b border-gray-700 bg-gray-900/30 shrink-0">
+                <div class="flex items-center gap-3">
+                    <button onclick="toggleSeverityFilter('all')" id="pill-all"
+                        class="severity-pill active px-4 py-2 rounded-lg text-sm font-medium transition-all bg-gray-700 text-white ring-2 ring-blue-500">
+                        <span class="text-lg font-bold">{{ total }}</span>
+                        <span class="ml-1 text-gray-300">Total</span>
+                    </button>
+
+                    <button onclick="toggleSeverityFilter('Critical')" id="pill-Critical"
+                        class="severity-pill px-4 py-2 rounded-lg text-sm font-medium transition-all bg-red-950/50 text-red-300 hover:bg-red-900/50 border border-red-900/50">
+                        <span class="text-lg font-bold">{{ critical }}</span>
+                        <span class="ml-1 opacity-80">Critical</span>
+                    </button>
+
+                    <button onclick="toggleSeverityFilter('High')" id="pill-High"
+                        class="severity-pill px-4 py-2 rounded-lg text-sm font-medium transition-all bg-orange-950/50 text-orange-300 hover:bg-orange-900/50 border border-orange-900/50">
+                        <span class="text-lg font-bold">{{ high }}</span>
+                        <span class="ml-1 opacity-80">High</span>
+                    </button>
+
+                    <button onclick="toggleSeverityFilter('Medium')" id="pill-Medium"
+                        class="severity-pill px-4 py-2 rounded-lg text-sm font-medium transition-all bg-yellow-950/50 text-yellow-300 hover:bg-yellow-900/50 border border-yellow-900/50">
+                        <span class="text-lg font-bold">{{ medium }}</span>
+                        <span class="ml-1 opacity-80">Medium</span>
+                    </button>
+
+                    <button onclick="toggleSeverityFilter('Low')" id="pill-Low"
+                        class="severity-pill px-4 py-2 rounded-lg text-sm font-medium transition-all bg-blue-950/50 text-blue-300 hover:bg-blue-900/50 border border-blue-900/50">
+                        <span class="text-lg font-bold">{{ low }}</span>
+                        <span class="ml-1 opacity-80">Low</span>
+                    </button>
+
+                    <div class="flex-1"></div>
+
+                    <!-- Search -->
+                    <div class="relative">
+                        <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                        </svg>
+                        <input type="text" id="search-findings" onkeyup="filterFindings()" placeholder="Search findings..."
+                            class="w-64 bg-gray-800 border border-gray-600 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Findings List -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-6">
+                {% if scan.findings %}
+                <div class="space-y-3" id="findings-list">
+                    {% for finding in scan.findings %}
+                    <a href="/finding/{{ finding.id }}" class="finding-item block bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden hover:border-gray-600 transition-colors"
+                        data-finding-id="{{ finding.id }}"
+                        data-severity="{{ finding.severity }}"
+                        data-search="{{ finding.description }} {{ finding.file_path }} {{ finding.category or '' }}">
+
+                        <div class="p-4">
+                            <div class="flex items-start justify-between mb-2">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs px-2 py-0.5 rounded font-medium uppercase
+                                        {% if finding.severity == 'Critical' %}bg-red-500/20 text-red-400
+                                        {% elif finding.severity == 'High' %}bg-orange-500/20 text-orange-400
+                                        {% elif finding.severity == 'Medium' %}bg-yellow-500/20 text-yellow-400
+                                        {% else %}bg-blue-500/20 text-blue-400{% endif %}">
+                                        {{ finding.severity }}
+                                    </span>
+                                    {% if finding.cvss_score %}
+                                    <span class="text-xs text-gray-500">CVSS {{ finding.cvss_score }}</span>
+                                    {% endif %}
+                                    {% if finding.category %}
+                                    <span class="text-xs px-2 py-0.5 rounded bg-purple-900/40 text-purple-300 border border-purple-800/50">
+                                        {{ finding.category }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <p class="text-gray-200 text-sm mb-2">{{ finding.description }}</p>
+
+                            <div class="flex items-center justify-between">
+                                <div class="text-xs text-gray-500 font-mono">
+                                    <span class="text-blue-400">{{ finding.file_path }}</span>
+                                    {% if finding.line_number %}
+                                    <span class="text-gray-600">:</span>
+                                    <span class="text-green-400">{{ finding.line_number }}</span>
+                                    {% endif %}
+                                </div>
+                                <span class="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                    </svg>
+                                    Details
+                                </span>
+                            </div>
+                        </div>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="flex flex-col items-center justify-center h-full text-gray-500">
+                    <div class="text-center max-w-lg px-8">
+                        {% if scan.status == 'running' %}
+                        <svg class="w-16 h-16 mb-4 mx-auto text-blue-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                        </svg>
+                        <h3 class="text-lg font-medium text-gray-300 mb-2">Scan in Progress</h3>
+                        <p class="text-sm">Analyzing code for vulnerabilities...</p>
+                        {% elif scan.status == 'completed' %}
+                        <svg class="w-16 h-16 mb-4 mx-auto text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <h3 class="text-lg font-medium text-green-400 mb-2">All Clear!</h3>
+                        <p class="text-sm">No vulnerabilities found in this scan.</p>
+                        {% elif scan.status == 'failed' %}
+                        <svg class="w-16 h-16 mb-4 mx-auto text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                        </svg>
+                        <h3 class="text-lg font-medium text-red-400 mb-2">Scan Failed</h3>
+                        <p class="text-sm">Check the Errors tab for details.</p>
+                        {% else %}
+                        <svg class="w-16 h-16 mb-4 mx-auto text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <h3 class="text-lg font-medium text-gray-300 mb-2">{{ scan.status|capitalize }}</h3>
+                        <p class="text-sm">No findings to display.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div id="content-logs" class="h-full flex-col hidden">
+            <!-- Logs Filter Bar -->
+            <div class="px-6 py-3 border-b border-gray-700 bg-gray-900/30 shrink-0 flex items-center gap-4">
+                <select id="logs-phase-filter" onchange="filterLogs()"
+                    class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none">
+                    <option value="all">All Phases</option>
+                    <option value="scanner">Scanner</option>
+                    <option value="verifier">Verifier</option>
+                    <option value="enricher">Enricher</option>
+                    <option value="cleanup">Cleanup</option>
+                </select>
+                <select id="logs-status-filter" onchange="filterLogs()"
+                    class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none">
+                    <option value="all">All Status</option>
+                    <option value="completed">Completed</option>
+                    <option value="pending">Pending</option>
+                    <option value="failed">Failed</option>
+                </select>
+                <div class="flex-1"></div>
+                <span class="text-xs text-gray-500">{{ logs|length }} total requests</span>
+            </div>
+
+            <!-- Logs List -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-6"
+                 {% if scan.status in ['running', 'paused'] %}
+                 hx-get="/scan/{{ scan.id }}/logs-partial"
+                 hx-trigger="every 5s"
+                 hx-swap="innerHTML"
+                 {% endif %}>
+                {% if logs %}
+                <div class="space-y-2" id="logs-list">
+                    {% for log in logs %}
+                    <div class="log-item bg-gray-800/50 rounded-lg border border-gray-700 p-3 hover:border-gray-600 transition-colors cursor-pointer"
+                         data-phase="{{ log.phase }}"
+                         data-status="{{ log.status }}"
+                         onclick="toggleLogDetails(this)">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <!-- Status indicator -->
+                                <div class="w-2 h-2 rounded-full
+                                    {% if log.status == 'completed' %}bg-green-500
+                                    {% elif log.status == 'pending' %}bg-blue-500 animate-pulse
+                                    {% elif log.status == 'failed' %}bg-red-500
+                                    {% else %}bg-gray-500{% endif %}">
+                                </div>
+                                <!-- Phase badge -->
+                                <span class="text-xs px-2 py-0.5 rounded font-medium
+                                    {% if log.phase == 'scanner' %}bg-blue-500/20 text-blue-400
+                                    {% elif log.phase == 'verifier' %}bg-purple-500/20 text-purple-400
+                                    {% elif log.phase == 'enricher' %}bg-green-500/20 text-green-400
+                                    {% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                                    {{ log.phase }}
+                                </span>
+                                <!-- Model name -->
+                                <span class="text-sm text-gray-300">{{ log.model_name }}</span>
+                                {% if log.analyzer_name %}
+                                <span class="text-xs text-gray-500">/ {{ log.analyzer_name }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="flex items-center gap-4 text-xs text-gray-500">
+                                {% if log.file_path %}
+                                <span class="font-mono truncate max-w-xs" title="{{ log.file_path }}">{{ log.file_path.split('/')[-1] }}</span>
+                                {% endif %}
+                                {% if log.findings_count > 0 %}
+                                <span class="text-green-400">{{ log.findings_count }} findings</span>
+                                {% endif %}
+                                {% if log.duration_ms %}
+                                <span>{{ (log.duration_ms / 1000)|round(1) }}s</span>
+                                {% endif %}
+                                {% if log.tokens_in and log.tokens_out %}
+                                <span>{{ log.tokens_in }}+{{ log.tokens_out }} tokens</span>
+                                {% endif %}
+                                <span>{{ log.created_at.strftime('%H:%M:%S') if log.created_at else '' }}</span>
+                                <svg class="w-4 h-4 transition-transform log-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                </svg>
+                            </div>
+                        </div>
+                        <!-- Expandable details -->
+                        <div class="log-details hidden mt-3 pt-3 border-t border-gray-700">
+                            {% if log.parse_error %}
+                            <div class="mb-2 p-2 bg-red-950/30 border border-red-900/50 rounded text-xs text-red-400">
+                                <strong>Parse Error:</strong> {{ log.parse_error }}
+                            </div>
+                            {% endif %}
+                            {% if log.raw_response %}
+                            <div class="bg-gray-900 rounded p-3 max-h-64 overflow-auto custom-scrollbar">
+                                <pre class="text-xs text-gray-400 whitespace-pre-wrap font-mono">{{ log.raw_response[:2000] }}{% if log.raw_response|length > 2000 %}...{% endif %}</pre>
+                            </div>
+                            {% else %}
+                            <div class="text-xs text-gray-500 italic">No response recorded</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="flex flex-col items-center justify-center h-full text-gray-500">
+                    <svg class="w-12 h-12 mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <p class="text-sm">No LLM requests logged yet</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Errors Tab -->
+        <div id="content-errors" class="h-full flex-col hidden">
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-6">
+                {% if errors %}
+                <div class="space-y-2">
+                    {% for error in errors %}
+                    <div class="bg-red-950/30 border border-red-900/50 rounded-lg p-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center gap-3">
+                                <span class="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-medium">
+                                    {{ error.phase }}
+                                </span>
+                                <span class="text-sm text-red-300">{{ error.error_type }}</span>
+                                {% if error.model_name %}
+                                <span class="text-xs text-gray-500">{{ error.model_name }}</span>
+                                {% endif %}
+                            </div>
+                            <span class="text-xs text-gray-500">
+                                {{ error.created_at.strftime('%b %d %H:%M:%S') if error.created_at else '' }}
+                            </span>
+                        </div>
+                        <p class="text-sm text-red-400/80">{{ error.error_message }}</p>
+                        {% if error.file_path %}
+                        <div class="mt-2 text-xs text-gray-500 font-mono">
+                            {{ error.file_path }}{% if error.chunk_index is not none %}:chunk {{ error.chunk_index }}{% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="flex flex-col items-center justify-center h-full text-gray-500">
+                    <svg class="w-12 h-12 mb-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <p class="text-sm">No errors recorded</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Revalidate Modal -->
+<div id="revalidate-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 shadow-xl border border-gray-700">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                Re-validate Findings
+            </h2>
+            <button onclick="hideRevalidateModal()" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 mb-4">
+            <div class="flex gap-2">
+                <svg class="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <div>
+                    <p class="text-sm font-medium text-yellow-400">This will delete existing findings</p>
+                    <p class="text-xs text-yellow-400/70 mt-1">
+                        All verified and final findings will be permanently deleted.
+                        Draft findings will be kept and re-verified.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-300 mb-2">Select Scan Profile</label>
+            <select id="revalidate-profile-select"
+                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
+                <option value="">-- Choose a profile --</option>
+                {% for profile in profiles %}
+                {% if profile.verifiers|length > 0 %}
+                <option value="{{ profile.id }}">{{ profile.name }} ({{ profile.verifiers|length }} verifiers)</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="flex gap-3">
+            <button onclick="hideRevalidateModal()"
+                class="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">
+                Cancel
+            </button>
+            <button id="revalidate-submit-btn" onclick="submitRevalidation()"
+                class="flex-1 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center justify-center gap-2">
+                Start Re-validation
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+    .severity-pill.active {
+        ring: 2px;
+        ring-color: rgb(59, 130, 246);
+    }
+    #pill-all.active { background: rgb(55, 65, 81); }
+    #pill-Critical.active { background: rgb(127, 29, 29); border-color: rgb(185, 28, 28); }
+    #pill-High.active { background: rgb(124, 45, 18); border-color: rgb(194, 65, 12); }
+    #pill-Medium.active { background: rgb(113, 63, 18); border-color: rgb(161, 98, 7); }
+    #pill-Low.active { background: rgb(30, 58, 138); border-color: rgb(37, 99, 235); }
+
+    .log-item.expanded .log-chevron {
+        transform: rotate(180deg);
+    }
+</style>
+
+<script>
+    const scanId = {{ scan.id }};
+    let currentFilter = 'all';
+
+    // Tab switching
+    function switchTab(tab) {
+        // Update tab buttons
+        document.querySelectorAll('[id^="tab-"]').forEach(btn => {
+            btn.classList.remove('border-blue-500', 'text-blue-400');
+            btn.classList.add('border-transparent', 'text-gray-400');
+        });
+        document.getElementById('tab-' + tab).classList.remove('border-transparent', 'text-gray-400');
+        document.getElementById('tab-' + tab).classList.add('border-blue-500', 'text-blue-400');
+
+        // Update content
+        document.querySelectorAll('[id^="content-"]').forEach(content => {
+            content.classList.add('hidden');
+            content.classList.remove('flex');
+        });
+        document.getElementById('content-' + tab).classList.remove('hidden');
+        document.getElementById('content-' + tab).classList.add('flex');
+    }
+
+    // Severity filter for findings
+    function toggleSeverityFilter(severity) {
+        document.querySelectorAll('.severity-pill').forEach(pill => {
+            pill.classList.remove('active', 'ring-2', 'ring-blue-500');
+        });
+        document.getElementById('pill-' + severity).classList.add('active', 'ring-2', 'ring-blue-500');
+        currentFilter = severity;
+        filterFindings();
+    }
+
+    function filterFindings() {
+        const search = (document.getElementById('search-findings')?.value || '').toLowerCase();
+        const severity = currentFilter;
+
+        document.querySelectorAll('.finding-item').forEach(item => {
+            const itemSeverity = item.dataset.severity;
+            const itemSearch = (item.dataset.search || '').toLowerCase();
+
+            const matchesSearch = !search || itemSearch.includes(search);
+            const matchesSeverity = severity === 'all' || itemSeverity === severity;
+
+            item.style.display = (matchesSearch && matchesSeverity) ? '' : 'none';
+        });
+    }
+
+    // Log filtering
+    function filterLogs() {
+        const phase = document.getElementById('logs-phase-filter').value;
+        const status = document.getElementById('logs-status-filter').value;
+
+        document.querySelectorAll('.log-item').forEach(item => {
+            const itemPhase = item.dataset.phase;
+            const itemStatus = item.dataset.status;
+
+            const matchesPhase = phase === 'all' || itemPhase === phase;
+            const matchesStatus = status === 'all' || itemStatus === status;
+
+            item.style.display = (matchesPhase && matchesStatus) ? '' : 'none';
+        });
+    }
+
+    // Toggle log details
+    function toggleLogDetails(element) {
+        const details = element.querySelector('.log-details');
+        element.classList.toggle('expanded');
+        details.classList.toggle('hidden');
+    }
+
+    // Scan actions
+    async function pauseScan(id) {
+        const btn = document.getElementById('pause-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle></svg> Pausing...';
+        }
+        try {
+            const response = await fetch(`/scan/${id}/pause`, { method: 'POST' });
+            const data = await response.json();
+            if (data.status === 'paused') {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to pause');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function resumeScan(id) {
+        const btn = document.getElementById('resume-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle></svg> Resuming...';
+        }
+        try {
+            const response = await fetch(`/scan/${id}/resume`, { method: 'POST' });
+            const data = await response.json();
+            if (data.status === 'resumed') {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to resume');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function stopScan(id) {
+        if (!confirm('Stop this scan? It will be marked as stopped.')) return;
+        try {
+            const response = await fetch(`/scan/${id}/stop`, { method: 'POST' });
+            const data = await response.json();
+            if (data.status === 'stopped') {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to stop');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function rescanScan(id) {
+        if (!confirm('Rescan this repository? This will reset all findings.')) return;
+        const btn = document.getElementById('rescan-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle></svg> Starting...';
+        }
+        try {
+            const formData = new FormData();
+            formData.append('reset_all', 'true');
+            const response = await fetch(`/scan/${id}/rerun`, { method: 'POST', body: formData });
+            const data = await response.json();
+            if (data.status === 'restarted' || data.scan_id) {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to rescan');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    async function deleteScan(id) {
+        if (!confirm('Delete this scan? This cannot be undone.')) return;
+        try {
+            const response = await fetch(`/scan/${id}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.status === 'deleted') {
+                window.location.href = '/';
+            } else {
+                alert(data.error || 'Failed to delete');
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    }
+
+    // Revalidate modal
+    function showRevalidateModal() {
+        document.getElementById('revalidate-modal').classList.remove('hidden');
+    }
+
+    function hideRevalidateModal() {
+        document.getElementById('revalidate-modal').classList.add('hidden');
+    }
+
+    async function submitRevalidation() {
+        const profileId = document.getElementById('revalidate-profile-select').value;
+        if (!profileId) {
+            alert('Please select a scan profile');
+            return;
+        }
+
+        const btn = document.getElementById('revalidate-submit-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle></svg> Starting...';
+
+        try {
+            const formData = new URLSearchParams();
+            formData.append('profile_id', profileId);
+            const response = await fetch(`/scan/${scanId}/revalidate`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: formData
+            });
+            const data = await response.json();
+            if (data.status === 'revalidation_started') {
+                hideRevalidateModal();
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to start re-validation');
+                btn.disabled = false;
+                btn.innerHTML = 'Start Re-validation';
+            }
+        } catch (err) {
+            alert('Error: ' + err.message);
+            btn.disabled = false;
+            btn.innerHTML = 'Start Re-validation';
+        }
+    }
+
+    // Export findings
+    function exportFindings(format) {
+        if (format === 'csv') {
+            window.location.href = `/scan/${scanId}/report/csv`;
+        }
+    }
+
+    // Auto-refresh page for running scans
+    {% if scan.status == 'running' %}
+    setInterval(() => {
+        // Refresh status badge via HTMX or check status
+        fetch(`/scan/${scanId}/status`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status !== 'running') {
+                    window.location.reload();
+                }
+            })
+            .catch(() => {});
+    }, 10000);
+    {% endif %}
+</script>
+{% endblock %}

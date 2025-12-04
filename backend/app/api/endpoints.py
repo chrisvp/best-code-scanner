@@ -57,8 +57,8 @@ async def run_pipeline(scan_id: int):
         scan.status = "running"
         db.commit()
 
-        # Get config
-        config = db.query(ScanConfig).filter(ScanConfig.scan_id == scan_id).first()
+        # Get config (use latest if multiple exist)
+        config = db.query(ScanConfig).filter(ScanConfig.scan_id == scan_id).order_by(ScanConfig.id.desc()).first()
 
         # Run pipeline
         pipeline = ScanPipeline(scan_id, config, db)
@@ -95,8 +95,8 @@ async def run_revalidation_pipeline(scan_id: int, profile_id: int):
         scan.logs = (scan.logs or "") + f"\n[Re-validation] Starting with profile {profile_id}\n"
         db.commit()
 
-        # Get config
-        config = db.query(ScanConfig).filter(ScanConfig.scan_id == scan_id).first()
+        # Get config (use latest if multiple exist)
+        config = db.query(ScanConfig).filter(ScanConfig.scan_id == scan_id).order_by(ScanConfig.id.desc()).first()
 
         # Run pipeline from verification phase
         pipeline = ScanPipeline(scan_id, config, db)
@@ -233,16 +233,48 @@ async def start_scan(
 
 @router.get("/scan/{scan_id}")
 async def get_scan_details(request: Request, scan_id: int, db: Session = Depends(get_db)):
-    from app.models.scanner_models import ScanErrorLog
+    from app.models.scanner_models import ScanErrorLog, LLMRequestLog, ScanProfile
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return HTMLResponse(content="<h1>Scan not found</h1>", status_code=404)
     # Get recent errors for this scan (last 20)
     errors = db.query(ScanErrorLog).filter(
         ScanErrorLog.scan_id == scan_id
     ).order_by(ScanErrorLog.created_at.desc()).limit(20).all()
-    return templates.TemplateResponse("partials/scan_details.html", {
+    # Get LLM request logs for this scan
+    logs = db.query(LLMRequestLog).filter(
+        LLMRequestLog.scan_id == scan_id
+    ).order_by(LLMRequestLog.created_at.desc()).limit(200).all()
+    # Get profiles for revalidate modal
+    profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+    return templates.TemplateResponse("scan_detail.html", {
         "request": request,
         "scan": scan,
-        "errors": errors
+        "errors": errors,
+        "logs": logs,
+        "profiles": profiles
+    })
+
+
+@router.get("/scan/{scan_id}/status")
+async def get_scan_status(scan_id: int, db: Session = Depends(get_db)):
+    """Get scan status for polling"""
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        return JSONResponse({"error": "Scan not found"}, status_code=404)
+    return JSONResponse({"status": scan.status})
+
+
+@router.get("/scan/{scan_id}/logs-partial")
+async def get_scan_logs_partial(request: Request, scan_id: int, db: Session = Depends(get_db)):
+    """Get logs partial for HTMX refresh"""
+    from app.models.scanner_models import LLMRequestLog
+    logs = db.query(LLMRequestLog).filter(
+        LLMRequestLog.scan_id == scan_id
+    ).order_by(LLMRequestLog.created_at.desc()).limit(200).all()
+    return templates.TemplateResponse("partials/scan_logs.html", {
+        "request": request,
+        "logs": logs
     })
 
 

@@ -1,0 +1,75 @@
+{% if logs %}
+<div class="space-y-2" id="logs-list">
+    {% for log in logs %}
+    <div class="log-item bg-gray-800/50 rounded-lg border border-gray-700 p-3 hover:border-gray-600 transition-colors cursor-pointer"
+         data-phase="{{ log.phase }}"
+         data-status="{{ log.status }}"
+         onclick="toggleLogDetails(this)">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <!-- Status indicator -->
+                <div class="w-2 h-2 rounded-full
+                    {% if log.status == 'completed' %}bg-green-500
+                    {% elif log.status == 'pending' %}bg-blue-500 animate-pulse
+                    {% elif log.status == 'failed' %}bg-red-500
+                    {% else %}bg-gray-500{% endif %}">
+                </div>
+                <!-- Phase badge -->
+                <span class="text-xs px-2 py-0.5 rounded font-medium
+                    {% if log.phase == 'scanner' %}bg-blue-500/20 text-blue-400
+                    {% elif log.phase == 'verifier' %}bg-purple-500/20 text-purple-400
+                    {% elif log.phase == 'enricher' %}bg-green-500/20 text-green-400
+                    {% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                    {{ log.phase }}
+                </span>
+                <!-- Model name -->
+                <span class="text-sm text-gray-300">{{ log.model_name }}</span>
+                {% if log.analyzer_name %}
+                <span class="text-xs text-gray-500">/ {{ log.analyzer_name }}</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center gap-4 text-xs text-gray-500">
+                {% if log.file_path %}
+                <span class="font-mono truncate max-w-xs" title="{{ log.file_path }}">{{ log.file_path.split('/')[-1] }}</span>
+                {% endif %}
+                {% if log.findings_count > 0 %}
+                <span class="text-green-400">{{ log.findings_count }} findings</span>
+                {% endif %}
+                {% if log.duration_ms %}
+                <span>{{ (log.duration_ms / 1000)|round(1) }}s</span>
+                {% endif %}
+                {% if log.tokens_in and log.tokens_out %}
+                <span>{{ log.tokens_in }}+{{ log.tokens_out }} tokens</span>
+                {% endif %}
+                <span>{{ log.created_at.strftime('%H:%M:%S') if log.created_at else '' }}</span>
+                <svg class="w-4 h-4 transition-transform log-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </div>
+        </div>
+        <!-- Expandable details -->
+        <div class="log-details hidden mt-3 pt-3 border-t border-gray-700">
+            {% if log.parse_error %}
+            <div class="mb-2 p-2 bg-red-950/30 border border-red-900/50 rounded text-xs text-red-400">
+                <strong>Parse Error:</strong> {{ log.parse_error }}
+            </div>
+            {% endif %}
+            {% if log.raw_response %}
+            <div class="bg-gray-900 rounded p-3 max-h-64 overflow-auto custom-scrollbar">
+                <pre class="text-xs text-gray-400 whitespace-pre-wrap font-mono">{{ log.raw_response[:2000] }}{% if log.raw_response|length > 2000 %}...{% endif %}</pre>
+            </div>
+            {% else %}
+            <div class="text-xs text-gray-500 italic">No response recorded</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="flex flex-col items-center justify-center h-full text-gray-500">
+    <svg class="w-12 h-12 mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+    </svg>
+    <p class="text-sm">No LLM requests logged yet</p>
+</div>
+{% endif %}

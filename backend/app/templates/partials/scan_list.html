@@ -22,8 +22,7 @@
     </div>
     {% endif %}
 
-    <div class="p-3 pl-4 border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer transition-all"
-         hx-get="/scan/{{ scan.id }}" hx-target="#scan-details">
+    <div class="p-3 pl-4 border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer transition-all">
         <!-- Top Row: Target & Status -->
         <div class="flex justify-between items-center gap-2 mb-1.5">
             <span class="font-medium text-gray-200 truncate text-sm flex-1" title="{{ scan.target_url }}">
@@ -92,8 +91,7 @@
     <!-- Action Buttons Row -->
     <div class="px-3 pb-2 flex items-center gap-2 border-b border-gray-700/50 bg-gray-800/30">
         <!-- View Details Button (always visible) -->
-        <button onclick="event.stopPropagation()"
-            hx-get="/scan/{{ scan.id }}" hx-target="#scan-details"
+        <a href="/scan/{{ scan.id }}" onclick="event.stopPropagation()"
             class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded transition-colors"
             title="View scan details and progress">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -101,7 +99,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
             </svg>
             View
-        </button>
+        </a>
         {% if scan.status == 'running' %}
         <!-- Pause Button -->
         <button onclick="pauseScan({{ scan.id }}, event)"
