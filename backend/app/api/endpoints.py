@@ -325,6 +325,126 @@ async def delete_finding(finding_id: int, db: Session = Depends(get_db)):
     return JSONResponse({"success": True, "message": "Finding deleted"})
 
 
+@router.post("/finding/{finding_id}/agent-verify")
+async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: Session = Depends(get_db)):
+    """Run agent-based verification on a finding"""
+    from app.models.scanner_models import ScanFile, ScanFileChunk, AgentVerificationSession
+    from app.services.orchestration.model_orchestrator import ModelPool
+
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return JSONResponse({"error": "Finding not found"}, status_code=404)
+
+    # Get model for agent verification
+    if model_id:
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    else:
+        # Use first available model
+        model_config = db.query(ModelConfig).first()
+
+    if not model_config:
+        return JSONResponse({"error": "No model available"}, status_code=400)
+
+    # Get codebase root from scan
+    codebase_path = None
+    if finding.scan_id:
+        scan_file = db.query(ScanFile).filter(ScanFile.scan_id == finding.scan_id).first()
+        if scan_file:
+            import os
+            codebase_path = scan_file.file_path
+            while codebase_path and os.path.basename(os.path.dirname(codebase_path)) != 'sandbox':
+                codebase_path = os.path.dirname(codebase_path)
+            if not codebase_path or not os.path.exists(codebase_path):
+                codebase_path = f"sandbox/{finding.scan_id}"
+
+    if not codebase_path or not os.path.exists(codebase_path):
+        return JSONResponse({"error": f"Codebase not found at {codebase_path}"}, status_code=400)
+
+    try:
+        # Import agent verification components
+        from app.services.intelligence.codebase_tools import CodebaseTools
+        from app.services.intelligence.agent_runtime import AgenticVerifier
+
+        # Create model pool
+        db.expunge(model_config)  # Detach from session
+        model_pool = ModelPool(model_config)
+        await model_pool.start()
+
+        # Initialize tools and verifier
+        codebase_tools = CodebaseTools(
+            scan_id=finding.scan_id,
+            root_dir=codebase_path,
+            db=db
+        )
+
+        agentic_verifier = AgenticVerifier(
+            model_pool=model_pool,
+            tools=codebase_tools,
+            max_steps=10,
+            scan_id=finding.scan_id,
+            finding_id=finding_id
+        )
+
+        # Run verification
+        result = await agentic_verifier.verify(
+            title=finding.description or "Unknown",
+            vuln_type=finding.category or "Unknown",
+            severity=finding.severity or "Medium",
+            file_path=os.path.basename(finding.file_path) if finding.file_path else "unknown",
+            line_number=finding.line_number or 0,
+            snippet=finding.code_snippet or "",
+            reason=finding.vulnerability_details or ""
+        )
+
+        # Stop model pool
+        await model_pool.stop()
+
+        return JSONResponse({
+            "success": True,
+            "verified": result['verified'],
+            "confidence": result['confidence'],
+            "reasoning": result.get('reasoning', ''),
+            "attack_path": result.get('attack_path', ''),
+            "session_id": result.get('session_id'),
+            "state": result.get('state'),
+            "trace": result.get('trace', '')[:5000]  # Truncate trace
+        })
+
+    except ImportError as e:
+        return JSONResponse({"error": f"Agent verification not available: {e}"}, status_code=500)
+    except Exception as e:
+        import traceback
+        return JSONResponse({"error": str(e), "traceback": traceback.format_exc()}, status_code=500)
+
+
+@router.get("/finding/{finding_id}/agent-sessions")
+async def get_finding_agent_sessions(finding_id: int, db: Session = Depends(get_db)):
+    """Get agent verification sessions for a finding"""
+    from app.models.scanner_models import AgentVerificationSession
+
+    sessions = db.query(AgentVerificationSession).filter(
+        AgentVerificationSession.finding_id == finding_id
+    ).order_by(AgentVerificationSession.created_at.desc()).all()
+
+    return JSONResponse({
+        "sessions": [
+            {
+                "id": s.id,
+                "status": s.status,
+                "verdict": s.verdict,
+                "confidence": s.confidence,
+                "reasoning": s.reasoning,
+                "total_steps": s.total_steps,
+                "duration_ms": s.duration_ms,
+                "model_name": s.model_name,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "execution_trace": s.execution_trace
+            }
+            for s in sessions
+        ]
+    })
+
+
 @router.post("/finding/{finding_id}/chat")
 async def finding_chat(finding_id: int, request: Request, db: Session = Depends(get_db)):
     """Chat about a specific finding with AI context"""

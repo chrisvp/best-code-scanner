@@ -263,6 +263,37 @@ ALTER TABLE mr_reviews ADD COLUMN provider VARCHAR DEFAULT 'gitlab';
 ALTER TABLE mr_reviews ADD COLUMN github_repo_id INTEGER REFERENCES github_repos(id);
 ```
 
+For agent verification sessions (December 2025), run:
+```sql
+-- Create agent_verification_sessions table
+CREATE TABLE IF NOT EXISTS agent_verification_sessions (
+    id INTEGER PRIMARY KEY,
+    scan_id INTEGER REFERENCES scans(id),
+    finding_id INTEGER REFERENCES findings(id),
+    draft_finding_id INTEGER REFERENCES draft_findings(id),
+    status VARCHAR DEFAULT 'running',
+    model_name VARCHAR,
+    verdict VARCHAR,
+    confidence INTEGER,
+    reasoning TEXT,
+    attack_path TEXT,
+    total_steps INTEGER DEFAULT 0,
+    max_steps INTEGER DEFAULT 8,
+    total_tokens INTEGER DEFAULT 0,
+    duration_ms REAL,
+    execution_trace JSON,
+    task_prompt TEXT,
+    prefetched_context JSON,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_avs_scan_id ON agent_verification_sessions(scan_id);
+CREATE INDEX IF NOT EXISTS idx_avs_finding_id ON agent_verification_sessions(finding_id);
+CREATE INDEX IF NOT EXISTS idx_avs_status ON agent_verification_sessions(status);
+```
+
 ## Future Features
 
 See `backend/docs/FEATURE_ROADMAP.md` for planned features:

@@ -577,6 +577,47 @@ class LLMRequestLog(Base):
     created_at = Column(DateTime(timezone=True), default=local_now)
 
 
+class AgentVerificationSession(Base):
+    """Log of agent verification sessions with full execution trace"""
+    __tablename__ = "agent_verification_sessions"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
+    finding_id = Column(Integer, ForeignKey("findings.id"), nullable=True, index=True)
+    draft_finding_id = Column(Integer, ForeignKey("draft_findings.id"), nullable=True, index=True)
+
+    # Session status: "running", "completed", "failed", "max_steps"
+    status = Column(String, default="running", index=True)
+
+    # Model used for verification
+    model_name = Column(String, nullable=True)
+
+    # Verification result
+    verdict = Column(String, nullable=True)  # "VERIFIED", "REJECTED", or None if incomplete
+    confidence = Column(Integer, nullable=True)  # 0-100
+    reasoning = Column(Text, nullable=True)
+    attack_path = Column(Text, nullable=True)
+
+    # Execution metrics
+    total_steps = Column(Integer, default=0)
+    max_steps = Column(Integer, default=8)
+    total_tokens = Column(Integer, default=0)
+    duration_ms = Column(Float, nullable=True)
+
+    # Full execution trace (JSON array of steps)
+    execution_trace = Column(JSON, nullable=True)
+
+    # Task and context
+    task_prompt = Column(Text, nullable=True)
+    prefetched_context = Column(JSON, nullable=True)  # What was pre-fetched for the agent
+
+    # Error info if failed
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class MRReview(Base):
     """Tracking for individual merge request / pull request reviews"""
     __tablename__ = "mr_reviews"

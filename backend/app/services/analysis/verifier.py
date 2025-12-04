@@ -439,7 +439,8 @@ REJECT if:
             self._agentic_verifier = AgenticVerifier(
                 model_pool=self.agentic_model_pool,
                 tools=self._codebase_tools,
-                max_steps=self.agentic_max_steps
+                max_steps=self.agentic_max_steps,
+                scan_id=self.scan_id
             )
             return True
         except Exception as e:
@@ -522,12 +523,20 @@ REJECT if:
         # Initialize agentic verifier if not already done
         db = SessionLocal()
         try:
-            scan = db.query(Scan).filter(Scan.id == self.scan_id).first()
-            if not scan:
-                return await self.verify_batch(drafts)
-
             if not self._agentic_verifier:
-                if not self._init_agentic_verifier(scan.target_path, db):
+                # Get codebase path from first scan file
+                scan_file = db.query(ScanFile).filter(ScanFile.scan_id == self.scan_id).first()
+                if not scan_file:
+                    return await self.verify_batch(drafts)
+                # Extract codebase root from file path (e.g., sandbox/3/src/file.c -> sandbox/3)
+                import os
+                codebase_path = scan_file.file_path
+                # Walk up to find sandbox root
+                while codebase_path and os.path.basename(os.path.dirname(codebase_path)) != 'sandbox':
+                    codebase_path = os.path.dirname(codebase_path)
+                if not codebase_path or not os.path.exists(codebase_path):
+                    codebase_path = f"sandbox/{self.scan_id}"
+                if not self._init_agentic_verifier(codebase_path, db):
                     return await self.verify_batch(drafts)
         finally:
             db.close()
@@ -574,9 +583,19 @@ REJECT if:
         # Initialize agentic verifier
         db = SessionLocal()
         try:
-            scan = db.query(Scan).filter(Scan.id == self.scan_id).first()
-            if not scan or not self._init_agentic_verifier(scan.target_path, db):
-                return voting_results
+            if not self._agentic_verifier:
+                # Get codebase path from first scan file
+                scan_file = db.query(ScanFile).filter(ScanFile.scan_id == self.scan_id).first()
+                if not scan_file:
+                    return voting_results
+                import os
+                codebase_path = scan_file.file_path
+                while codebase_path and os.path.basename(os.path.dirname(codebase_path)) != 'sandbox':
+                    codebase_path = os.path.dirname(codebase_path)
+                if not codebase_path or not os.path.exists(codebase_path):
+                    codebase_path = f"sandbox/{self.scan_id}"
+                if not self._init_agentic_verifier(codebase_path, db):
+                    return voting_results
         finally:
             db.close()
 

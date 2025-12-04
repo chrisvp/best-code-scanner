@@ -97,7 +97,9 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
         model_pool: ModelPool,
         tools: CodebaseTools,
         max_steps: int = 10,
-        verbose: bool = False
+        verbose: bool = False,
+        scan_id: int = None,
+        finding_id: int = None
     ):
         """
         Initialize the agent runtime.
@@ -107,11 +109,23 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
             tools: CodebaseTools instance for code navigation
             max_steps: Maximum number of agent steps before stopping
             verbose: Whether to print debug info
+            scan_id: Scan ID for logging context
+            finding_id: Finding ID for logging context
         """
         self.model_pool = model_pool
         self.tools = tools
         self.max_steps = max_steps
         self.verbose = verbose
+        self.scan_id = scan_id
+        self.finding_id = finding_id
+
+        # Set log context for the model pool
+        if scan_id or finding_id:
+            self.model_pool.set_log_context(
+                scan_id=scan_id,
+                phase='agent_verifier',
+                analyzer_name=f'finding_{finding_id}' if finding_id else None
+            )
 
     async def run(self, task: str, context: str = "") -> AgentResult:
         """
@@ -263,6 +277,7 @@ class AgenticVerifier:
     Agentic verification of security findings.
     Uses the agent runtime to trace vulnerabilities and prove/disprove them.
     Pre-fetches relevant context to reduce model hallucinations.
+    Stores detailed session logs for debugging and analysis.
     """
 
     VERIFICATION_TASK = """Verify this potential security vulnerability:
@@ -323,11 +338,19 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         self,
         model_pool: ModelPool,
         tools: CodebaseTools,
-        max_steps: int = 8
+        max_steps: int = 8,
+        scan_id: int = None,
+        finding_id: int = None
     ):
         self.model_pool = model_pool
         self.tools = tools
-        self.runtime = AgentRuntime(model_pool, tools, max_steps=max_steps)
+        self.max_steps = max_steps
+        self.scan_id = scan_id
+        self.finding_id = finding_id
+        self.runtime = AgentRuntime(
+            model_pool, tools, max_steps=max_steps,
+            scan_id=scan_id, finding_id=finding_id
+        )
 
     def _prefetch_context(self, file_path: str, snippet: str, line_number: int) -> Dict[str, str]:
         """
@@ -399,7 +422,8 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         file_path: str,
         line_number: int,
         snippet: str,
-        reason: str
+        reason: str,
+        draft_finding_id: int = None
     ) -> Dict[str, Any]:
         """
         Verify a single finding using agentic exploration.
@@ -411,7 +435,12 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
             - reasoning: str
             - attack_path: str (if verified)
             - trace: str (execution trace)
+            - session_id: int (database session ID)
         """
+        import time
+        from datetime import datetime
+        start_time = time.time()
+
         # Pre-fetch context to spoon-feed the model
         prefetched = self._prefetch_context(file_path, snippet, line_number)
 
@@ -428,6 +457,33 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
             callers=prefetched['callers']
         )
 
+        # Create session log in database
+        session_id = None
+        try:
+            from app.core.database import SessionLocal
+            from app.models.scanner_models import AgentVerificationSession
+            db = SessionLocal()
+            session = AgentVerificationSession(
+                scan_id=self.scan_id,
+                finding_id=self.finding_id,
+                draft_finding_id=draft_finding_id,
+                status="running",
+                model_name=self.model_pool.config.name if self.model_pool.config else "unknown",
+                max_steps=self.max_steps,
+                task_prompt=task[:10000],  # Truncate if too long
+                prefetched_context={
+                    'file_list': prefetched['file_list'][:1000],
+                    'file_content_length': len(prefetched['file_content']),
+                    'callers': prefetched['callers'][:1000]
+                }
+            )
+            db.add(session)
+            db.commit()
+            session_id = session.id
+            db.close()
+        except Exception as e:
+            print(f"Failed to create agent session log: {e}")
+
         result = await self.runtime.run(task)
 
         # Parse the final answer
@@ -435,6 +491,45 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         verification['trace'] = result.trace
         verification['state'] = result.state.value
 
+        # Calculate duration
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Update session log with results
+        if session_id:
+            try:
+                db = SessionLocal()
+                session = db.query(AgentVerificationSession).filter(
+                    AgentVerificationSession.id == session_id
+                ).first()
+                if session:
+                    session.status = result.state.value
+                    session.verdict = "VERIFIED" if verification['verified'] else "REJECTED"
+                    session.confidence = verification['confidence']
+                    session.reasoning = verification.get('reasoning', '')[:5000]
+                    session.attack_path = verification.get('attack_path', '')[:2000]
+                    session.total_steps = len(result.steps)
+                    session.total_tokens = result.total_tokens
+                    session.duration_ms = duration_ms
+                    session.execution_trace = [
+                        {
+                            'step': s.step_number,
+                            'thought': s.thought[:2000] if s.thought else None,
+                            'tool_name': s.tool_name,
+                            'tool_params': s.tool_params,
+                            'tool_result': s.tool_result[:1000] if s.tool_result else None,
+                            'is_final': s.is_final
+                        }
+                        for s in result.steps
+                    ]
+                    session.completed_at = datetime.utcnow()
+                    if result.error:
+                        session.error_message = result.error
+                    db.commit()
+                db.close()
+            except Exception as e:
+                print(f"Failed to update agent session log: {e}")
+
+        verification['session_id'] = session_id
         return verification
 
     def _parse_verification(self, result: AgentResult) -> Dict[str, Any]:
