@@ -151,6 +151,7 @@ async def start_scan(
     target_url: str = Form(""),  # Optional if archive or copy_from_scan_id is provided
     archive: UploadFile = File(None),  # Optional file upload
     copy_from_scan_id: int = Form(None),  # Copy code from existing scan
+    scan_name: str = Form(None),  # Optional custom display name for the scan
     analysis_mode: str = Form("primary_verifiers"),
     scope: str = Form("full"),
     scanner_concurrency: int = Form(20),
@@ -176,12 +177,13 @@ async def start_scan(
     if not has_archive and not has_url and not has_copy_from:
         raise HTTPException(status_code=400, detail="Either a Git URL, archive file, or source scan must be provided")
 
-    # Handle copy from existing scan
+    # Handle copy from existing scan - just use the scan_name as display, source_scan_id is stored separately
     if has_copy_from:
         source_scan = db.query(Scan).filter(Scan.id == copy_from_scan_id).first()
         if not source_scan:
             raise HTTPException(status_code=400, detail=f"Source scan {copy_from_scan_id} not found")
-        actual_target = f"copy:{copy_from_scan_id}:{source_scan.target_url}"
+        # Use custom scan_name if provided, otherwise show original source
+        actual_target = scan_name if scan_name else f"rescan:{source_scan.target_url}"
     # Handle file upload if provided
     elif has_archive:
         # Save uploaded file to sandbox directory
@@ -215,7 +217,8 @@ async def start_scan(
         chunk_size=chunk_size,
         chunk_strategy=chunk_strategy,
         file_filter=file_filter,
-        profile_id=profile_id
+        profile_id=profile_id,
+        source_scan_id=copy_from_scan_id if has_copy_from else None
     )
     db.add(config)
     db.commit()
@@ -265,12 +268,16 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
     if finding.mr_review_id:
         mr_review = db.query(MRReview).filter(MRReview.id == finding.mr_review_id).first()
 
+    # Get scan profiles for rescan dropdown
+    profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+
     return templates.TemplateResponse("finding_details.html", {
         "request": request,
         "finding": finding,
         "models": models,
         "scan": scan,
-        "mr_review": mr_review
+        "mr_review": mr_review,
+        "profiles": profiles
     })
 
 
@@ -2119,6 +2126,8 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
                 "enabled": a.enabled,
                 "stop_on_findings": a.stop_on_findings,
                 "min_severity_to_report": a.min_severity_to_report,
+                "output_mode": a.output_mode,
+                "json_schema": a.json_schema,
             }
             for a in profile.analyzers
         ],
@@ -2134,6 +2143,8 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
                 "min_confidence": v.min_confidence,
                 "run_order": v.run_order,
                 "enabled": v.enabled,
+                "output_mode": v.output_mode,
+                "json_schema": v.json_schema,
             }
             for v in profile.verifiers
         ]
@@ -2219,6 +2230,89 @@ async def delete_profile(profile_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted", "id": profile_id}
 
 
+@router.post("/profiles/{profile_id}/duplicate")
+async def duplicate_profile(profile_id: int, db: Session = Depends(get_db)):
+    """Duplicate a scan profile with all its analyzers and verifiers"""
+    from app.models.scanner_models import ProfileVerifier
+
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    # Generate unique name for the copy
+    base_name = f"{profile.name} (Copy)"
+    name = base_name
+    counter = 1
+    while db.query(ScanProfile).filter(ScanProfile.name == name).first():
+        counter += 1
+        name = f"{profile.name} (Copy {counter})"
+
+    # Create new profile with copied settings
+    new_profile = ScanProfile(
+        name=name,
+        description=profile.description,
+        is_default=False,  # Don't copy default status
+        chunk_size=profile.chunk_size,
+        chunk_strategy=profile.chunk_strategy,
+        enricher_model_id=profile.enricher_model_id,
+        enricher_prompt_template=profile.enricher_prompt_template,
+        agentic_verifier_mode=profile.agentic_verifier_mode,
+        agentic_verifier_model_id=profile.agentic_verifier_model_id,
+        agentic_verifier_max_steps=profile.agentic_verifier_max_steps,
+        verification_threshold=profile.verification_threshold,
+        require_unanimous_reject=profile.require_unanimous_reject,
+        enabled=profile.enabled,
+    )
+    db.add(new_profile)
+    db.flush()  # Get the ID for the new profile
+
+    # Copy analyzers
+    for analyzer in profile.analyzers:
+        new_analyzer = ProfileAnalyzer(
+            profile_id=new_profile.id,
+            name=analyzer.name,
+            description=analyzer.description,
+            model_id=analyzer.model_id,
+            chunk_size=analyzer.chunk_size,
+            prompt_template=analyzer.prompt_template,
+            output_mode=analyzer.output_mode,
+            json_schema=analyzer.json_schema,
+            file_filter=analyzer.file_filter,
+            language_filter=analyzer.language_filter,
+            role=analyzer.role,
+            run_order=analyzer.run_order,
+            enabled=analyzer.enabled,
+            stop_on_findings=analyzer.stop_on_findings,
+            min_severity_to_report=analyzer.min_severity_to_report,
+        )
+        db.add(new_analyzer)
+
+    # Copy verifiers
+    for verifier in profile.verifiers:
+        new_verifier = ProfileVerifier(
+            profile_id=new_profile.id,
+            name=verifier.name,
+            description=verifier.description,
+            model_id=verifier.model_id,
+            prompt_template=verifier.prompt_template,
+            output_mode=verifier.output_mode,
+            json_schema=verifier.json_schema,
+            run_order=verifier.run_order,
+            enabled=verifier.enabled,
+        )
+        db.add(new_verifier)
+
+    db.commit()
+
+    return {
+        "status": "duplicated",
+        "id": new_profile.id,
+        "name": new_profile.name,
+        "analyzers_count": len(profile.analyzers),
+        "verifiers_count": len(profile.verifiers),
+    }
+
+
 @router.post("/profiles/{profile_id}/analyzers")
 async def add_analyzer(
     profile_id: int,
@@ -2233,6 +2327,8 @@ async def add_analyzer(
     run_order: int = Form(1),
     stop_on_findings: bool = Form(False),
     min_severity_to_report: str = Form(None),
+    output_mode: str = Form("markers"),  # markers, json, or guided_json
+    json_schema: str = Form(None),  # JSON schema for guided_json mode
     db: Session = Depends(get_db)
 ):
     """Add an analyzer to a profile"""
@@ -2258,7 +2354,9 @@ async def add_analyzer(
         run_order=run_order,
         enabled=True,
         stop_on_findings=stop_on_findings,
-        min_severity_to_report=min_severity_to_report
+        min_severity_to_report=min_severity_to_report,
+        output_mode=output_mode,
+        json_schema=json_schema
     )
     db.add(analyzer)
     db.commit()
@@ -2283,6 +2381,8 @@ async def update_analyzer(
     enabled: bool = Form(None),
     stop_on_findings: bool = Form(None),
     min_severity_to_report: str = Form(None),
+    output_mode: str = Form(None),
+    json_schema: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """Update an analyzer"""
@@ -2320,6 +2420,10 @@ async def update_analyzer(
         analyzer.stop_on_findings = stop_on_findings
     if min_severity_to_report is not None:
         analyzer.min_severity_to_report = min_severity_to_report if min_severity_to_report else None
+    if output_mode is not None:
+        analyzer.output_mode = output_mode
+    if json_schema is not None:
+        analyzer.json_schema = json_schema if json_schema else None
 
     db.commit()
     return {"id": analyzer.id, "name": analyzer.name, "status": "updated"}
@@ -2370,6 +2474,8 @@ async def add_verifier(
     min_confidence: int = Form(0),
     run_order: int = Form(1),
     description: str = Form(None),
+    output_mode: str = Form("markers"),
+    json_schema: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """Add a verifier to a profile"""
@@ -2386,7 +2492,9 @@ async def add_verifier(
         min_confidence=min_confidence,
         run_order=run_order,
         description=description,
-        enabled=True
+        enabled=True,
+        output_mode=output_mode,
+        json_schema=json_schema
     )
     db.add(verifier)
     db.commit()
@@ -2406,6 +2514,8 @@ async def update_verifier(
     run_order: int = Form(None),
     description: str = Form(None),
     enabled: bool = Form(None),
+    output_mode: str = Form(None),
+    json_schema: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """Update a verifier"""
@@ -2432,6 +2542,10 @@ async def update_verifier(
         verifier.description = description
     if enabled is not None:
         verifier.enabled = enabled
+    if output_mode is not None:
+        verifier.output_mode = output_mode
+    if json_schema is not None:
+        verifier.json_schema = json_schema if json_schema else None
 
     db.commit()
     return {"id": verifier.id, "name": verifier.name, "status": "updated"}
@@ -2591,6 +2705,69 @@ async def create_setting(
     db.add(setting)
     db.commit()
     return {"key": setting.key, "value": setting.value, "status": "created"}
+
+
+@router.get("/output-templates")
+async def get_output_templates():
+    """Get all output format templates (with DB overrides applied)"""
+    from app.services.analysis.output_formats import get_all_templates
+    return get_all_templates()
+
+
+@router.put("/output-templates/{role}/{mode}")
+async def update_output_template(
+    role: str,
+    mode: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Update an output format template"""
+    from app.services.analysis.output_formats import invalidate_template_cache
+
+    if role not in ["analyzer", "verifier", "enricher"]:
+        return {"error": "Invalid role. Must be: analyzer, verifier, or enricher"}
+    if mode not in ["markers", "json", "guided_json"]:
+        return {"error": "Invalid mode. Must be: markers, json, or guided_json"}
+
+    body = await request.json()
+    value = body.get('value', '')
+    key = f"output_format_{role}_{mode}"
+
+    # Update or create the setting
+    setting = db.query(GlobalSetting).filter(GlobalSetting.key == key).first()
+    if not setting:
+        setting = GlobalSetting(key=key, value_type="string")
+        db.add(setting)
+
+    setting.value = value
+    db.commit()
+
+    # Invalidate cache so new value takes effect
+    invalidate_template_cache()
+
+    return {"key": key, "status": "updated"}
+
+
+@router.delete("/output-templates/{role}/{mode}")
+async def reset_output_template(
+    role: str,
+    mode: str,
+    db: Session = Depends(get_db)
+):
+    """Reset an output format template to default (delete DB override)"""
+    from app.services.analysis.output_formats import invalidate_template_cache
+
+    key = f"output_format_{role}_{mode}"
+
+    # Delete the override if it exists
+    setting = db.query(GlobalSetting).filter(GlobalSetting.key == key).first()
+    if setting:
+        db.delete(setting)
+        db.commit()
+
+    invalidate_template_cache()
+
+    return {"key": key, "status": "reset to default"}
 
 
 # ============== Webhook Security Alerts ==============
@@ -2955,7 +3132,7 @@ async def analyze_mr(
     from app.services.mr_reviewer_service import MRReviewerService
     from app.models.scanner_models import GitLabRepo, MRReview
     from app.models.models import Finding
-    from datetime import datetime, timezone
+    from datetime import datetime
     import json
 
     try:
@@ -3107,7 +3284,7 @@ async def analyze_mr(
         mr_review.files_reviewed = files_reviewed
         mr_review.diff_findings = json.dumps(all_findings)
         mr_review.diff_summary = summary
-        mr_review.diff_reviewed_at = datetime.now(timezone.utc)
+        mr_review.diff_reviewed_at = datetime.now().astimezone()
         mr_review.generated_comments = json.dumps(generated_comments)
         mr_review.comments_posted = json.dumps(comments_posted)
         mr_review.status = "completed"
@@ -3835,7 +4012,7 @@ async def poll_watcher_now(
         logging.info(f"Starting poll for watcher {watcher.name} (provider: {watcher.provider})")
         reviews = await service.poll_watcher(watcher)
         # Update last_check timestamp
-        watcher.last_check = datetime.utcnow()
+        watcher.last_check = datetime.now().astimezone()
         watcher.last_error = None
         db.commit()
         logging.info(f"Poll completed for watcher {watcher.name}: {len(reviews)} reviews")
@@ -3849,7 +4026,7 @@ async def poll_watcher_now(
         import traceback
         logging.error(f"Poll error for watcher {watcher.name}: {e}\n{traceback.format_exc()}")
         watcher.last_error = str(e)
-        watcher.last_check = datetime.utcnow()
+        watcher.last_check = datetime.now().astimezone()
         db.commit()
         return JSONResponse(
             {"error": str(e), "id": watcher.id, "status": "error"},
@@ -4000,7 +4177,118 @@ async def retry_review(
 
 
 # ============================================================================
-# LLM Request Logs - Debugging endpoints
+# ============================================================================
+# Tuning Page - Testing and debugging
+# ============================================================================
+
+@router.get("/tuning", response_class=HTMLResponse)
+async def tuning_page(request: Request, db: Session = Depends(get_db)):
+    """Tuning page for testing output formats and viewing LLM logs"""
+    return templates.TemplateResponse("tuning.html", {
+        "request": request,
+    })
+
+
+@router.post("/tuning/test-format")
+async def test_output_format(request: Request, db: Session = Depends(get_db)):
+    """Test a specific model with a given output format and code sample"""
+    import time
+    from app.services.analysis.output_formats import get_output_format
+    from app.services.analysis.parsers import DraftParser
+    from app.services.llm_provider import llm_provider
+
+    try:
+        data = await request.json()
+        model_id = data.get('model_id')
+        role = data.get('role', 'analyzer')
+        output_mode = data.get('output_mode', 'markers')
+        code = data.get('code', '')
+        language = data.get('language', 'c')
+
+        if not model_id or not code:
+            return JSONResponse({"error": "model_id and code are required"}, status_code=400)
+
+        # Get model config
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == int(model_id)).first()
+        if not model_config:
+            return JSONResponse({"error": "Model not found"}, status_code=404)
+
+        # Build test prompt
+        output_format = get_output_format(role, output_mode)
+
+        # Format code with line numbers
+        lines = code.split('\n')
+        formatted_code = '\n'.join(f"{i+1:4d} | {line}" for i, line in enumerate(lines))
+
+        test_prompt = f"""Analyze this {language} code for security vulnerabilities.
+
+=== CODE TO ANALYZE ===
+{formatted_code}
+
+{output_format}"""
+
+        # Call LLM
+        start_time = time.time()
+
+        # Build JSON schema if using guided_json
+        json_schema = None
+        if output_mode == "guided_json":
+            json_schema = {
+                "type": "object",
+                "properties": {
+                    "findings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "vulnerability_type": {"type": "string"},
+                                "severity": {"type": "string"},
+                                "line_number": {"type": "integer"},
+                                "snippet": {"type": "string"},
+                                "reason": {"type": "string"}
+                            },
+                            "required": ["title", "vulnerability_type", "severity", "line_number"]
+                        }
+                    }
+                },
+                "required": ["findings"]
+            }
+
+        result = await llm_provider.chat_completion(
+            messages=[{"role": "user", "content": test_prompt}],
+            model=model_config.name,
+            max_tokens=2000,
+            json_schema=json_schema if output_mode == "guided_json" else None
+        )
+
+        duration_ms = int((time.time() - start_time) * 1000)
+        raw_response = result.get("content", "")
+
+        # Try to parse the response
+        parser = DraftParser()
+        parsed_findings = parser.parse(raw_response)
+
+        return {
+            "model": model_config.name,
+            "output_mode": output_mode,
+            "raw_response": raw_response,
+            "parse_success": parsed_findings is not None,
+            "parsed_findings": parsed_findings,
+            "findings_count": len(parsed_findings) if parsed_findings else 0,
+            "duration_ms": duration_ms
+        }
+
+    except Exception as e:
+        import traceback
+        return JSONResponse({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "parse_success": False
+        }, status_code=500)
+
+
+# LLM Request Logs - Debugging endpoints (also accessible via /tuning page)
 # ============================================================================
 
 @router.get("/llm-logs", response_class=HTMLResponse)
@@ -4109,7 +4397,7 @@ async def clear_llm_logs(
         query = query.filter(LLMRequestLog.scan_id == scan_id)
 
     if older_than_days is not None:
-        cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+        cutoff = datetime.now().astimezone() - timedelta(days=older_than_days)
         query = query.filter(LLMRequestLog.created_at < cutoff)
 
     count = query.count()

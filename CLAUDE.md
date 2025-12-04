@@ -226,6 +226,15 @@ sqlite3 /tmp/scans.db "SELECT * FROM draft_findings WHERE scan_id=X;"
 
 ### Database Migrations
 
+For output mode support (guided JSON/structured output), run:
+```sql
+-- Add output_mode to analyzers and verifiers (December 2025)
+ALTER TABLE profile_analyzers ADD COLUMN output_mode VARCHAR DEFAULT 'markers';
+ALTER TABLE profile_analyzers ADD COLUMN json_schema TEXT;
+ALTER TABLE profile_verifiers ADD COLUMN output_mode VARCHAR DEFAULT 'markers';
+ALTER TABLE profile_verifiers ADD COLUMN json_schema TEXT;
+```
+
 For GitHub support (added November 2025), run:
 ```sql
 -- Create github_repos table

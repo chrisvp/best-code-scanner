@@ -1,6 +1,7 @@
 import asyncio
 import httpx
 import time
+import json
 from typing import List, Dict, Optional, Any, Callable
 from app.models.scanner_models import ModelConfig, ScanErrorLog
 from app.services.llm_logger import llm_logger
@@ -45,11 +46,27 @@ class ModelPool:
         await self.batch_queue.put((prompt, future))
         return await future
 
-    async def call_batch(self, prompts: List[str], log_context: Optional[Dict[str, Any]] = None) -> List[str]:
-        """Direct batch call - bypasses queue"""
+    async def call_batch(
+        self,
+        prompts: List[str],
+        log_context: Optional[Dict[str, Any]] = None,
+        output_mode: str = "markers",
+        json_schema: Optional[str] = None
+    ) -> List[str]:
+        """Direct batch call - bypasses queue
+
+        Args:
+            prompts: List of prompts to send
+            log_context: Optional context for logging
+            output_mode: Response format mode:
+                - "markers": Default, no special formatting
+                - "json": Use response_format: {"type": "json_object"}
+                - "guided_json": Use vLLM guided_json with schema
+            json_schema: JSON schema string for guided_json mode
+        """
         if log_context:
             self._log_context = log_context
-        return await self._send_batch(prompts)
+        return await self._send_batch(prompts, output_mode=output_mode, json_schema=json_schema)
 
     def set_log_context(self, **kwargs):
         """Set logging context for subsequent calls (scan_id, phase, analyzer_name, etc.)"""
@@ -110,15 +127,42 @@ class ModelPool:
                         future.cancel()
                 raise
 
-    async def _send_batch(self, prompts: List[str]) -> List[str]:
-        """Send batch to vLLM using chat completions"""
+    async def _send_batch(
+        self,
+        prompts: List[str],
+        output_mode: str = "markers",
+        json_schema: Optional[str] = None
+    ) -> List[str]:
+        """Send batch to vLLM using chat completions
+
+        Args:
+            prompts: List of prompts to send
+            output_mode: Response format mode (markers, json, guided_json)
+            json_schema: JSON schema string for guided_json mode
+        """
         results = []
         log_context = self._log_context.copy()
+
+        # Log pending requests BEFORE sending
+        pending_log_ids = []
+        for prompt in prompts:
+            log_id = llm_logger.log_pending(
+                model_name=self.config.name,
+                phase=log_context.get('phase', 'unknown'),
+                request_prompt=prompt,
+                scan_id=log_context.get('scan_id'),
+                mr_review_id=log_context.get('mr_review_id'),
+                analyzer_name=log_context.get('analyzer_name'),
+                file_path=log_context.get('file_path'),
+                chunk_id=log_context.get('chunk_id'),
+            )
+            pending_log_ids.append(log_id)
 
         async with httpx.AsyncClient(timeout=600.0, verify=False) as client:
             # Rate-limited concurrent requests
             async def send_one(prompt: str, idx: int) -> tuple:
-                """Returns (response_content, prompt, duration_ms, tokens_in, tokens_out, error)"""
+                """Returns (response_content, prompt, duration_ms, tokens_in, tokens_out, error, log_id)"""
+                log_id = pending_log_ids[idx] if idx < len(pending_log_ids) else None
                 async with self.semaphore:
                     start_time = time.time()
                     tokens_in = None
@@ -132,7 +176,7 @@ class ModelPool:
 
                         if not base_url:
                             duration_ms = (time.time() - start_time) * 1000
-                            return ("", prompt, duration_ms, None, None, f"Model '{self.config.name}' has no base_url configured and no default set")
+                            return ("", prompt, duration_ms, None, None, f"Model '{self.config.name}' has no base_url configured and no default set", log_id)
 
                         base = base_url.rstrip('/')
                         if base.endswith('/v1'):
@@ -146,6 +190,17 @@ class ModelPool:
                             "max_tokens": self.config.max_tokens,
                             "temperature": 0.1
                         }
+
+                        # Apply output mode formatting
+                        if output_mode == "json":
+                            request_payload["response_format"] = {"type": "json_object"}
+                        elif output_mode == "guided_json" and json_schema:
+                            try:
+                                schema = json.loads(json_schema) if isinstance(json_schema, str) else json_schema
+                                request_payload["guided_json"] = schema
+                            except json.JSONDecodeError:
+                                # Invalid schema - fall back to regular json mode
+                                request_payload["response_format"] = {"type": "json_object"}
 
                         response = await client.post(
                             url,
@@ -172,7 +227,7 @@ class ModelPool:
                                 print(f"[LLM ERROR] Prompt preview: {prompt[:500]}...{prompt[-200:]}")
 
                             duration_ms = (time.time() - start_time) * 1000
-                            return ("", prompt, duration_ms, None, None, f"HTTP {response.status_code}: {error_message}")
+                            return ("", prompt, duration_ms, None, None, f"HTTP {response.status_code}: {error_message}", log_id)
 
                         data = response.json()
 
@@ -198,10 +253,10 @@ class ModelPool:
                                 content = f"<thinking>{reasoning}</thinking>\n{content}"
 
                             duration_ms = (time.time() - start_time) * 1000
-                            return (content, prompt, duration_ms, tokens_in, tokens_out, None)
+                            return (content, prompt, duration_ms, tokens_in, tokens_out, None, log_id)
 
                         duration_ms = (time.time() - start_time) * 1000
-                        return ("", prompt, duration_ms, tokens_in, tokens_out, None)
+                        return ("", prompt, duration_ms, tokens_in, tokens_out, None, log_id)
 
                     except Exception as e:
                         import traceback
@@ -209,13 +264,13 @@ class ModelPool:
                         print(f"Request failed for {self.config.name}: {error_msg}")
                         traceback.print_exc()
                         duration_ms = (time.time() - start_time) * 1000
-                        return ("", prompt, duration_ms, tokens_in, tokens_out, error_msg)
+                        return ("", prompt, duration_ms, tokens_in, tokens_out, error_msg, log_id)
 
             tasks = [send_one(prompt, i) for i, prompt in enumerate(prompts)]
             batch_results = await asyncio.gather(*tasks)
 
             # Count errors in this batch
-            batch_errors = sum(1 for _, _, _, _, _, error in batch_results if error)
+            batch_errors = sum(1 for _, _, _, _, _, error, _ in batch_results if error)
             batch_successes = len(batch_results) - batch_errors
 
             # Update consecutive failure tracking
@@ -226,27 +281,22 @@ class ModelPool:
                 # At least one success - reset counter
                 self._consecutive_failures = 0
 
-            # Log all results
-            for content, prompt, duration_ms, tokens_in, tokens_out, error in batch_results:
+            # Update log entries with responses
+            for content, prompt, duration_ms, tokens_in, tokens_out, error, log_id in batch_results:
                 results.append(content)
 
-                # Log this request/response
-                llm_logger.log(
-                    model_name=self.config.name,
-                    phase=log_context.get('phase', 'unknown'),
-                    request_prompt=prompt,
-                    raw_response=content,
-                    scan_id=log_context.get('scan_id'),
-                    mr_review_id=log_context.get('mr_review_id'),
-                    analyzer_name=log_context.get('analyzer_name'),
-                    file_path=log_context.get('file_path'),
-                    chunk_id=log_context.get('chunk_id'),
-                    parse_success=error is None,
-                    parse_error=error,
-                    tokens_in=tokens_in,
-                    tokens_out=tokens_out,
-                    duration_ms=duration_ms,
-                )
+                # Update the pending log entry with the response
+                if log_id:
+                    llm_logger.log_response(
+                        log_id=log_id,
+                        raw_response=content,
+                        parse_success=error is None,
+                        parse_error=error,
+                        tokens_in=tokens_in,
+                        tokens_out=tokens_out,
+                        duration_ms=duration_ms,
+                        status="failed" if error else "completed",
+                    )
 
                 # Call error callback if there's an error
                 if error and self._error_callback:

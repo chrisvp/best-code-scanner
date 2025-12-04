@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -210,7 +210,7 @@ class WebhookService:
         payload = {
             "event": event_type,
             "severity": finding.get("severity", "MEDIUM").upper(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now().astimezone().isoformat(),
             "scan_id": scan_id,
             "finding": {
                 "id": finding.get("id"),
@@ -241,7 +241,7 @@ class WebhookService:
 
         return {
             "event": "scan_complete",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now().astimezone().isoformat(),
             "scan_id": scan_id,
             "summary": {
                 "total_findings": summary.get("total_findings", 0),
@@ -319,10 +319,10 @@ class WebhookService:
 
             if 200 <= response.status_code < 300:
                 delivery_log.status = "success"
-                delivery_log.delivered_at = datetime.now(timezone.utc)
+                delivery_log.delivered_at = datetime.now().astimezone()
 
                 # Update webhook stats
-                webhook.last_triggered = datetime.now(timezone.utc)
+                webhook.last_triggered = datetime.now().astimezone()
                 webhook.trigger_count = (webhook.trigger_count or 0) + 1
                 webhook.last_error = None
 
@@ -505,7 +505,7 @@ class WebhookService:
         # Build test payload
         payload = {
             "event": "test",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now().astimezone().isoformat(),
             "message": "This is a test webhook from the Security Scanner",
             "webhook_id": webhook_id,
             "webhook_name": webhook.name,

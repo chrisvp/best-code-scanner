@@ -2,12 +2,13 @@ import asyncio
 import os
 from typing import List, Dict, Optional
 
-from app.models.scanner_models import DraftFinding, ScanFileChunk, ScanFile, VerificationVote
+from app.models.scanner_models import DraftFinding, ScanFileChunk, ScanFile, VerificationVote, ProfileVerifier
 from app.models.models import Scan
 from app.services.intelligence.context_retriever import ContextRetriever
 from app.services.orchestration.model_orchestrator import ModelPool, ModelOrchestrator
 from app.core.database import SessionLocal
 from app.services.analysis.universal_parser import VoteParser
+from app.services.analysis.output_formats import get_output_format
 
 # Import agentic verification components
 try:
@@ -89,25 +90,54 @@ REJECT if:
 - OR standard safe idiom (alignment, bounded copy)
 - OR no attacker-controlled input reaches the sink
 
-=== RESPONSE ===
-*VOTE: VERIFY, WEAKNESS, or REJECT
-*CONFIDENCE: 0-100 (lower if uncertain)
-*REASONING: [2-3 sentences explaining data flow and exploitability]
-*END_VOTE"""
+{output_format}"""
 
     def __init__(self, scan_id: int, orchestrator: ModelOrchestrator, context_retriever: ContextRetriever,
                  use_agentic: bool = False, agentic_model_pool: Optional[ModelPool] = None,
-                 agentic_max_steps: int = 8):
+                 agentic_max_steps: int = 8, profile_id: int = None):
         self.scan_id = scan_id
         self.orchestrator = orchestrator
         self.context_retriever = context_retriever
         self.use_agentic = use_agentic and AGENTIC_AVAILABLE
         self.agentic_model_pool = agentic_model_pool
         self.agentic_max_steps = agentic_max_steps
+        self.profile_id = profile_id
 
         # Initialize agentic verifier if enabled
         self._agentic_verifier = None
         self._codebase_tools = None
+
+        # Cache profile verifiers if profile_id is set
+        self._profile_verifiers: Dict[int, ProfileVerifier] = {}  # model_id -> ProfileVerifier
+        if profile_id:
+            self._load_profile_verifiers()
+
+    def _load_profile_verifiers(self):
+        """Load profile verifiers and cache by model_id"""
+        db = SessionLocal()
+        try:
+            verifiers = db.query(ProfileVerifier).filter(
+                ProfileVerifier.profile_id == self.profile_id,
+                ProfileVerifier.enabled == True
+            ).all()
+            # Detach from session to avoid refresh errors
+            for v in verifiers:
+                db.expunge(v)
+                self._profile_verifiers[v.model_id] = v
+            print(f"[Verifier] Loaded {len(verifiers)} profile verifiers for profile {self.profile_id}")
+        finally:
+            db.close()
+
+    def _format_prompt(self, template: str, ctx: dict, output_mode: str = "markers") -> str:
+        """Format a prompt template with context and output format (examples are combined in output_format)"""
+        format_ctx = dict(ctx)
+
+        # Inject output_format if the template contains the placeholder
+        # Note: examples are now combined into output_format templates
+        if '{output_format}' in template:
+            format_ctx['output_format'] = get_output_format("verifier", output_mode)
+
+        return template.format(**format_ctx)
 
     async def verify_batch(self, drafts: List[DraftFinding]) -> List[dict]:
         """
@@ -153,11 +183,22 @@ REJECT if:
         # Run all models in parallel
         async def get_model_votes(pool: ModelPool) -> tuple:
             try:
-                # Use custom prompt if configured, else default
-                template = pool.config.verification_prompt_template or self.VOTE_PROMPT
+                # Check for profile verifier configuration
+                profile_verifier = self._profile_verifiers.get(pool.config.id)
 
-                # Generate prompts specific to this model
-                model_prompts = [template.format(**ctx) for ctx in draft_contexts]
+                if profile_verifier and profile_verifier.prompt_template:
+                    # Use profile verifier's prompt and output settings
+                    template = profile_verifier.prompt_template
+                    output_mode = profile_verifier.output_mode or "markers"
+                    json_schema = profile_verifier.json_schema
+                else:
+                    # Fall back to model config or default
+                    template = pool.config.verification_prompt_template or self.VOTE_PROMPT
+                    output_mode = "markers"
+                    json_schema = None
+
+                # Generate prompts with output_format injection
+                model_prompts = [self._format_prompt(template, ctx, output_mode) for ctx in draft_contexts]
 
                 # Set logging context for the model pool
                 pool.set_log_context(
@@ -165,7 +206,11 @@ REJECT if:
                     phase='verifier',
                 )
 
-                responses = await pool.call_batch(model_prompts)
+                responses = await pool.call_batch(
+                    model_prompts,
+                    output_mode=output_mode,
+                    json_schema=json_schema
+                )
                 return (pool.config.name, responses)
             except Exception as e:
                 print(f"Verifier {pool.config.name} failed: {e}")

@@ -86,22 +86,17 @@ class IngestionService:
         return target_dir
 
     async def copy_from_scan(self, source_scan_id: str, target_scan_id: str) -> Path:
-        """Copy code from an existing scan's sandbox to a new scan."""
+        """Reuse an existing scan's sandbox directly (no copy).
+
+        The file_filter in ScanConfig controls which files to scan,
+        while the full codebase remains available for context (e.g., agentic verifiers).
+        """
         source_dir = self.sandbox_root / str(source_scan_id)
         if not source_dir.exists():
             raise Exception(f"Source scan {source_scan_id} sandbox not found")
 
-        target_dir = self.create_sandbox(str(target_scan_id))
-
-        # Copy all contents from source to target
-        for item in source_dir.iterdir():
-            src_path = source_dir / item.name
-            dst_path = target_dir / item.name
-            if src_path.is_dir():
-                shutil.copytree(src_path, dst_path)
-            else:
-                shutil.copy2(src_path, dst_path)
-
-        return target_dir
+        # Just return the source directory - no copying needed
+        # The new scan will use file_filter to limit what's scanned
+        return source_dir
 
 ingestion_service = IngestionService()

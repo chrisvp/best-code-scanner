@@ -1,8 +1,14 @@
+from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Enum, Boolean, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
 from app.core.database import Base
+
+
+def local_now():
+    """Return current local datetime for database defaults."""
+    return datetime.now().astimezone()
 
 class ScanStatus(str, enum.Enum):
     QUEUED = "queued"
@@ -32,8 +38,8 @@ class Scan(Base):
     current_phase = Column(String, default=ScanPhase.QUEUED, index=True)  # Track pipeline progress for resume
     consensus_enabled = Column(Boolean, default=False)
     logs = Column(Text, default="")
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     findings = relationship("Finding", back_populates="scan")
 
@@ -82,6 +88,6 @@ class GeneratedFix(Base):
     model_name = Column(String, nullable=True)
     code = Column(Text, nullable=False)
     reasoning = Column(Text, nullable=True)  # JSON list for agent fixes
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
     finding = relationship("Finding", back_populates="generated_fixes")

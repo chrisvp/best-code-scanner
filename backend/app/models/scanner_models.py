@@ -1,7 +1,13 @@
+from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Float, JSON, case
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
+
+
+def local_now():
+    """Return current local datetime for database defaults."""
+    return datetime.now().astimezone()
 
 
 class ModelConfig(Base):
@@ -50,6 +56,7 @@ class ScanConfig(Base):
     chunk_size = Column(Integer, default=6000)  # Max tokens per chunk
     chunk_strategy = Column(String, default="smart")  # lines, functions, or smart
     file_filter = Column(String, nullable=True)  # Glob pattern to filter files (e.g., "*.c", "src/*.py", "sshd.c")
+    source_scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True)  # Reuse sandbox from this scan
 
 
 class ScanFile(Base):
@@ -64,7 +71,7 @@ class ScanFile(Base):
     risk_level = Column(String, default="normal")  # high/normal/low
     status = Column(String, default="pending")
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
     chunks = relationship("ScanFileChunk", back_populates="scan_file")
 
@@ -150,7 +157,7 @@ class VulnerabilityCategory(Base):
     keywords = Column(JSON)  # e.g., ["xss", "cross-site", "script injection"]
 
     usage_count = Column(Integer, default=0)  # Track how often this category is used
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
 
 class DraftFinding(Base):
@@ -184,7 +191,7 @@ class DraftFinding(Base):
     verification_notes = Column(Text)  # Verifier reasoning for verify/reject decision
     verification_votes = Column(Integer)  # Number of verifiers that agreed
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
     # Relationship to votes for debugging
     votes = relationship("VerificationVote", back_populates="draft_finding")
@@ -205,7 +212,7 @@ class VerifiedFinding(Base):
     adjusted_severity = Column(String, nullable=True)
 
     status = Column(String, default="pending")  # pending/enriching/complete
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
 
 class LLMCallMetric(Base):
@@ -223,7 +230,7 @@ class LLMCallMetric(Base):
     tokens_in = Column(Integer, nullable=True)
     tokens_out = Column(Integer, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
 
 class StaticRule(Base):
@@ -252,8 +259,8 @@ class StaticRule(Base):
     built_in = Column(Boolean, default=True)  # False for user-created rules
     match_count = Column(Integer, default=0)  # Track how often this rule matches
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
 
 class ScanProfile(Base):
@@ -283,8 +290,8 @@ class ScanProfile(Base):
     require_unanimous_reject = Column(Boolean, default=False)  # All must reject to reject
 
     enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     # Relationships
     analyzers = relationship("ProfileAnalyzer", back_populates="profile", order_by="ProfileAnalyzer.run_order")
@@ -312,6 +319,13 @@ class ProfileAnalyzer(Base):
     # Prompt template - supports {code}, {language}, {file_path} placeholders
     prompt_template = Column(Text)
 
+    # Output mode: how to parse LLM responses
+    # - "markers": Use *DRAFT:, *VOTE:, etc. markers (default, works everywhere)
+    # - "json": Use response_format: json_object (wider model support)
+    # - "guided_json": Use vLLM guided_json with schema (strictest, limited model support)
+    output_mode = Column(String, default="markers")
+    json_schema = Column(Text, nullable=True)  # JSON schema for guided_json mode
+
     # Filtering
     file_filter = Column(String, nullable=True)  # Glob pattern: "*.c,*.h" or null for all
     language_filter = Column(JSON, nullable=True)  # ["c", "cpp"] or null for all
@@ -325,7 +339,7 @@ class ProfileAnalyzer(Base):
     stop_on_findings = Column(Boolean, default=False)  # Stop subsequent analyzers if this finds issues
     min_severity_to_report = Column(String, nullable=True)  # Only report findings >= this severity
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
     profile = relationship("ScanProfile", back_populates="analyzers")
     model = relationship("ModelConfig")
@@ -348,8 +362,8 @@ class WebhookConfig(Base):
     trigger_count = Column(Integer, default=0)
     last_error = Column(String, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     deliveries = relationship("WebhookDeliveryLog", back_populates="webhook")
 
@@ -375,7 +389,7 @@ class WebhookDeliveryLog(Base):
 
     # Timing
     attempt_count = Column(Integer, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
 
     webhook = relationship("WebhookConfig", back_populates="deliveries")
@@ -399,7 +413,7 @@ class ScanErrorLog(Base):
     file_path = Column(String, nullable=True)
     chunk_index = Column(Integer, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
     resolved_at = Column(DateTime(timezone=True), nullable=True)  # When successfully retried
 
 
@@ -429,7 +443,7 @@ class ScanMetrics(Base):
     total_tokens_out = Column(Integer, nullable=True)
     tokens_per_second = Column(Float, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
 
 class GitLabRepo(Base):
@@ -444,8 +458,8 @@ class GitLabRepo(Base):
     description = Column(String, nullable=True)  # Optional description
     verify_ssl = Column(Boolean, default=False)  # Whether to verify SSL certs (False for self-hosted)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     # Relationships
     watchers = relationship("RepoWatcher", back_populates="gitlab_repo")
@@ -463,8 +477,8 @@ class GitHubRepo(Base):
     repo = Column(String, nullable=False)  # Repository name
     description = Column(String, nullable=True)  # Optional description
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     # Relationships
     watchers = relationship("RepoWatcher", back_populates="github_repo")
@@ -513,8 +527,8 @@ class RepoWatcher(Base):
     last_check = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(String, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     # Relationships
     gitlab_repo = relationship("GitLabRepo", back_populates="watchers")
@@ -533,6 +547,9 @@ class LLMRequestLog(Base):
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
     mr_review_id = Column(Integer, ForeignKey("mr_reviews.id"), nullable=True, index=True)
 
+    # Request status: "pending", "completed", "failed", "timeout"
+    status = Column(String, default="pending", index=True)
+
     # Request context
     model_name = Column(String, index=True)
     phase = Column(String, index=True)  # "scanner", "verifier", "enricher", "chat", "cleanup", "mr_review"
@@ -544,7 +561,7 @@ class LLMRequestLog(Base):
 
     # Request/Response content
     request_prompt = Column(Text)  # The full prompt sent to the LLM
-    raw_response = Column(Text)  # The raw response from the LLM
+    raw_response = Column(Text, nullable=True)  # The raw response from the LLM (nullable until completed)
     parsed_result = Column(JSON, nullable=True)  # What was successfully parsed (findings, etc.)
 
     # Parsing status
@@ -557,7 +574,7 @@ class LLMRequestLog(Base):
     tokens_out = Column(Integer, nullable=True)
     duration_ms = Column(Float, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
 
 class MRReview(Base):
@@ -603,8 +620,8 @@ class MRReview(Base):
     # Error tracking
     last_error = Column(String, nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    updated_at = Column(DateTime(timezone=True), onupdate=local_now)
 
     # Relationships
     watcher = relationship("RepoWatcher", back_populates="reviews")
@@ -630,6 +647,13 @@ class ProfileVerifier(Base):
     # Prompt template - supports {title}, {vuln_type}, {severity}, {snippet}, {reason}, {context}
     prompt_template = Column(Text)
 
+    # Output mode: how to parse LLM responses
+    # - "markers": Use *VOTE:, *CONFIDENCE:, etc. markers (default, works everywhere)
+    # - "json": Use response_format: json_object (wider model support)
+    # - "guided_json": Use vLLM guided_json with schema (strictest, limited model support)
+    output_mode = Column(String, default="markers")
+    json_schema = Column(Text, nullable=True)  # JSON schema for guided_json mode
+
     # Voting configuration
     vote_weight = Column(Float, default=1.0)  # Weight in voting (e.g., 1.5 for expert models)
     min_confidence = Column(Integer, default=0)  # Minimum confidence to count vote
@@ -638,7 +662,7 @@ class ProfileVerifier(Base):
     run_order = Column(Integer, default=1)
     enabled = Column(Boolean, default=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
     # Relationships
     profile = relationship("ScanProfile", back_populates="verifiers")
@@ -671,7 +695,7 @@ class VerificationVote(Base):
     # Weighting
     vote_weight = Column(Float, default=1.0)  # Applied weight
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=local_now)
 
     # Relationships
     draft_finding = relationship("DraftFinding")
@@ -688,7 +712,7 @@ class GlobalSetting(Base):
     value_type = Column(String, default="string")  # string, int, bool, json
     description = Column(Text, nullable=True)
 
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), default=local_now, onupdate=local_now)
 
     @classmethod
     def get(cls, db, key: str, default=None):

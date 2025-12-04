@@ -230,15 +230,46 @@
                     <!-- Profile Header -->
                     <div class="p-4 border-b border-gray-700 flex justify-between items-center">
                         <div>
-                            <h2 class="text-base font-semibold text-white flex items-center gap-2">
-                                {{ profile.name }}
-                                {% if profile.is_default %}
-                                <span class="px-2 py-0.5 text-[10px] bg-blue-600 text-white rounded uppercase">Default</span>
-                                {% endif %}
-                                {% if not profile.enabled %}
-                                <span class="px-2 py-0.5 text-[10px] bg-gray-600 text-gray-300 rounded uppercase">Disabled</span>
-                                {% endif %}
-                            </h2>
+                            <div class="flex items-center gap-2">
+                                <!-- Display mode -->
+                                <h2 id="profile-name-display-{{ profile.id }}" class="text-base font-semibold text-white flex items-center gap-2">
+                                    {{ profile.name }}
+                                    <button onclick="editProfileName({{ profile.id }}, '{{ profile.name }}')"
+                                        class="p-1 text-gray-500 hover:text-blue-400 hover:bg-gray-700 rounded transition-colors"
+                                        title="Edit profile name">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                        </svg>
+                                    </button>
+                                    {% if profile.is_default %}
+                                    <span class="px-2 py-0.5 text-[10px] bg-blue-600 text-white rounded uppercase">Default</span>
+                                    {% endif %}
+                                    {% if not profile.enabled %}
+                                    <span class="px-2 py-0.5 text-[10px] bg-gray-600 text-gray-300 rounded uppercase">Disabled</span>
+                                    {% endif %}
+                                </h2>
+                                <!-- Edit mode (hidden by default) -->
+                                <div id="profile-name-edit-{{ profile.id }}" class="hidden flex items-center gap-2">
+                                    <input type="text" id="profile-name-input-{{ profile.id }}"
+                                        class="bg-gray-700 text-white text-base font-semibold px-2 py-1 rounded border border-gray-600 focus:border-blue-500 focus:outline-none w-48"
+                                        value="{{ profile.name }}"
+                                        onkeydown="if(event.key==='Enter')saveProfileName({{ profile.id }});if(event.key==='Escape')cancelEditProfileName({{ profile.id }},'{{ profile.name }}');">
+                                    <button onclick="saveProfileName({{ profile.id }})"
+                                        class="p-1 text-green-400 hover:text-green-300 hover:bg-gray-700 rounded transition-colors"
+                                        title="Save">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                                        </svg>
+                                    </button>
+                                    <button onclick="cancelEditProfileName({{ profile.id }}, '{{ profile.name }}')"
+                                        class="p-1 text-gray-400 hover:text-gray-300 hover:bg-gray-700 rounded transition-colors"
+                                        title="Cancel">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
                             <p class="text-xs text-gray-500 mt-0.5">{{ profile.description or 'No description' }}</p>
                         </div>
                         <div class="flex items-center gap-3">
@@ -246,8 +277,16 @@
                                 Chunk: {{ profile.chunk_size }} | {{ profile.chunk_strategy }}
                             </span>
                             <div class="flex gap-1">
+                                <button onclick="duplicateProfile({{ profile.id }}, '{{ profile.name }}')"
+                                    class="p-1.5 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="Duplicate profile">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                    </svg>
+                                </button>
                                 <button onclick="deleteProfile({{ profile.id }}, '{{ profile.name }}')"
-                                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors">
+                                    class="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded transition-colors"
+                                    title="Delete profile">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                     </svg>
@@ -745,6 +784,70 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Output Format Templates -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden lg:col-span-2 mt-6">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            Output Format Templates
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">Templates injected into prompts via <code class="text-green-400">{output_format}</code> placeholder. Cached for 5 minutes.</p>
+                    </div>
+                    <div class="p-4">
+                        <!-- Role/Mode Selector -->
+                        <div class="flex flex-wrap gap-4 mb-4">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Role</label>
+                                <select id="template-role-select" onchange="loadOutputTemplate()"
+                                    class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    <option value="analyzer">Analyzer (Draft Scanning)</option>
+                                    <option value="verifier">Verifier (Voting)</option>
+                                    <option value="enricher">Enricher (Reports)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-400 mb-1">Output Mode</label>
+                                <select id="template-mode-select" onchange="loadOutputTemplate()"
+                                    class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-green-500">
+                                    <option value="markers">Markers (Text Tags)</option>
+                                    <option value="json">JSON</option>
+                                    <option value="guided_json">Guided JSON (Schema)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Template Editor -->
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-sm font-medium text-gray-300">
+                                    <span id="template-editor-label">Analyzer / Markers</span>
+                                </label>
+                                <span id="template-status" class="text-xs text-gray-500"></span>
+                            </div>
+                            <textarea id="output-template-editor" rows="18"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                                placeholder="Loading template..."></textarea>
+                            <div class="flex justify-between items-center mt-2">
+                                <p class="text-xs text-gray-500">
+                                    Include both format instructions and examples in this template.
+                                </p>
+                                <div class="flex gap-2">
+                                    <button onclick="resetOutputTemplate()"
+                                        class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs font-medium rounded-lg transition-colors">
+                                        Reset to Default
+                                    </button>
+                                    <button onclick="saveOutputTemplate()"
+                                        class="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-medium rounded-lg transition-colors">
+                                        Save Template
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1057,13 +1160,28 @@ File: {file_path}
 {code}
 ```
 
-For each vulnerability, respond with JSON:
-```json
-[{"title": "...", "vulnerability_type": "CWE-XXX", "severity": "High", "line_number": 123, "snippet": "...", "reason": "..."}]
-```
-
-If none found: []</textarea>
+{output_format}</textarea>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
+                    <select name="output_mode" id="add-analyzer-output-mode" onchange="toggleJsonSchema(this, 'add-analyzer')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="markers">Markers (*DRAFT:, *VOTE:, etc.)</option>
+                        <option value="json">JSON (response_format)</option>
+                        <option value="guided_json">Guided JSON (vLLM schema)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
+                </div>
+                <div id="add-analyzer-schema-container" class="hidden">
+                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
+                    <textarea name="json_schema" id="add-analyzer-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only, not all models support this)</p>
+                </div>
+                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
+                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                        Format Instructions Preview (auto-appended to prompt as {output_format})
+                    </summary>
+                    <pre id="add-analyzer-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+                </details>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-analyzer-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1116,6 +1234,26 @@ If none found: []</textarea>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
                     <textarea name="prompt_template" id="edit-analyzer-prompt" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
+                    <select name="output_mode" id="edit-analyzer-output-mode" onchange="toggleJsonSchema(this, 'edit-analyzer')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="markers">Markers (*DRAFT:, *VOTE:, etc.)</option>
+                        <option value="json">JSON (response_format)</option>
+                        <option value="guided_json">Guided JSON (vLLM schema)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
+                </div>
+                <div id="edit-analyzer-schema-container" class="hidden">
+                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
+                    <textarea name="json_schema" id="edit-analyzer-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only, not all models support this)</p>
+                </div>
+                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
+                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                        Format Instructions Preview (auto-appended to prompt as {output_format})
+                    </summary>
+                    <pre id="edit-analyzer-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+                </details>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('edit-analyzer-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1181,14 +1319,28 @@ File: {file_path}
 **Reason Reported:**
 {reason}
 
-Vote with one of:
-- VERIFY: Real, exploitable vulnerability
-- WEAKNESS: Code quality issue but not exploitable
-- REJECT: False positive
-
-Respond in JSON format:
-{"vote": "VERIFY|WEAKNESS|REJECT", "confidence": 0-100, "reasoning": "..."}</textarea>
+{output_format}</textarea>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
+                    <select name="output_mode" id="add-verifier-output-mode" onchange="toggleJsonSchema(this, 'add-verifier')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <option value="markers">Markers (*VOTE:, etc.)</option>
+                        <option value="json">JSON (response_format)</option>
+                        <option value="guided_json">Guided JSON (vLLM schema)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
+                </div>
+                <div id="add-verifier-schema-container" class="hidden">
+                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
+                    <textarea name="json_schema" id="add-verifier-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only)</p>
+                </div>
+                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
+                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                        Format Instructions Preview (auto-appended to prompt as {output_format})
+                    </summary>
+                    <pre id="add-verifier-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+                </details>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-verifier-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1241,6 +1393,26 @@ Respond in JSON format:
                     <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
                     <textarea name="prompt_template" id="edit-verifier-prompt" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
+                    <select name="output_mode" id="edit-verifier-output-mode" onchange="toggleJsonSchema(this, 'edit-verifier')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                        <option value="markers">Markers (*VOTE:, etc.)</option>
+                        <option value="json">JSON (response_format)</option>
+                        <option value="guided_json">Guided JSON (vLLM schema)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
+                </div>
+                <div id="edit-verifier-schema-container" class="hidden">
+                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
+                    <textarea name="json_schema" id="edit-verifier-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only)</p>
+                </div>
+                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
+                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                        Format Instructions Preview (auto-appended to prompt as {output_format})
+                    </summary>
+                    <pre id="edit-verifier-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
+                </details>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('edit-verifier-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1306,6 +1478,194 @@ const modelsData = {
     {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }} },{% endfor %}
 };
 
+// Output format templates - appended to prompts based on output_mode
+const outputFormatTemplates = {
+    // For analyzers (draft scanning)
+    analyzer: {
+        markers: `=== OUTPUT FORMAT ===
+For each vulnerability found, use this EXACT format:
+
+*DRAFT: [descriptive title]
+*TYPE: CWE-XXX
+*SEVERITY: Critical/High/Medium/Low
+*LINE: [exact line number from code above]
+*SNIPPET: [the vulnerable code]
+*REASON: [one sentence explanation]
+*END_DRAFT
+
+If no vulnerabilities found, respond with: *DRAFT:NONE`,
+
+        json: `=== OUTPUT FORMAT ===
+Respond with a JSON object containing a "findings" array. Each finding should have:
+- title: Brief descriptive title
+- vulnerability_type: CWE ID (e.g., "CWE-78")
+- severity: "Critical", "High", "Medium", or "Low"
+- line_number: Exact line number from the code
+- snippet: The vulnerable code
+- reason: One sentence explanation
+
+Example:
+{"findings": [{"title": "Buffer Overflow", "vulnerability_type": "CWE-120", "severity": "High", "line_number": 42, "snippet": "strcpy(buf, input)", "reason": "Unbounded copy into fixed buffer"}]}
+
+If no vulnerabilities: {"findings": []}`,
+
+        guided_json: `=== OUTPUT FORMAT ===
+Respond with JSON matching the required schema. Include all findings in the "findings" array.
+Each finding must have: title, vulnerability_type (CWE-XXX), severity, line_number, snippet, reason.
+If no vulnerabilities found, return: {"findings": []}`
+    },
+
+    // For verifiers (voting)
+    verifier: {
+        markers: `=== OUTPUT FORMAT ===
+Respond with your vote using this EXACT format:
+
+*VOTE: VERIFY/WEAKNESS/REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [your explanation]
+*END_VERIFIED
+
+Vote meanings:
+- VERIFY: Real, exploitable security vulnerability
+- WEAKNESS: Code quality issue but not directly exploitable
+- REJECT: False positive, not a real issue`,
+
+        json: `=== OUTPUT FORMAT ===
+Respond with a JSON object:
+- vote: "VERIFY", "WEAKNESS", or "REJECT"
+- confidence: Number 0-100
+- reasoning: Your explanation
+
+Example: {"vote": "VERIFY", "confidence": 85, "reasoning": "User input flows directly to system() without sanitization"}`,
+
+        guided_json: `=== OUTPUT FORMAT ===
+Respond with JSON matching the required schema.
+Vote must be one of: VERIFY, WEAKNESS, REJECT
+Confidence is 0-100. Include your reasoning.`
+    },
+
+    // For enrichers (full reports)
+    enricher: {
+        markers: `=== OUTPUT FORMAT ===
+*FINDING: [title]
+*CATEGORY: [CWE category]
+*SEVERITY: Critical/High/Medium/Low
+*CVSS: [0.0-10.0]
+*VULNERABILITY_DETAILS: [detailed explanation]
+*PROOF_OF_CONCEPT: [exploitation steps or code]
+*CORRECTED_CODE: [fixed version of vulnerable code]
+*REMEDIATION_STEPS: [how to fix]
+*REFERENCES: [relevant links or documentation]
+*END_FINDING`,
+
+        json: `=== OUTPUT FORMAT ===
+Respond with a JSON object containing:
+- title, category, severity, cvss_score (0-10)
+- vulnerability_details: Detailed explanation
+- proof_of_concept: How to exploit
+- corrected_code: Fixed code
+- remediation_steps: How to fix
+- references: Relevant documentation`,
+
+        guided_json: `=== OUTPUT FORMAT ===
+Respond with JSON matching the required schema with all fields populated.`
+    }
+};
+
+// JSON Schema presets for guided decoding
+const schemaPresets = {
+    draft_finding: {
+        type: "object",
+        properties: {
+            findings: {
+                type: "array",
+                items: {
+                    type: "object",
+                    properties: {
+                        title: { type: "string", description: "Brief title of the vulnerability" },
+                        vulnerability_type: { type: "string", description: "CWE ID or vulnerability category" },
+                        severity: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+                        line_number: { type: "integer", description: "Line number where vulnerability occurs" },
+                        snippet: { type: "string", description: "Relevant code snippet" },
+                        reason: { type: "string", description: "Why this is a vulnerability" }
+                    },
+                    required: ["title", "vulnerability_type", "severity", "line_number", "snippet", "reason"]
+                }
+            }
+        },
+        required: ["findings"]
+    },
+    verification_vote: {
+        type: "object",
+        properties: {
+            vote: { type: "string", enum: ["VERIFY", "WEAKNESS", "REJECT"] },
+            confidence: { type: "integer", minimum: 0, maximum: 100 },
+            reasoning: { type: "string", description: "Explanation for the vote" },
+            attack_scenario: { type: "string", description: "How could this be exploited (if VERIFY)" }
+        },
+        required: ["vote", "confidence", "reasoning"]
+    },
+    enriched_finding: {
+        type: "object",
+        properties: {
+            title: { type: "string" },
+            category: { type: "string" },
+            severity: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+            cvss_score: { type: "number", minimum: 0, maximum: 10 },
+            vulnerability_details: { type: "string" },
+            proof_of_concept: { type: "string" },
+            corrected_code: { type: "string" },
+            remediation_steps: { type: "string" },
+            references: { type: "string" }
+        },
+        required: ["title", "category", "severity", "vulnerability_details", "corrected_code", "remediation_steps"]
+    }
+};
+
+// Toggle JSON schema textarea visibility based on output mode
+function toggleJsonSchema(select, prefix) {
+    const container = document.getElementById(`${prefix}-schema-container`);
+    if (select.value === 'guided_json') {
+        container.classList.remove('hidden');
+        // Auto-load the appropriate schema based on type
+        const textarea = document.getElementById(`${prefix}-json-schema`);
+        if (textarea && !textarea.value.trim()) {
+            // Determine type from prefix and load appropriate schema
+            let presetName = 'draft_finding';  // default for analyzers
+            if (prefix.includes('verifier')) presetName = 'verification_vote';
+            else if (prefix.includes('enricher')) presetName = 'enriched_finding';
+
+            const schema = schemaPresets[presetName];
+            if (schema) {
+                textarea.value = JSON.stringify(schema, null, 2);
+            }
+        }
+    } else {
+        container.classList.add('hidden');
+    }
+    // Update format preview
+    updateFormatPreview(prefix);
+}
+
+// Update the format preview based on output mode
+function updateFormatPreview(prefix) {
+    const previewEl = document.getElementById(`${prefix}-format-preview`);
+    if (!previewEl) return;
+
+    const outputModeSelect = document.getElementById(`${prefix}-output-mode`) ||
+                              document.querySelector(`#${prefix.replace('edit-', '').replace('add-', '')} [name="output_mode"]`);
+    if (!outputModeSelect) return;
+
+    const mode = outputModeSelect.value || 'markers';
+    // Determine type (analyzer, verifier, enricher) from prefix
+    let type = 'analyzer';
+    if (prefix.includes('verifier')) type = 'verifier';
+    else if (prefix.includes('enricher')) type = 'enricher';
+
+    const template = outputFormatTemplates[type]?.[mode] || '';
+    previewEl.textContent = template;
+}
+
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-gray-400', 'border-transparent'); b.classList.remove('text-white', 'border-blue-500'); });
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
@@ -1356,6 +1716,133 @@ async function submitEditModelForm(event) {
 
 async function deleteModel(id, name) { if (!confirm(`Delete "${name}"?`)) return; if ((await fetch(`/models/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteProfile(id, name) { if (!confirm(`Delete profile "${name}"?`)) return; if ((await fetch(`/profiles/${id}`, { method: 'DELETE' })).ok) location.reload(); }
+async function duplicateProfile(id, name) { if ((await fetch(`/profiles/${id}/duplicate`, { method: 'POST' })).ok) location.reload(); else alert('Failed to duplicate profile'); }
+
+function editProfileName(id, currentName) {
+    document.getElementById('profile-name-display-' + id).classList.add('hidden');
+    document.getElementById('profile-name-edit-' + id).classList.remove('hidden');
+    const input = document.getElementById('profile-name-input-' + id);
+    input.value = currentName;
+    input.focus();
+    input.select();
+}
+
+function cancelEditProfileName(id, originalName) {
+    document.getElementById('profile-name-display-' + id).classList.remove('hidden');
+    document.getElementById('profile-name-edit-' + id).classList.add('hidden');
+    document.getElementById('profile-name-input-' + id).value = originalName;
+}
+
+async function saveProfileName(id) {
+    const input = document.getElementById('profile-name-input-' + id);
+    const newName = input.value.trim();
+    if (!newName) { alert('Profile name cannot be empty'); return; }
+
+    const formData = new FormData();
+    formData.append('name', newName);
+
+    const response = await fetch(`/profiles/${id}`, { method: 'PUT', body: formData });
+    if (response.ok) {
+        location.reload();
+    } else {
+        alert('Failed to update profile name');
+    }
+}
+
+// Output Format Templates
+let outputTemplatesCache = null;
+
+async function loadOutputTemplate() {
+    const role = document.getElementById('template-role-select').value;
+    const mode = document.getElementById('template-mode-select').value;
+
+    // Update label
+    const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+    const modeLabel = mode === 'guided_json' ? 'Guided JSON' : mode.charAt(0).toUpperCase() + mode.slice(1);
+    document.getElementById('template-editor-label').textContent = `${roleLabel} / ${modeLabel}`;
+
+    try {
+        // Fetch templates if not cached
+        if (!outputTemplatesCache) {
+            const response = await fetch('/output-templates');
+            if (!response.ok) throw new Error('Failed to load templates');
+            outputTemplatesCache = await response.json();
+        }
+
+        // Get the template
+        const template = outputTemplatesCache[role]?.[mode] || '';
+
+        document.getElementById('output-template-editor').value = template;
+        document.getElementById('template-status').textContent = '';
+    } catch (err) {
+        console.error('Error loading template:', err);
+        document.getElementById('template-status').textContent = 'Error loading template';
+    }
+}
+
+async function saveOutputTemplate() {
+    const role = document.getElementById('template-role-select').value;
+    const mode = document.getElementById('template-mode-select').value;
+    const value = document.getElementById('output-template-editor').value;
+
+    try {
+        const response = await fetch(`/output-templates/${role}/${mode}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: value })
+        });
+
+        if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || 'Failed to save');
+        }
+
+        // Invalidate cache and reload
+        outputTemplatesCache = null;
+        document.getElementById('template-status').textContent = 'Saved!';
+        setTimeout(() => document.getElementById('template-status').textContent = '', 2000);
+    } catch (err) {
+        alert('Failed to save template: ' + err.message);
+    }
+}
+
+async function resetOutputTemplate() {
+    const role = document.getElementById('template-role-select').value;
+    const mode = document.getElementById('template-mode-select').value;
+
+    if (!confirm('Reset this template to default? This will remove any customizations.')) return;
+
+    try {
+        const response = await fetch(`/output-templates/${role}/${mode}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error('Failed to reset');
+
+        // Invalidate cache and reload template
+        outputTemplatesCache = null;
+        await loadOutputTemplate();
+        document.getElementById('template-status').textContent = 'Reset to default!';
+        setTimeout(() => document.getElementById('template-status').textContent = '', 2000);
+    } catch (err) {
+        alert('Failed to reset template: ' + err.message);
+    }
+}
+
+// Load initial template when switching to defaults tab
+document.addEventListener('DOMContentLoaded', function() {
+    const defaultsTab = document.getElementById('tab-defaults');
+    if (defaultsTab) {
+        defaultsTab.addEventListener('click', function() {
+            setTimeout(loadOutputTemplate, 100);
+        });
+    }
+    // Also load if already on defaults tab
+    if (localStorage.getItem('configActiveTab') === 'defaults') {
+        setTimeout(loadOutputTemplate, 100);
+    }
+});
+
 async function deleteAnalyzer(pid, aid, name) { if (!confirm(`Delete analyzer "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/analyzers/${aid}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteVerifier(pid, vid, name) { if (!confirm(`Delete verifier "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/verifiers/${vid}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteRule(id, name) { if (!confirm(`Delete rule "${name}"?`)) return; if ((await fetch(`/rules/${id}`, { method: 'DELETE' })).ok) location.reload(); }
@@ -1387,6 +1874,12 @@ async function editAnalyzer(profileId, analyzerId) {
         document.getElementById('edit-analyzer-file-filter').value = analyzer.file_filter || '';
         document.getElementById('edit-analyzer-run-order').value = analyzer.run_order || 1;
         document.getElementById('edit-analyzer-prompt').value = analyzer.prompt_template || '';
+        document.getElementById('edit-analyzer-output-mode').value = analyzer.output_mode || 'markers';
+        document.getElementById('edit-analyzer-json-schema').value = analyzer.json_schema || '';
+
+        // Show/hide schema container based on output mode
+        const outputModeSelect = document.getElementById('edit-analyzer-output-mode');
+        toggleJsonSchema(outputModeSelect, 'edit-analyzer');
 
         document.getElementById('edit-analyzer-modal').classList.remove('hidden');
     } catch (err) {
@@ -1409,6 +1902,8 @@ async function submitEditAnalyzerForm(event) {
     params.append('chunk_size', formData.get('chunk_size'));
     if (formData.get('file_filter')) params.append('file_filter', formData.get('file_filter'));
     params.append('run_order', formData.get('run_order'));
+    params.append('output_mode', formData.get('output_mode') || 'markers');
+    if (formData.get('json_schema')) params.append('json_schema', formData.get('json_schema'));
 
     try {
         const response = await fetch(`/profiles/${profileId}/analyzers/${analyzerId}`, {
@@ -1452,6 +1947,12 @@ async function editVerifier(profileId, verifierId) {
         document.getElementById('edit-verifier-min-confidence').value = verifier.min_confidence || 0;
         document.getElementById('edit-verifier-run-order').value = verifier.run_order || 1;
         document.getElementById('edit-verifier-prompt').value = verifier.prompt_template || '';
+        document.getElementById('edit-verifier-output-mode').value = verifier.output_mode || 'markers';
+        document.getElementById('edit-verifier-json-schema').value = verifier.json_schema || '';
+
+        // Show/hide schema container based on output mode
+        const outputModeSelect = document.getElementById('edit-verifier-output-mode');
+        toggleJsonSchema(outputModeSelect, 'edit-verifier');
 
         document.getElementById('edit-verifier-modal').classList.remove('hidden');
     } catch (err) {
@@ -1473,6 +1974,8 @@ async function submitEditVerifierForm(event) {
     params.append('vote_weight', formData.get('vote_weight'));
     params.append('min_confidence', formData.get('min_confidence'));
     params.append('run_order', formData.get('run_order'));
+    params.append('output_mode', formData.get('output_mode') || 'markers');
+    if (formData.get('json_schema')) params.append('json_schema', formData.get('json_schema'));
 
     try {
         const response = await fetch(`/profiles/${profileId}/verifiers/${verifierId}`, {

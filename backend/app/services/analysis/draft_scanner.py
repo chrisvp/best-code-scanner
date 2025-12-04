@@ -7,6 +7,7 @@ from app.models.scanner_models import ScanFileChunk, ScanFile, ScanProfile, Prof
 from app.services.analysis.static_detector import StaticPatternDetector
 from app.services.analysis.parsers import DraftParser
 from app.services.analysis.response_cleaner import ResponseCleaner
+from app.services.analysis.output_formats import get_output_format
 from app.services.orchestration.cache import AnalysisCache
 from app.services.orchestration.model_orchestrator import ModelPool, ModelOrchestrator
 from app.core.database import SessionLocal
@@ -171,23 +172,51 @@ class ProfileAwareScanner:
                 # Build prompts for this analyzer
                 prompts = []
                 prompt_chunk_ids = []
+
+                # Get output format instructions based on analyzer settings
+                # Only inject output_format if the template contains the placeholder
+                output_mode = analyzer.output_mode or "markers"
+                has_output_format_placeholder = '{output_format}' in analyzer.prompt_template
+
+                if has_output_format_placeholder:
+                    output_format = get_output_format("analyzer", output_mode)
+                else:
+                    output_format = None  # Template has hardcoded format
+
+                # Note: examples are now combined into output_format templates
+                # Legacy {examples} placeholder is no longer supported
+
                 for chunk_id, info in matching_chunks:
                     try:
-                        prompt = analyzer.prompt_template.format(
-                            code=info['formatted_code'],
-                            language=info['language'],
-                            file_name=info['file_name'],
-                            file_path=info['scan_file'].file_path,
-                            file_list=info['file_list'],
-                            full_file=info['full_file']
-                        )
+                        format_args = {
+                            'code': info['formatted_code'],
+                            'language': info['language'],
+                            'file_name': info['file_name'],
+                            'file_path': info['scan_file'].file_path,
+                            'file_list': info['file_list'],
+                            'full_file': info['full_file'],
+                        }
+                        if output_format:
+                            format_args['output_format'] = output_format
+                        prompt = analyzer.prompt_template.format(**format_args)
                     except KeyError:
                         # Fallback for templates with missing placeholders
-                        prompt = analyzer.prompt_template.format(
-                            code=info['formatted_code'],
-                            language=info['language'],
-                            file_path=info['scan_file'].file_path
-                        )
+                        try:
+                            format_args = {
+                                'code': info['formatted_code'],
+                                'language': info['language'],
+                                'file_path': info['scan_file'].file_path,
+                            }
+                            if output_format:
+                                format_args['output_format'] = output_format
+                            prompt = analyzer.prompt_template.format(**format_args)
+                        except KeyError:
+                            # Last resort - basic substitution
+                            prompt = analyzer.prompt_template.format(
+                                code=info['formatted_code'],
+                                language=info['language'],
+                                file_path=info['scan_file'].file_path
+                            )
                     prompts.append(prompt)
                     prompt_chunk_ids.append(chunk_id)
 
@@ -198,9 +227,13 @@ class ProfileAwareScanner:
                     analyzer_name=analyzer.name,
                 )
 
-                # Call model
+                # Call model with output_mode settings from analyzer
                 try:
-                    responses = await pool.call_batch(prompts)
+                    responses = await pool.call_batch(
+                        prompts,
+                        output_mode=analyzer.output_mode or "markers",
+                        json_schema=analyzer.json_schema
+                    )
 
                     for i, (chunk_id, info) in enumerate(matching_chunks):
                         response = responses[i] if i < len(responses) else ""

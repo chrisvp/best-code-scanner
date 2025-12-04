@@ -14,7 +14,7 @@ import re
 import tempfile
 import os
 import shutil
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
@@ -573,7 +573,7 @@ class MRReviewerService:
                 description=f"{finding_data.get('title', 'Security Issue')}: {finding_data.get('description', '')}",
                 snippet=finding_data.get("snippet"),
                 remediation=finding_data.get("recommendation"),
-                detected_at=datetime.now(timezone.utc),
+                detected_at=datetime.now().astimezone(),
                 source_model="mr_reviewer",
             )
             self.db.add(finding)
@@ -742,7 +742,7 @@ class MRReviewerService:
                     "max_files": max_files,
                 }
                 review.status = "skipped"
-                review.diff_reviewed_at = datetime.now(timezone.utc)
+                review.diff_reviewed_at = datetime.now().astimezone()
 
                 # Post comment to GitLab if enabled
                 comments_posted = []
@@ -812,7 +812,7 @@ class MRReviewerService:
 
             # Store findings in review
             review.diff_findings = all_findings
-            review.diff_reviewed_at = datetime.now(timezone.utc)
+            review.diff_reviewed_at = datetime.now().astimezone()
 
             # Save findings to database for dashboard integration
             self._save_findings_to_db(review, all_findings)
@@ -983,7 +983,7 @@ class MRReviewerService:
                     "max_files": max_files,
                 }
                 review.status = "skipped"
-                review.diff_reviewed_at = datetime.now(timezone.utc)
+                review.diff_reviewed_at = datetime.now().astimezone()
 
                 # Post comment to GitHub if enabled
                 comments_posted = []
@@ -1045,7 +1045,7 @@ class MRReviewerService:
 
             # Store findings in review
             review.diff_findings = all_findings
-            review.diff_reviewed_at = datetime.now(timezone.utc)
+            review.diff_reviewed_at = datetime.now().astimezone()
             review.files_reviewed = files_reviewed
 
             # Save findings to database for dashboard integration
@@ -1144,7 +1144,7 @@ class MRReviewerService:
         watcher = review.watcher
         provider = self._get_provider(watcher)
 
-        review.scan_started_at = datetime.now(timezone.utc)
+        review.scan_started_at = datetime.now().astimezone()
         self.db.commit()
 
         try:
@@ -1158,7 +1158,7 @@ class MRReviewerService:
 
                 if not scannable_files:
                     logger.info(f"No scannable files in PR #{review.mr_iid}")
-                    review.scan_completed_at = datetime.now(timezone.utc)
+                    review.scan_completed_at = datetime.now().astimezone()
                     self.db.commit()
                     return
 
@@ -1191,7 +1191,7 @@ class MRReviewerService:
 
                     from app.services.scan_engine import scan_engine
                     await scan_engine.start_scan(scan.id, temp_dir, is_git=False)
-                    review.scan_completed_at = datetime.now(timezone.utc)
+                    review.scan_completed_at = datetime.now().astimezone()
                 finally:
                     shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -1204,7 +1204,7 @@ class MRReviewerService:
 
                 if not scannable_files:
                     logger.info(f"No scannable files in MR {review.mr_iid}")
-                    review.scan_completed_at = datetime.now(timezone.utc)
+                    review.scan_completed_at = datetime.now().astimezone()
                     self.db.commit()
                     return
 
@@ -1246,7 +1246,7 @@ class MRReviewerService:
                     # Run the scan (simplified - would integrate with full scan engine)
                     from app.services.scan_engine import scan_engine
                     await scan_engine.start_scan(scan.id, temp_dir, is_git=False)
-                    review.scan_completed_at = datetime.now(timezone.utc)
+                    review.scan_completed_at = datetime.now().astimezone()
 
                 finally:
                     # Cleanup temp directory
@@ -1286,7 +1286,7 @@ class MRReviewerService:
         created_after = None
         lookback_days = getattr(watcher, 'mr_lookback_days', None) or 7
         if lookback_days > 0:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+            cutoff_date = datetime.now().astimezone() - timedelta(days=lookback_days)
             created_after = cutoff_date.isoformat()
             logger.info(f"Filtering MRs/PRs created after {cutoff_date.strftime('%Y-%m-%d')}")
 
@@ -1370,7 +1370,7 @@ class MRReviewerService:
                     reviews.append(review)
 
             # Update watcher status
-            watcher.last_check = datetime.now(timezone.utc)
+            watcher.last_check = datetime.now().astimezone()
             watcher.last_error = None
             watcher.status = "running"
 
@@ -1547,7 +1547,7 @@ async def run_watcher_polling():
         for watcher in watchers:
             # Check if it's time to poll
             if watcher.last_check:
-                elapsed = (datetime.now(timezone.utc) - watcher.last_check).total_seconds()
+                elapsed = (datetime.now().astimezone() - watcher.last_check).total_seconds()
                 if elapsed < watcher.poll_interval:
                     continue
 

@@ -3,7 +3,7 @@ import os
 import hashlib
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func
@@ -88,7 +88,7 @@ def normalize_severity(severity_value: str) -> str:
 from app.models.models import Scan, Finding
 from app.models.scanner_models import (
     ScanConfig, ScanFile, ScanFileChunk, DraftFinding, VerifiedFinding, LLMCallMetric, ScanMetrics, ScanErrorLog,
-    ScanProfile
+    ScanProfile, ModelConfig
 )
 from app.services.orchestration.model_orchestrator import ModelOrchestrator
 from app.services.orchestration.cache import AnalysisCache
@@ -171,7 +171,7 @@ class ScanPipeline:
         if chunk.retry_count <= MAX_RETRY_COUNT:
             # Calculate next retry time with exponential backoff
             delay = self._calculate_retry_delay(chunk.retry_count)
-            chunk.next_retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            chunk.next_retry_at = datetime.now().astimezone() + timedelta(seconds=delay)
             chunk.status = "pending"
             print(f"[Scan {self.scan_id}] Chunk {chunk.id} scheduled for retry #{chunk.retry_count} in {delay:.0f}s")
         else:
@@ -199,7 +199,7 @@ class ScanPipeline:
 
     def _get_retry_ready_chunks(self, base_query):
         """Filter chunks that are ready for retry (past their next_retry_at time)"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now().astimezone()
         return base_query.filter(
             (ScanFileChunk.next_retry_at.is_(None)) |
             (ScanFileChunk.next_retry_at <= now)
@@ -283,11 +283,11 @@ class ScanPipeline:
             if not skip_ingestion:
                 self._update_phase("ingestion")
                 ingest_start = time.time()
-                if target.startswith("copy:"):
-                    # Copy from existing scan: format is "copy:{source_scan_id}:{original_target}"
-                    parts = target.split(":", 2)
-                    source_scan_id = parts[1]
-                    scan_dir = await ingestion_service.copy_from_scan(source_scan_id, str(self.scan_id))
+                if self.config.source_scan_id:
+                    # Reuse existing scan's sandbox (no copy - just reference it)
+                    scan_dir = await ingestion_service.copy_from_scan(
+                        str(self.config.source_scan_id), str(self.scan_id)
+                    )
                 elif target.endswith(".zip") or target.endswith(".tar.gz"):
                     scan_dir = await ingestion_service.extract_archive(target, str(self.scan_id))
                 else:
@@ -855,7 +855,8 @@ class ScanPipeline:
             context_retriever,
             use_agentic=use_agentic,
             agentic_model_pool=agentic_model_pool,
-            agentic_max_steps=agentic_max_steps
+            agentic_max_steps=agentic_max_steps,
+            profile_id=self.config.profile_id
         )
         batch_size = self.config.batch_size or 10
         min_votes = self.config.min_votes_to_verify or 1
