@@ -1,6 +1,8 @@
 # Virtual environments
 venv/
 .venv/
+*_venv/
+*venv*/
 
 # Sandbox directories
 sandbox/
@@ -26,3 +28,14 @@ __pycache__/
 vulnerable_test/
 json2cpp-test/
 *.zip
+*.tar.gz
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+uvicorn.log
+
+# Benchmark/debug artifacts
+benchmark_results*.json
+get-pip.py

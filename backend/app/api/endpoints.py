@@ -1853,18 +1853,6 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
         return {"error": str(e)}
 
 
-@router.get("/scan/{scan_id}/report/html")
-async def download_html_report(scan_id: int, db: Session = Depends(get_db)):
-    # TODO: Implement report generation
-    return HTMLResponse(content="<h1>Report generation not yet implemented</h1>")
-
-
-@router.get("/scan/{scan_id}/report/pdf")
-async def download_pdf_report(scan_id: int, db: Session = Depends(get_db)):
-    # TODO: Implement PDF report generation
-    return {"error": "PDF generation not yet implemented"}
-
-
 @router.post("/scan/{scan_id}/analyze-findings")
 async def analyze_findings(scan_id: int, db: Session = Depends(get_db)):
     """
