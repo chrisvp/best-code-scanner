@@ -2,12 +2,145 @@ import asyncio
 import httpx
 import time
 import json
-from typing import List, Dict, Optional, Any, Callable
+import re
+from typing import List, Dict, Optional, Any, Callable, AsyncIterator
 from app.models.scanner_models import ModelConfig, ScanErrorLog
 from app.services.llm_logger import llm_logger
 from app.services.token_utils import calculate_max_tokens, is_max_tokens_error, calculate_retry_max_tokens
 from app.core.config import settings
 from app.services.orchestration.queue_manager import queue_manager
+
+
+async def _parse_sse_stream(response: httpx.Response) -> AsyncIterator[dict]:
+    """Parse Server-Sent Events stream from vLLM/OpenAI API.
+
+    Yields parsed JSON objects from 'data:' lines.
+    Handles multi-line chunks and the [DONE] marker.
+    """
+    buffer = ""
+    async for chunk in response.aiter_text():
+        buffer += chunk
+        # Process complete lines
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            line = line.strip()
+            if line.startswith("data:"):
+                data_str = line[5:].strip()
+                if data_str == "[DONE]":
+                    return
+                if data_str:
+                    try:
+                        yield json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+
+async def _stream_chat_completion(
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict,
+    api_key: str,
+) -> dict:
+    """Make a streaming chat completion request and accumulate the response.
+
+    Returns the same format as non-streaming: dict with content, usage, etc.
+    Streaming keeps the connection alive as long as tokens flow.
+    """
+    payload = {**payload, "stream": True, "stream_options": {"include_usage": True}}
+
+    content_chunks = []
+    thinking_chunks = []
+    usage = {"prompt_tokens": 0, "completion_tokens": 0}
+    model_name = payload.get("model", "unknown")
+    tool_calls = []
+    tool_call_buffer = {}  # id -> {name, arguments}
+
+    async with client.stream(
+        "POST",
+        url,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+    ) as response:
+        if response.status_code >= 400:
+            # Read error body
+            error_text = await response.aread()
+            try:
+                error_body = json.loads(error_text)
+                error_detail = error_body.get("error", {})
+                if isinstance(error_detail, dict):
+                    error_message = error_detail.get("message", str(error_body))
+                else:
+                    error_message = str(error_detail) or str(error_body)
+            except Exception:
+                error_message = error_text.decode()[:500] if isinstance(error_text, bytes) else str(error_text)[:500]
+
+            return {
+                "content": "",
+                "tool_calls": [],
+                "usage": usage,
+                "error": f"HTTP {response.status_code}: {error_message}",
+                "status_code": response.status_code
+            }
+
+        async for chunk_data in _parse_sse_stream(response):
+            choices = chunk_data.get("choices", [])
+            if choices:
+                delta = choices[0].get("delta", {})
+
+                # Accumulate content
+                if "content" in delta and delta["content"]:
+                    content_chunks.append(delta["content"])
+
+                # Handle reasoning/thinking content
+                if "thinking" in delta and delta["thinking"]:
+                    thinking_chunks.append(delta["thinking"])
+                if "reasoning_content" in delta and delta["reasoning_content"]:
+                    thinking_chunks.append(delta["reasoning_content"])
+
+                # Handle tool calls (streamed in pieces)
+                if "tool_calls" in delta:
+                    for tc in delta["tool_calls"]:
+                        tc_idx = tc.get("index", 0)
+                        if tc_idx not in tool_call_buffer:
+                            tool_call_buffer[tc_idx] = {
+                                "id": tc.get("id", ""),
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""}
+                            }
+                        if tc.get("id"):
+                            tool_call_buffer[tc_idx]["id"] = tc["id"]
+                        if "function" in tc:
+                            if tc["function"].get("name"):
+                                tool_call_buffer[tc_idx]["function"]["name"] = tc["function"]["name"]
+                            if tc["function"].get("arguments"):
+                                tool_call_buffer[tc_idx]["function"]["arguments"] += tc["function"]["arguments"]
+
+            # Extract usage from final chunk
+            if "usage" in chunk_data and chunk_data["usage"]:
+                usage = {
+                    "prompt_tokens": chunk_data["usage"].get("prompt_tokens", 0),
+                    "completion_tokens": chunk_data["usage"].get("completion_tokens", 0)
+                }
+
+    # Assemble final content
+    content = "".join(content_chunks)
+    thinking = "".join(thinking_chunks)
+    if thinking:
+        content = f"<thinking>{thinking}</thinking>\n{content}"
+
+    # Convert tool call buffer to list
+    if tool_call_buffer:
+        tool_calls = [tool_call_buffer[i] for i in sorted(tool_call_buffer.keys())]
+
+    return {
+        "content": content,
+        "tool_calls": tool_calls,
+        "usage": usage,
+        "model": model_name
+    }
 
 
 class ModelPool:
@@ -34,10 +167,11 @@ class ModelPool:
         _retry_max_tokens: Optional[int] = None,
     ) -> str:
         """
-        Single prompt call without needing a full ModelPool instance.
+        Single prompt call using STREAMING to avoid timeout issues.
 
         A convenience static method for simple LLM calls (chat, cleanup, etc.)
-        that don't need batching or queue management.
+        that don't need batching or queue management. Uses SSE streaming to
+        keep connection alive during long inference.
 
         Args:
             prompt: The prompt text to send
@@ -91,28 +225,16 @@ class ModelPool:
 
         verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
 
+        # Streaming timeout: generous read timeout since stream keeps connection alive
+        stream_timeout = httpx.Timeout(connect=60.0, read=600.0, write=60.0, pool=60.0)
+
         try:
-            async with httpx.AsyncClient(verify=verify_ssl, timeout=300.0) as client:
-                response = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {effective_api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json=payload
-                )
+            async with httpx.AsyncClient(verify=verify_ssl, timeout=stream_timeout) as client:
+                result = await _stream_chat_completion(client, url, payload, effective_api_key)
 
                 # Check for errors
-                if response.status_code >= 400:
-                    try:
-                        error_body = response.json()
-                        error_detail = error_body.get("error", {})
-                        if isinstance(error_detail, dict):
-                            error_message = error_detail.get("message", str(error_body))
-                        else:
-                            error_message = str(error_detail) or str(error_body)
-                    except Exception:
-                        error_message = response.text[:500]
+                if "error" in result:
+                    error_message = result["error"]
 
                     # Check if this is a max_tokens error we can retry
                     if _retry_max_tokens is None and is_max_tokens_error(error_message):
@@ -131,25 +253,10 @@ class ModelPool:
                                 _retry_max_tokens=new_max_tokens
                             )
 
-                    print(f"[simple_call ERROR] {model_name} returned {response.status_code}: {error_message}")
+                    print(f"[simple_call ERROR] {model_name}: {error_message}")
                     return ""
 
-                data = response.json()
-                choices = data.get("choices", [])
-                if choices:
-                    message = choices[0].get("message", {})
-                    content = message.get("content", "")
-
-                    # Handle reasoning models
-                    thinking = message.get("thinking", "")
-                    reasoning_content = message.get("reasoning_content", "")
-                    reasoning = thinking or reasoning_content
-                    if reasoning:
-                        content = f"<thinking>{reasoning}</thinking>\n{content}"
-
-                    return content
-
-                return ""
+                return result.get("content", "")
 
         except Exception as e:
             print(f"[simple_call ERROR] {model_name}: {type(e).__name__}: {e}")
@@ -168,10 +275,11 @@ class ModelPool:
         _retry_max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Chat completion returning dict with content, model, and usage.
+        Chat completion using STREAMING to avoid timeout issues.
 
         A convenience static method for chat-style LLM calls that need
-        multi-turn conversation support.
+        multi-turn conversation support. Uses SSE streaming to keep
+        connection alive during long inference.
 
         Args:
             messages: List of message dicts with 'role' and 'content' keys
@@ -234,28 +342,16 @@ class ModelPool:
 
         verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
 
+        # Streaming timeout: generous read timeout since stream keeps connection alive
+        stream_timeout = httpx.Timeout(connect=60.0, read=600.0, write=60.0, pool=60.0)
+
         try:
-            async with httpx.AsyncClient(verify=verify_ssl, timeout=300.0) as client:
-                response = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {effective_api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json=payload
-                )
+            async with httpx.AsyncClient(verify=verify_ssl, timeout=stream_timeout) as client:
+                result = await _stream_chat_completion(client, url, payload, effective_api_key)
 
                 # Check for errors
-                if response.status_code >= 400:
-                    try:
-                        error_body = response.json()
-                        error_detail = error_body.get("error", {})
-                        if isinstance(error_detail, dict):
-                            error_message = error_detail.get("message", str(error_body))
-                        else:
-                            error_message = str(error_detail) or str(error_body)
-                    except Exception:
-                        error_message = response.text[:500]
+                if "error" in result:
+                    error_message = result["error"]
 
                     # Check if this is a max_tokens error we can retry
                     if _retry_max_tokens is None and is_max_tokens_error(error_message):
@@ -274,7 +370,7 @@ class ModelPool:
                                 _retry_max_tokens=new_max_tokens
                             )
 
-                    print(f"[simple_chat_completion ERROR] {model_name} returned {response.status_code}: {error_message}")
+                    print(f"[simple_chat_completion ERROR] {model_name}: {error_message}")
                     return {
                         "content": "",
                         "model": model_name,
@@ -282,29 +378,10 @@ class ModelPool:
                         "error": error_message
                     }
 
-                data = response.json()
-                choices = data.get("choices", [])
-                content = ""
-                if choices:
-                    message = choices[0].get("message", {})
-                    content = message.get("content", "")
-
-                    # Handle reasoning models
-                    thinking = message.get("thinking", "")
-                    reasoning_content = message.get("reasoning_content", "")
-                    reasoning = thinking or reasoning_content
-                    if reasoning:
-                        content = f"<thinking>{reasoning}</thinking>\n{content}"
-
-                usage = data.get("usage", {})
-
                 return {
-                    "content": content,
+                    "content": result.get("content", ""),
                     "model": model_name,
-                    "usage": {
-                        "prompt_tokens": usage.get("prompt_tokens", 0),
-                        "completion_tokens": usage.get("completion_tokens", 0),
-                    }
+                    "usage": result.get("usage", {"prompt_tokens": 0, "completion_tokens": 0})
                 }
 
         except Exception as e:
@@ -330,9 +407,10 @@ class ModelPool:
         _retry_max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Chat completion with tool/function calling support.
+        Chat completion with tool/function calling using STREAMING.
 
         A convenience static method for LLM calls that use native tool calling.
+        Uses SSE streaming to keep connection alive during long inference.
 
         Args:
             messages: List of message dicts (can include tool results)
@@ -386,28 +464,16 @@ class ModelPool:
 
         verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
 
+        # Streaming timeout: generous read timeout since stream keeps connection alive
+        stream_timeout = httpx.Timeout(connect=60.0, read=600.0, write=60.0, pool=60.0)
+
         try:
-            async with httpx.AsyncClient(verify=verify_ssl, timeout=300.0) as client:
-                response = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {effective_api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json=payload
-                )
+            async with httpx.AsyncClient(verify=verify_ssl, timeout=stream_timeout) as client:
+                result = await _stream_chat_completion(client, url, payload, effective_api_key)
 
                 # Check for errors
-                if response.status_code >= 400:
-                    try:
-                        error_body = response.json()
-                        error_detail = error_body.get("error", {})
-                        if isinstance(error_detail, dict):
-                            error_message = error_detail.get("message", str(error_body))
-                        else:
-                            error_message = str(error_detail) or str(error_body)
-                    except Exception:
-                        error_message = response.text[:500]
+                if "error" in result:
+                    error_message = result["error"]
 
                     # Check if this is a max_tokens error we can retry
                     if _retry_max_tokens is None and is_max_tokens_error(error_message):
@@ -426,7 +492,7 @@ class ModelPool:
                                 _retry_max_tokens=new_max_tokens
                             )
 
-                    print(f"[simple_chat_with_tools ERROR] {model_name} returned {response.status_code}: {error_message}")
+                    print(f"[simple_chat_with_tools ERROR] {model_name}: {error_message}")
                     return {
                         "content": "",
                         "tool_calls": [],
@@ -435,33 +501,11 @@ class ModelPool:
                         "error": error_message
                     }
 
-                data = response.json()
-                choice = data.get("choices", [{}])[0]
-                message = choice.get("message", {})
-
-                # Process tool calls
-                tool_calls = []
-                if message.get("tool_calls"):
-                    for tc in message["tool_calls"]:
-                        tool_calls.append({
-                            "id": tc.get("id", ""),
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("function", {}).get("name", ""),
-                                "arguments": tc.get("function", {}).get("arguments", "{}")
-                            }
-                        })
-
-                usage = data.get("usage", {})
-
                 return {
-                    "content": message.get("content", "") or "",
-                    "tool_calls": tool_calls,
+                    "content": result.get("content", "") or "",
+                    "tool_calls": result.get("tool_calls", []),
                     "model": model_name,
-                    "usage": {
-                        "prompt_tokens": usage.get("prompt_tokens", 0),
-                        "completion_tokens": usage.get("completion_tokens", 0),
-                    }
+                    "usage": result.get("usage", {"prompt_tokens": 0, "completion_tokens": 0})
                 }
 
         except Exception as e:
@@ -699,7 +743,11 @@ class ModelPool:
         output_mode: str = "markers",
         json_schema: Optional[str] = None
     ) -> List[str]:
-        """Send batch to vLLM using chat completions
+        """Send batch to vLLM using STREAMING chat completions.
+
+        Uses Server-Sent Events (SSE) streaming to keep connections alive
+        as long as tokens are flowing. This eliminates timeout issues for
+        long-running inference requests.
 
         Args:
             prompts: List of prompts to send
@@ -724,20 +772,21 @@ class ModelPool:
             )
             pending_log_ids.append(log_id)
 
-        # Dynamic timeout: base 300s + 1s per 200 chars, max 3600s (1 hour)
-        # Large prompts with many tokens need substantial time for inference
-        max_prompt_len = max(len(p) for p in prompts) if prompts else 0
-        dynamic_timeout = min(3600.0, 300.0 + (max_prompt_len / 200))
+        # With streaming, we use a longer timeout for the initial connection
+        # The stream itself stays alive as long as tokens flow
+        stream_timeout = httpx.Timeout(
+            connect=60.0,      # 60s to establish connection
+            read=600.0,        # 10min between chunks (generous for slow generation)
+            write=60.0,        # 60s to send request
+            pool=60.0          # 60s to get connection from pool
+        )
 
-        async with httpx.AsyncClient(timeout=dynamic_timeout, verify=False) as client:
-            # Rate-limited concurrent requests
-            async def send_one(prompt: str, idx: int, retry_max_tokens: int = None) -> tuple:
+        async with httpx.AsyncClient(timeout=stream_timeout, verify=False) as client:
+            # Rate-limited concurrent requests with streaming
+            async def send_one_streaming(prompt: str, idx: int, retry_max_tokens: int = None) -> tuple:
                 """Returns (response_content, prompt, duration_ms, tokens_in, tokens_out, error, log_id)
 
-                Args:
-                    prompt: The prompt to send
-                    idx: Index in the batch
-                    retry_max_tokens: Override max_tokens for retry (used after token limit errors)
+                Uses streaming to keep connection alive during long inference.
                 """
                 log_id = pending_log_ids[idx] if idx < len(pending_log_ids) else None
                 async with self.semaphore:
@@ -748,7 +797,6 @@ class ModelPool:
                     start_time = time.time()
                     tokens_in = None
                     tokens_out = None
-                    error = None
 
                     try:
                         # Fall back to default settings if model config is missing values
@@ -794,70 +842,38 @@ class ModelPool:
                                 # Invalid schema - fall back to regular json mode
                                 request_payload["response_format"] = {"type": "json_object"}
 
-                        response = await client.post(
-                            url,
-                            json=request_payload,
-                            headers={"Authorization": f"Bearer {api_key}"}
-                        )
+                        # Use streaming to avoid timeout issues
+                        result = await _stream_chat_completion(client, url, request_payload, api_key)
 
-                        # Check for errors and get detailed error message
-                        if response.status_code >= 400:
-                            try:
-                                error_body = response.json()
-                                error_detail = error_body.get("error", {})
-                                if isinstance(error_detail, dict):
-                                    error_message = error_detail.get("message", str(error_body))
-                                else:
-                                    error_message = str(error_detail) or str(error_body)
-                            except Exception:
-                                error_message = response.text[:500]
+                        # Check for errors
+                        if "error" in result:
+                            error_message = result["error"]
+                            status_code = result.get("status_code", 0)
 
                             # Check if this is a max_tokens error that we can retry
                             if retry_max_tokens is None and is_max_tokens_error(error_message):
                                 new_max_tokens = calculate_retry_max_tokens(error_message)
                                 if new_max_tokens and new_max_tokens > 100:
                                     print(f"[LLM RETRY] {self.config.name} max_tokens error, retrying with {new_max_tokens}")
-                                    # Release semaphore and retry with new max_tokens
-                                    # Note: We need to return and let the caller retry
-                                    return await send_one(prompt, idx, retry_max_tokens=new_max_tokens)
+                                    return await send_one_streaming(prompt, idx, retry_max_tokens=new_max_tokens)
 
                             prompt_len = len(prompt)
-                            print(f"[LLM ERROR] {self.config.name} returned {response.status_code}: {error_message}")
+                            print(f"[LLM ERROR] {self.config.name} returned error: {error_message}")
                             print(f"[LLM ERROR] Prompt length: {prompt_len} chars, max_tokens: {effective_max_tokens}")
                             if prompt_len > 1000:
                                 print(f"[LLM ERROR] Prompt preview: {prompt[:500]}...{prompt[-200:]}")
 
                             duration_ms = (time.time() - start_time) * 1000
-                            return ("", prompt, duration_ms, None, None, f"HTTP {response.status_code}: {error_message}", log_id)
+                            return ("", prompt, duration_ms, None, None, error_message, log_id)
 
-                        data = response.json()
-
-                        # Extract token usage if available
-                        usage = data.get("usage", {})
+                        # Extract content and usage from streaming result
+                        content = result.get("content", "")
+                        usage = result.get("usage", {})
                         tokens_in = usage.get("prompt_tokens")
                         tokens_out = usage.get("completion_tokens")
 
-                        choices = data.get("choices", [])
-                        if choices:
-                            message = choices[0].get("message", {})
-                            content = message.get("content", "")
-
-                            # Handle reasoning models that return thinking in separate field
-                            # API returns this format when model name contains "thinking" or "reasoning"
-                            thinking = message.get("thinking", "")
-                            reasoning_content = message.get("reasoning_content", "")
-
-                            # Use whichever field is present
-                            reasoning = thinking or reasoning_content
-                            if reasoning:
-                                # Wrap reasoning in tags for parser consistency
-                                content = f"<thinking>{reasoning}</thinking>\n{content}"
-
-                            duration_ms = (time.time() - start_time) * 1000
-                            return (content, prompt, duration_ms, tokens_in, tokens_out, None, log_id)
-
                         duration_ms = (time.time() - start_time) * 1000
-                        return ("", prompt, duration_ms, tokens_in, tokens_out, None, log_id)
+                        return (content, prompt, duration_ms, tokens_in, tokens_out, None, log_id)
 
                     except Exception as e:
                         import traceback
@@ -865,9 +881,9 @@ class ModelPool:
                         print(f"Request failed for {self.config.name}: {error_msg}")
                         traceback.print_exc()
                         duration_ms = (time.time() - start_time) * 1000
-                        return ("", prompt, duration_ms, tokens_in, tokens_out, error_msg, log_id)
+                        return ("", prompt, duration_ms, None, None, error_msg, log_id)
 
-            tasks = [send_one(prompt, i) for i, prompt in enumerate(prompts)]
+            tasks = [send_one_streaming(prompt, i) for i, prompt in enumerate(prompts)]
             batch_results = await asyncio.gather(*tasks)
 
             # Count errors in this batch
