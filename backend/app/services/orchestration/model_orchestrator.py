@@ -225,8 +225,10 @@ class ModelPool:
 
         verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
 
-        # Streaming timeout: generous read timeout since stream keeps connection alive
-        stream_timeout = httpx.Timeout(connect=60.0, read=600.0, write=60.0, pool=60.0)
+        # Streaming timeout config:
+        # - read: Time to wait for FIRST chunk (model processing prompt) - this is the long wait
+        # - Once streaming starts, chunks flow fast so between-chunk timeout is implicit
+        stream_timeout = httpx.Timeout(connect=60.0, read=3600.0, write=60.0, pool=60.0)
 
         try:
             async with httpx.AsyncClient(verify=verify_ssl, timeout=stream_timeout) as client:
@@ -342,8 +344,10 @@ class ModelPool:
 
         verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
 
-        # Streaming timeout: generous read timeout since stream keeps connection alive
-        stream_timeout = httpx.Timeout(connect=60.0, read=600.0, write=60.0, pool=60.0)
+        # Streaming timeout config:
+        # - read: Time to wait for FIRST chunk (model processing prompt) - this is the long wait
+        # - Once streaming starts, chunks flow fast so between-chunk timeout is implicit
+        stream_timeout = httpx.Timeout(connect=60.0, read=3600.0, write=60.0, pool=60.0)
 
         try:
             async with httpx.AsyncClient(verify=verify_ssl, timeout=stream_timeout) as client:
@@ -464,8 +468,10 @@ class ModelPool:
 
         verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
 
-        # Streaming timeout: generous read timeout since stream keeps connection alive
-        stream_timeout = httpx.Timeout(connect=60.0, read=600.0, write=60.0, pool=60.0)
+        # Streaming timeout config:
+        # - read: Time to wait for FIRST chunk (model processing prompt) - this is the long wait
+        # - Once streaming starts, chunks flow fast so between-chunk timeout is implicit
+        stream_timeout = httpx.Timeout(connect=60.0, read=3600.0, write=60.0, pool=60.0)
 
         try:
             async with httpx.AsyncClient(verify=verify_ssl, timeout=stream_timeout) as client:
@@ -772,11 +778,12 @@ class ModelPool:
             )
             pending_log_ids.append(log_id)
 
-        # With streaming, we use a longer timeout for the initial connection
-        # The stream itself stays alive as long as tokens flow
+        # Streaming timeout config:
+        # - read: Time to wait for FIRST chunk (model processing prompt) - this is the long wait
+        # - Once streaming starts, chunks flow fast so between-chunk timeout is implicit
         stream_timeout = httpx.Timeout(
             connect=60.0,      # 60s to establish connection
-            read=600.0,        # 10min between chunks (generous for slow generation)
+            read=3600.0,       # 1hr for first chunk (model thinking time)
             write=60.0,        # 60s to send request
             pool=60.0          # 60s to get connection from pool
         )
