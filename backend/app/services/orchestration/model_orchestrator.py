@@ -11,7 +11,473 @@ from app.services.orchestration.queue_manager import queue_manager
 
 
 class ModelPool:
-    """Manages concurrent access to a single model with batching support"""
+    """Manages concurrent access to a single model with batching support.
+
+    Also provides static methods for simple one-off LLM calls that don't require
+    a full orchestrator setup (simple_chat_completion, simple_chat_completion_with_tools).
+    """
+
+    # ============================================================
+    # Static methods for simple one-off calls (no orchestrator needed)
+    # ============================================================
+
+    @staticmethod
+    async def simple_call(
+        prompt: str,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.1,
+        output_mode: str = "markers",
+        json_schema: Optional[str] = None,
+        _retry_max_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        Single prompt call without needing a full ModelPool instance.
+
+        A convenience static method for simple LLM calls (chat, cleanup, etc.)
+        that don't need batching or queue management.
+
+        Args:
+            prompt: The prompt text to send
+            model: Model to use (defaults to settings.LLM_MODEL)
+            base_url: API base URL (defaults to settings.LLM_BASE_URL)
+            api_key: API key (defaults to settings.LLM_API_KEY)
+            max_tokens: Maximum tokens in response (default 4096)
+            temperature: Sampling temperature (default 0.1)
+            output_mode: Response format mode:
+                - "markers": Default, no special formatting
+                - "json": Use response_format: {"type": "json_object"}
+                - "guided_json": Use vLLM guided_json with schema
+            json_schema: JSON schema string for guided_json mode
+            _retry_max_tokens: Internal override for retry on token errors
+
+        Returns:
+            The response content string, or empty string on error
+        """
+        effective_base_url = base_url or settings.LLM_BASE_URL
+        effective_api_key = api_key or settings.LLM_API_KEY
+        model_name = model or settings.LLM_MODEL
+        effective_max_tokens = _retry_max_tokens if _retry_max_tokens is not None else max_tokens
+
+        if not effective_base_url:
+            return ""
+
+        # Build URL
+        base = effective_base_url.rstrip('/')
+        if base.endswith('/v1'):
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        # Build request payload
+        payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": effective_max_tokens,
+            "temperature": temperature,
+        }
+
+        # Apply output mode formatting
+        if output_mode == "json":
+            payload["response_format"] = {"type": "json_object"}
+        elif output_mode == "guided_json" and json_schema:
+            try:
+                schema = json.loads(json_schema) if isinstance(json_schema, str) else json_schema
+                payload["guided_json"] = schema
+            except json.JSONDecodeError:
+                payload["response_format"] = {"type": "json_object"}
+
+        verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
+
+        try:
+            async with httpx.AsyncClient(verify=verify_ssl, timeout=300.0) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {effective_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload
+                )
+
+                # Check for errors
+                if response.status_code >= 400:
+                    try:
+                        error_body = response.json()
+                        error_detail = error_body.get("error", {})
+                        if isinstance(error_detail, dict):
+                            error_message = error_detail.get("message", str(error_body))
+                        else:
+                            error_message = str(error_detail) or str(error_body)
+                    except Exception:
+                        error_message = response.text[:500]
+
+                    # Check if this is a max_tokens error we can retry
+                    if _retry_max_tokens is None and is_max_tokens_error(error_message):
+                        new_max_tokens = calculate_retry_max_tokens(error_message)
+                        if new_max_tokens and new_max_tokens > 100:
+                            print(f"[simple_call RETRY] {model_name} max_tokens error, retrying with {new_max_tokens}")
+                            return await ModelPool.simple_call(
+                                prompt=prompt,
+                                model=model,
+                                base_url=base_url,
+                                api_key=api_key,
+                                max_tokens=max_tokens,
+                                temperature=temperature,
+                                output_mode=output_mode,
+                                json_schema=json_schema,
+                                _retry_max_tokens=new_max_tokens
+                            )
+
+                    print(f"[simple_call ERROR] {model_name} returned {response.status_code}: {error_message}")
+                    return ""
+
+                data = response.json()
+                choices = data.get("choices", [])
+                if choices:
+                    message = choices[0].get("message", {})
+                    content = message.get("content", "")
+
+                    # Handle reasoning models
+                    thinking = message.get("thinking", "")
+                    reasoning_content = message.get("reasoning_content", "")
+                    reasoning = thinking or reasoning_content
+                    if reasoning:
+                        content = f"<thinking>{reasoning}</thinking>\n{content}"
+
+                    return content
+
+                return ""
+
+        except Exception as e:
+            print(f"[simple_call ERROR] {model_name}: {type(e).__name__}: {e}")
+            return ""
+
+    @staticmethod
+    async def simple_chat_completion(
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.1,
+        output_mode: str = "markers",
+        json_schema: Optional[str] = None,
+        _retry_max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Chat completion returning dict with content, model, and usage.
+
+        A convenience static method for chat-style LLM calls that need
+        multi-turn conversation support.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content' keys
+            model: Model to use (defaults to settings.LLM_MODEL)
+            base_url: API base URL (defaults to settings.LLM_BASE_URL)
+            api_key: API key (defaults to settings.LLM_API_KEY)
+            max_tokens: Maximum tokens in response (default 4096)
+            temperature: Sampling temperature (default 0.1)
+            output_mode: Response format mode:
+                - "markers": Default, no special formatting
+                - "json": Use response_format: {"type": "json_object"}
+                - "guided_json": Use vLLM guided_json with schema
+            json_schema: JSON schema string for guided_json mode
+            _retry_max_tokens: Internal override for retry on token errors
+
+        Returns:
+            Dict with keys:
+                - content: Response text
+                - model: Model name used
+                - usage: Token usage dict (prompt_tokens, completion_tokens)
+                - error: Error message if failed (optional)
+        """
+        effective_base_url = base_url or settings.LLM_BASE_URL
+        effective_api_key = api_key or settings.LLM_API_KEY
+        model_name = model or settings.LLM_MODEL
+        effective_max_tokens = _retry_max_tokens if _retry_max_tokens is not None else max_tokens
+
+        if not effective_base_url:
+            return {
+                "content": "",
+                "model": model_name,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                "error": "No base_url configured"
+            }
+
+        # Build URL
+        base = effective_base_url.rstrip('/')
+        if base.endswith('/v1'):
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        # Build request payload
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": effective_max_tokens,
+            "temperature": temperature,
+        }
+
+        # Apply output mode formatting
+        if output_mode == "json":
+            payload["response_format"] = {"type": "json_object"}
+        elif output_mode == "guided_json" and json_schema:
+            try:
+                schema = json.loads(json_schema) if isinstance(json_schema, str) else json_schema
+                payload["guided_json"] = schema
+            except json.JSONDecodeError:
+                payload["response_format"] = {"type": "json_object"}
+
+        verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
+
+        try:
+            async with httpx.AsyncClient(verify=verify_ssl, timeout=300.0) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {effective_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload
+                )
+
+                # Check for errors
+                if response.status_code >= 400:
+                    try:
+                        error_body = response.json()
+                        error_detail = error_body.get("error", {})
+                        if isinstance(error_detail, dict):
+                            error_message = error_detail.get("message", str(error_body))
+                        else:
+                            error_message = str(error_detail) or str(error_body)
+                    except Exception:
+                        error_message = response.text[:500]
+
+                    # Check if this is a max_tokens error we can retry
+                    if _retry_max_tokens is None and is_max_tokens_error(error_message):
+                        new_max_tokens = calculate_retry_max_tokens(error_message)
+                        if new_max_tokens and new_max_tokens > 100:
+                            print(f"[simple_chat_completion RETRY] {model_name} max_tokens error, retrying with {new_max_tokens}")
+                            return await ModelPool.simple_chat_completion(
+                                messages=messages,
+                                model=model,
+                                base_url=base_url,
+                                api_key=api_key,
+                                max_tokens=max_tokens,
+                                temperature=temperature,
+                                output_mode=output_mode,
+                                json_schema=json_schema,
+                                _retry_max_tokens=new_max_tokens
+                            )
+
+                    print(f"[simple_chat_completion ERROR] {model_name} returned {response.status_code}: {error_message}")
+                    return {
+                        "content": "",
+                        "model": model_name,
+                        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                        "error": error_message
+                    }
+
+                data = response.json()
+                choices = data.get("choices", [])
+                content = ""
+                if choices:
+                    message = choices[0].get("message", {})
+                    content = message.get("content", "")
+
+                    # Handle reasoning models
+                    thinking = message.get("thinking", "")
+                    reasoning_content = message.get("reasoning_content", "")
+                    reasoning = thinking or reasoning_content
+                    if reasoning:
+                        content = f"<thinking>{reasoning}</thinking>\n{content}"
+
+                usage = data.get("usage", {})
+
+                return {
+                    "content": content,
+                    "model": model_name,
+                    "usage": {
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                    }
+                }
+
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}"
+            print(f"[simple_chat_completion ERROR] {model_name}: {error_msg}")
+            return {
+                "content": "",
+                "model": model_name,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                "error": error_msg
+            }
+
+    @staticmethod
+    async def simple_chat_with_tools(
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.1,
+        tool_choice: str = "auto",
+        _retry_max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Chat completion with tool/function calling support.
+
+        A convenience static method for LLM calls that use native tool calling.
+
+        Args:
+            messages: List of message dicts (can include tool results)
+            tools: List of tool definitions in OpenAI format
+            model: Model to use (defaults to settings.LLM_MODEL)
+            base_url: API base URL (defaults to settings.LLM_BASE_URL)
+            api_key: API key (defaults to settings.LLM_API_KEY)
+            max_tokens: Maximum tokens in response (default 4096)
+            temperature: Sampling temperature (default 0.1)
+            tool_choice: Tool choice mode ("auto", "none", or specific tool)
+            _retry_max_tokens: Internal override for retry on token errors
+
+        Returns:
+            Dict with keys:
+                - content: Text response (may be empty if tool calls present)
+                - tool_calls: List of tool call objects
+                - model: Model name used
+                - usage: Token usage dict (prompt_tokens, completion_tokens)
+                - error: Error message if failed (optional)
+        """
+        effective_base_url = base_url or settings.LLM_BASE_URL
+        effective_api_key = api_key or settings.LLM_API_KEY
+        model_name = model or settings.LLM_MODEL
+        effective_max_tokens = _retry_max_tokens if _retry_max_tokens is not None else max_tokens
+
+        if not effective_base_url:
+            return {
+                "content": "",
+                "tool_calls": [],
+                "model": model_name,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                "error": "No base_url configured"
+            }
+
+        # Build URL
+        base = effective_base_url.rstrip('/')
+        if base.endswith('/v1'):
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        # Build request payload
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "max_tokens": effective_max_tokens,
+            "temperature": temperature,
+            "tools": tools,
+            "tool_choice": tool_choice
+        }
+
+        verify_ssl = getattr(settings, 'LLM_VERIFY_SSL', False)
+
+        try:
+            async with httpx.AsyncClient(verify=verify_ssl, timeout=300.0) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {effective_api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload
+                )
+
+                # Check for errors
+                if response.status_code >= 400:
+                    try:
+                        error_body = response.json()
+                        error_detail = error_body.get("error", {})
+                        if isinstance(error_detail, dict):
+                            error_message = error_detail.get("message", str(error_body))
+                        else:
+                            error_message = str(error_detail) or str(error_body)
+                    except Exception:
+                        error_message = response.text[:500]
+
+                    # Check if this is a max_tokens error we can retry
+                    if _retry_max_tokens is None and is_max_tokens_error(error_message):
+                        new_max_tokens = calculate_retry_max_tokens(error_message)
+                        if new_max_tokens and new_max_tokens > 100:
+                            print(f"[simple_chat_with_tools RETRY] {model_name} max_tokens error, retrying with {new_max_tokens}")
+                            return await ModelPool.simple_chat_with_tools(
+                                messages=messages,
+                                tools=tools,
+                                model=model,
+                                base_url=base_url,
+                                api_key=api_key,
+                                max_tokens=max_tokens,
+                                temperature=temperature,
+                                tool_choice=tool_choice,
+                                _retry_max_tokens=new_max_tokens
+                            )
+
+                    print(f"[simple_chat_with_tools ERROR] {model_name} returned {response.status_code}: {error_message}")
+                    return {
+                        "content": "",
+                        "tool_calls": [],
+                        "model": model_name,
+                        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                        "error": error_message
+                    }
+
+                data = response.json()
+                choice = data.get("choices", [{}])[0]
+                message = choice.get("message", {})
+
+                # Process tool calls
+                tool_calls = []
+                if message.get("tool_calls"):
+                    for tc in message["tool_calls"]:
+                        tool_calls.append({
+                            "id": tc.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("function", {}).get("name", ""),
+                                "arguments": tc.get("function", {}).get("arguments", "{}")
+                            }
+                        })
+
+                usage = data.get("usage", {})
+
+                return {
+                    "content": message.get("content", "") or "",
+                    "tool_calls": tool_calls,
+                    "model": model_name,
+                    "usage": {
+                        "prompt_tokens": usage.get("prompt_tokens", 0),
+                        "completion_tokens": usage.get("completion_tokens", 0),
+                    }
+                }
+
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}"
+            print(f"[simple_chat_with_tools ERROR] {model_name}: {error_msg}")
+            return {
+                "content": "",
+                "tool_calls": [],
+                "model": model_name,
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+                "error": error_msg
+            }
+
+    # ============================================================
+    # Instance methods for orchestrated calls
+    # ============================================================
 
     def __init__(self, config: ModelConfig, error_callback: Optional[Callable] = None):
         self.config = config

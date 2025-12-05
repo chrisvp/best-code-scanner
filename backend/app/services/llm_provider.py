@@ -1,27 +1,31 @@
-from openai import AsyncOpenAI, BadRequestError
-import httpx
-import json
+"""
+LLM Provider - Thin wrapper around ModelPool for backwards compatibility.
+
+DEPRECATED: This module is maintained for backwards compatibility only.
+For new code, use ModelPool.simple_chat_completion() and
+ModelPool.simple_chat_with_tools() directly from
+app.services.orchestration.model_orchestrator.
+
+Example migration:
+    # Old (deprecated):
+    from app.services.llm_provider import llm_provider
+    result = await llm_provider.chat_completion(messages)
+
+    # New (preferred):
+    from app.services.orchestration.model_orchestrator import ModelPool
+    result = await ModelPool.simple_chat_completion(messages)
+"""
 from typing import List, Dict, Any, Optional
-from app.core.config import settings
-from app.services.token_utils import is_max_tokens_error, calculate_retry_max_tokens
+from app.services.orchestration.model_orchestrator import ModelPool
+
 
 class LLMProvider:
-    def __init__(self):
-        self.base_url = settings.LLM_BASE_URL
-        self.api_key = settings.LLM_API_KEY
-        self.verify_ssl = settings.LLM_VERIFY_SSL
-        self.default_model = settings.LLM_MODEL
+    """
+    DEPRECATED: Thin wrapper around ModelPool for backwards compatibility.
 
-    def get_client(self) -> AsyncOpenAI:
-        # Create a custom httpx client to handle SSL verification skipping and set timeout
-        # 300 second timeout for LLM requests (large diffs take time)
-        http_client = httpx.AsyncClient(verify=self.verify_ssl, timeout=300.0)
-
-        return AsyncOpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            http_client=http_client
-        )
+    For new code, use ModelPool.simple_chat_completion() and
+    ModelPool.simple_chat_with_tools() directly.
+    """
 
     async def chat_completion(
         self,
@@ -29,11 +33,13 @@ class LLMProvider:
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: int = 4096,
-        output_mode: str = "markers",  # "markers", "json", or "guided_json"
-        json_schema: Optional[str] = None,  # JSON schema string for guided_json mode
-        _retry_max_tokens: Optional[int] = None,  # Internal: override for retry
+        output_mode: str = "markers",
+        json_schema: Optional[str] = None,
+        _retry_max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
+        DEPRECATED: Use ModelPool.simple_chat_completion() for new code.
+
         Make a chat completion request to the LLM.
 
         Args:
@@ -46,71 +52,20 @@ class LLMProvider:
                 - "json": Use response_format: {"type": "json_object"}
                 - "guided_json": Use vLLM guided_json with schema (strictest)
             json_schema: JSON schema string for guided_json mode
+            _retry_max_tokens: Internal override for retry on token errors
 
         Returns:
             Dict with 'content' key containing the response text
         """
-        client = self.get_client()
-        model = model or self.default_model
-        effective_max_tokens = _retry_max_tokens if _retry_max_tokens is not None else max_tokens
-
-        try:
-            # Build kwargs, only include temperature if explicitly set
-            kwargs = {
-                "model": model,
-                "messages": messages,
-                "max_tokens": effective_max_tokens,
-            }
-            if temperature is not None:
-                kwargs["temperature"] = temperature
-
-            # Apply output mode formatting
-            if output_mode == "json":
-                # Use OpenAI-compatible response_format
-                kwargs["response_format"] = {"type": "json_object"}
-            elif output_mode == "guided_json" and json_schema:
-                # Use vLLM's guided_json parameter for strict schema enforcement
-                try:
-                    schema = json.loads(json_schema) if isinstance(json_schema, str) else json_schema
-                    kwargs["extra_body"] = {"guided_json": schema}
-                except json.JSONDecodeError:
-                    # If schema is invalid, fall back to regular json mode
-                    kwargs["response_format"] = {"type": "json_object"}
-
-            try:
-                response = await client.chat.completions.create(**kwargs)
-            except BadRequestError as e:
-                # Check if this is a max_tokens error that we can retry
-                error_message = str(e)
-                if _retry_max_tokens is None and is_max_tokens_error(error_message):
-                    new_max_tokens = calculate_retry_max_tokens(error_message)
-                    if new_max_tokens and new_max_tokens > 100:
-                        print(f"[LLM RETRY] max_tokens error, retrying with {new_max_tokens}")
-                        await client.close()
-                        return await self.chat_completion(
-                            messages=messages,
-                            model=model,
-                            temperature=temperature,
-                            max_tokens=max_tokens,
-                            output_mode=output_mode,
-                            json_schema=json_schema,
-                            _retry_max_tokens=new_max_tokens
-                        )
-                raise  # Re-raise if we can't retry
-
-            content = response.choices[0].message.content if response.choices else ""
-
-            return {
-                "content": content,
-                "model": model,
-                "output_mode": output_mode,
-                "usage": {
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                }
-            }
-        finally:
-            await client.close()
+        return await ModelPool.simple_chat_completion(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            output_mode=output_mode,
+            json_schema=json_schema,
+            _retry_max_tokens=_retry_max_tokens,
+        )
 
     async def chat_completion_with_tools(
         self,
@@ -123,6 +78,8 @@ class LLMProvider:
         _retry_max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
+        DEPRECATED: Use ModelPool.simple_chat_with_tools() for new code.
+
         Make a chat completion request with tool calling support.
 
         Args:
@@ -132,68 +89,22 @@ class LLMProvider:
             max_tokens: Maximum tokens in response
             temperature: Sampling temperature
             tool_choice: Tool choice mode ("auto", "none", or specific tool)
+            _retry_max_tokens: Internal override for retry on token errors
 
         Returns:
             Dict with 'content' and 'tool_calls' keys
         """
-        client = self.get_client()
-        model = model or self.default_model
-        effective_max_tokens = _retry_max_tokens if _retry_max_tokens is not None else max_tokens
+        return await ModelPool.simple_chat_with_tools(
+            messages=messages,
+            tools=tools,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            _retry_max_tokens=_retry_max_tokens,
+        )
 
-        try:
-            try:
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    max_tokens=effective_max_tokens,
-                    temperature=temperature,
-                )
-            except BadRequestError as e:
-                error_message = str(e)
-                if _retry_max_tokens is None and is_max_tokens_error(error_message):
-                    new_max_tokens = calculate_retry_max_tokens(error_message)
-                    if new_max_tokens and new_max_tokens > 100:
-                        print(f"[LLM RETRY] max_tokens error, retrying with {new_max_tokens}")
-                        await client.close()
-                        return await self.chat_completion_with_tools(
-                            messages=messages,
-                            tools=tools,
-                            model=model,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                            tool_choice=tool_choice,
-                            _retry_max_tokens=new_max_tokens
-                        )
-                raise
 
-            choice = response.choices[0] if response.choices else None
-            if not choice:
-                return {"content": "", "tool_calls": []}
-
-            message = choice.message
-            tool_calls = []
-            if message.tool_calls:
-                for tc in message.tool_calls:
-                    tool_calls.append({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    })
-
-            return {
-                "content": message.content or "",
-                "tool_calls": tool_calls,
-                "usage": {
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                }
-            }
-        finally:
-            await client.close()
-
+# Global singleton for backwards compatibility
+# DEPRECATED: For new code, use ModelPool.simple_* methods directly
 llm_provider = LLMProvider()
