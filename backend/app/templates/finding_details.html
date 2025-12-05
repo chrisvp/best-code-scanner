@@ -202,7 +202,7 @@
                     <div class="flex items-center gap-2">
                         <select id="fix-model-select" class="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-blue-500">
                             {% for model in models %}
-                            <option value="{{ model.id }}">{{ model.name }}</option>
+                            <option value="{{ model.id }}" {% if global_settings.get('default_chat_model_id') == model.id|string %}selected{% endif %}>{{ model.name }}</option>
                             {% endfor %}
                         </select>
                         <button id="quick-fix-btn" onclick="generateQuickFix()"
@@ -235,9 +235,9 @@
                             <span class="text-xs font-medium text-red-400">Vulnerable Code</span>
                             <span class="text-xs text-gray-500 ml-auto">Line {{ finding.line_number or '?' }}</span>
                         </div>
-                        <div id="vulnerable-code-container" class="overflow-x-auto bg-gray-900 flex-1 font-mono text-xs">
-                            <!-- Will be populated by JS with line numbers and highlighting -->
-                            <div class="p-3 text-gray-500">Loading code context...</div>
+                        <div id="vulnerable-code-container" class="overflow-auto bg-gray-900 flex-1 font-mono text-xs" style="max-height: 500px;">
+                            <!-- Will be populated by JS with line numbers, syntax highlighting, and vulnerable line marked -->
+                            <div class="p-3 text-gray-500">Loading full file...</div>
                         </div>
                     </div>
 
@@ -900,41 +900,82 @@ document.addEventListener('DOMContentLoaded', function() {
     loadChatHistory();
 });
 
-// Load code context with line numbers and highlighting
+// Load full file with syntax highlighting and vulnerable line marked
+// Note: innerHTML usage is safe here - content is from server filesystem files, not user input,
+// and is processed through highlight.js which generates sanitized HTML for syntax highlighting
 async function loadCodeContext() {
     try {
-        const response = await fetch(`/finding/${findingId}/code-context?context_lines=10`);
+        // Request full file contents
+        const response = await fetch(`/finding/${findingId}/code-context?full_file=true`);
         const data = await response.json();
 
         const container = document.getElementById('vulnerable-code-container');
         if (data.error || !data.lines || data.lines.length === 0) {
-            // Fallback to snippet
+            // Fallback to snippet (safe: server-side escaped via Jinja)
             container.innerHTML = `<pre class="p-3"><code class="language-{{ 'python' if finding.file_path.endswith('.py') else 'cpp' if finding.file_path.endswith('.cpp') else 'c' }}">{{ finding.snippet | strip_code | e }}</code></pre>`;
             hljs.highlightAll();
             return;
         }
 
-        // Build code with line numbers and highlighting
-        let html = '<table class="w-full"><tbody>';
-        for (const line of data.lines) {
-            const bgClass = line.is_vulnerable ? 'bg-red-900/40' : '';
-            const lineNumClass = line.is_vulnerable ? 'text-red-400 font-bold' : 'text-gray-600';
-            const codeClass = line.is_vulnerable ? 'text-red-200' : 'text-gray-300';
-            html += `<tr class="${bgClass}">
-                <td class="px-2 py-0.5 text-right select-none ${lineNumClass} border-r border-gray-700 w-12">${line.number}</td>
-                <td class="px-3 py-0.5 whitespace-pre ${codeClass}">${escapeHtml(line.content)}</td>
+        // Determine language for syntax highlighting
+        const ext = filePath.split('.').pop().toLowerCase();
+        const langMap = {
+            'py': 'python', 'c': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'h': 'c', 'hpp': 'cpp',
+            'js': 'javascript', 'ts': 'typescript', 'java': 'java', 'rs': 'rust', 'go': 'go'
+        };
+        const language = langMap[ext] || 'plaintext';
+
+        // Build the full code content for highlighting
+        const codeContent = data.lines.map(line => line.content).join('\n');
+
+        // Create highlighted code using highlight.js (generates safe HTML)
+        let highlightedCode;
+        try {
+            highlightedCode = hljs.highlight(codeContent, { language: language, ignoreIllegals: true }).value;
+        } catch (e) {
+            highlightedCode = escapeHtml(codeContent);
+        }
+
+        // Split highlighted code back into lines
+        const highlightedLines = highlightedCode.split('\n');
+
+        // Build table with line numbers and syntax highlighting
+        let html = '<table class="w-full border-collapse"><tbody>';
+        for (let i = 0; i < data.lines.length; i++) {
+            const line = data.lines[i];
+            const highlightedLine = highlightedLines[i] || '';
+
+            // Vulnerable line styling
+            const isVuln = line.is_vulnerable;
+            const rowId = isVuln ? 'vulnerable-line' : '';
+            const bgClass = isVuln ? 'bg-red-900/50 border-l-4 border-red-500' : 'hover:bg-gray-800/30';
+            const lineNumClass = isVuln ? 'text-red-400 font-bold bg-red-900/30' : 'text-gray-600';
+
+            html += `<tr id="${rowId}" class="${bgClass}">
+                <td class="px-2 py-0 text-right select-none ${lineNumClass} border-r border-gray-700 sticky left-0 bg-gray-900" style="min-width: 50px;">${line.number}</td>
+                <td class="px-3 py-0 whitespace-pre">${highlightedLine}</td>
             </tr>`;
         }
         html += '</tbody></table>';
         container.innerHTML = html;
 
-        // Scroll to vulnerable line
-        const vulnRow = container.querySelector('.bg-red-900\\/40');
-        if (vulnRow) {
-            vulnRow.scrollIntoView({ block: 'center' });
+        // Show file info in header
+        const headerSpan = container.parentElement.querySelector('.text-xs.text-gray-500.ml-auto');
+        if (headerSpan && data.total_lines) {
+            headerSpan.textContent = `${data.total_lines} lines | Line ${data.vulnerable_line}`;
         }
+
+        // Scroll to vulnerable line after a short delay
+        setTimeout(() => {
+            const vulnRow = document.getElementById('vulnerable-line');
+            if (vulnRow) {
+                vulnRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 100);
     } catch (err) {
         console.error('Failed to load code context:', err);
+        const container = document.getElementById('vulnerable-code-container');
+        container.textContent = `Error loading file: ${err.message}`;
     }
 }
 

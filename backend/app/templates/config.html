@@ -874,6 +874,84 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Concurrency Limits -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden mt-6">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                            </svg>
+                            Concurrent Scan Limits
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">Maximum number of scans that can run simultaneously</p>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">On-Demand Scans</label>
+                                <input type="number" id="max-concurrent-on-demand" min="1" max="20"
+                                    value="{{ global_settings.get('max_concurrent_on_demand_scans', '3') }}"
+                                    onchange="updateGlobalSetting('max_concurrent_on_demand_scans', this.value, 'int')"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">Manual/UI-triggered scans</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Watcher Scans</label>
+                                <input type="number" id="max-concurrent-watcher" min="1" max="20"
+                                    value="{{ global_settings.get('max_concurrent_watcher_scans', '2') }}"
+                                    onchange="updateGlobalSetting('max_concurrent_watcher_scans', this.value, 'int')"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <p class="text-xs text-gray-500 mt-1">Auto-triggered by watchers</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase Slot Allocation -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden mt-6">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path>
+                            </svg>
+                            Phase Slot Allocation
+                        </h2>
+                        <p class="text-xs text-gray-500 mt-1">How LLM request slots are distributed between scan phases (auto-adaptive)</p>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div class="grid grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Scanner Base %</label>
+                                <input type="number" id="phase-scanner-pct" min="30" max="100"
+                                    value="{{ global_settings.get('phase_scanner_base_pct', '70') }}"
+                                    onchange="updateGlobalSetting('phase_scanner_base_pct', this.value, 'int')"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                                <p class="text-xs text-gray-500 mt-1">Draft finding identification</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Verifier Max %</label>
+                                <input type="number" id="phase-verifier-pct" min="0" max="50"
+                                    value="{{ global_settings.get('phase_verifier_max_pct', '30') }}"
+                                    onchange="updateGlobalSetting('phase_verifier_max_pct', this.value, 'int')"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                                <p class="text-xs text-gray-500 mt-1">Finding verification</p>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-300 mb-1">Enricher Max %</label>
+                                <input type="number" id="phase-enricher-pct" min="0" max="30"
+                                    value="{{ global_settings.get('phase_enricher_max_pct', '10') }}"
+                                    onchange="updateGlobalSetting('phase_enricher_max_pct', this.value, 'int')"
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500">
+                                <p class="text-xs text-gray-500 mt-1">Report generation</p>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-400 bg-gray-900/50 rounded p-2">
+                            <strong>How it works:</strong> Scanner gets base slots. When draft findings exist, verifier takes up to its max %. When verified findings exist, enricher takes up to its max %. Slots redistribute dynamically based on work pending.
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2144,12 +2222,12 @@ async function deleteGitlabRepo(id, name) {
 }
 
 // Global settings functions
-async function updateGlobalSetting(key, value) {
+async function updateGlobalSetting(key, value, valueType = 'string') {
     try {
         const response = await fetch(`/settings/${key}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ value: value })
+            body: JSON.stringify({ value: value, value_type: valueType })
         });
         if (!response.ok) {
             const data = await response.json();

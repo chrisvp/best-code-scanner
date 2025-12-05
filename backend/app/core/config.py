@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     
     # Concurrency
     MAX_CONCURRENT_REQUESTS: int = 5
+    MAX_CONCURRENT_ON_DEMAND_SCANS: int = 3  # Max on-demand (manual) scans running simultaneously
+    MAX_CONCURRENT_WATCHER_SCANS: int = 2     # Max watcher-triggered scans running simultaneously
 
     # Scanner URL (for links in MR comments)
     SCANNER_URL_PREFIX: str = "http://localhost:8000"

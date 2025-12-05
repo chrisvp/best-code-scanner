@@ -70,7 +70,7 @@
             <p class="text-gray-400 text-sm mt-1">Real-time view of all model queues and requests</p>
         </div>
 
-        <!-- Global Stats -->
+        <!-- Global Stats & Actions -->
         <div class="flex items-center gap-6">
             <div class="text-center">
                 <div id="total-queued" class="text-2xl font-bold text-yellow-400">0</div>
@@ -86,6 +86,14 @@
                     <span class="text-xs text-gray-400" id="status-text">Connecting...</span>
                 </div>
             </div>
+            <div class="border-l border-gray-600 h-8 mx-2"></div>
+            <button id="clear-queue-btn" onclick="clearQueue()"
+                    class="px-4 py-2 bg-red-600/20 hover:bg-red-600/40 border border-red-500/50 text-red-400 rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                </svg>
+                Clear Queue
+            </button>
         </div>
     </div>
 
@@ -336,6 +344,47 @@
             eventSource.close();
         }
     });
+
+    // Expose clearQueue to global scope
+    window.clearQueue = async function() {
+        const btn = document.getElementById('clear-queue-btn');
+
+        if (!confirm('Clear all queued and running requests? This will mark stale requests as failed.')) {
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Clearing...';
+        btn.classList.add('opacity-50');
+
+        try {
+            const response = await fetch('/queue/clear', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.success) {
+                btn.textContent = 'Cleared ' + data.total_cleared;
+                btn.classList.remove('text-red-400');
+                btn.classList.add('text-green-400');
+
+                setTimeout(() => {
+                    btn.textContent = 'Clear Queue';
+                    btn.classList.remove('text-green-400', 'opacity-50');
+                    btn.classList.add('text-red-400');
+                    btn.disabled = false;
+                }, 2000);
+            } else {
+                throw new Error(data.error || 'Failed to clear queue');
+            }
+        } catch (err) {
+            console.error('Failed to clear queue:', err);
+            btn.textContent = 'Error';
+            setTimeout(() => {
+                btn.textContent = 'Clear Queue';
+                btn.classList.remove('opacity-50');
+                btn.disabled = false;
+            }, 2000);
+        }
+    };
 })();
 </script>
 {% endblock %}

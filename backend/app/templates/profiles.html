@@ -277,14 +277,14 @@ Look for:
 For each vulnerability found, respond with JSON:
 ```json
 [
-  {{
+  {% raw %}{{% endraw %}
     "title": "Brief title",
     "vulnerability_type": "CWE-XXX",
     "severity": "Critical|High|Medium|Low",
     "line_number": 123,
     "snippet": "vulnerable code",
     "reason": "explanation"
-  }}
+  {% raw %}}{% endraw %}
 ]
 ```
 

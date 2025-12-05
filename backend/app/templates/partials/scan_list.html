@@ -136,25 +136,6 @@
         </button>
         {% endif %}
 
-        {% if scan.status in ['completed', 'failed', 'stopped'] %}
-        <!-- Rescan Button -->
-        <button onclick="rescanScan({{ scan.id }}, event)" id="rescan-btn-{{ scan.id }}"
-            class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded transition-colors">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-            </svg>
-            Rescan
-        </button>
-        <!-- Re-validate Button -->
-        <button onclick="showRevalidateModal({{ scan.id }}, event)" id="revalidate-btn-{{ scan.id }}"
-            class="flex-1 flex items-center justify-center gap-1 px-1.5 py-1.5 text-[10px] font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded transition-colors"
-            title="Re-run validation with a different profile">
-            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            Recheck
-        </button>
-        {% endif %}
 
         <!-- Delete Button -->
         <button onclick="deleteScan({{ scan.id }}, event)"

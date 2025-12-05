@@ -830,3 +830,35 @@ class GlobalSetting(Base):
 
         db.commit()
         return setting
+
+    # Default setting keys with fallback values
+    DEFAULTS = {
+        "max_concurrent_on_demand_scans": (3, "int", "Maximum simultaneous on-demand (manual) scans"),
+        "max_concurrent_watcher_scans": (2, "int", "Maximum simultaneous watcher-triggered scans"),
+        "phase_scanner_base_pct": (70, "int", "Base percentage of slots for scanner phase"),
+        "phase_verifier_max_pct": (30, "int", "Maximum percentage of slots for verifier phase"),
+        "phase_enricher_max_pct": (10, "int", "Maximum percentage of slots for enricher phase"),
+    }
+
+    @classmethod
+    def get_with_default(cls, db, key: str):
+        """Get a setting value, creating with default if not exists"""
+        value = cls.get(db, key)
+        if value is not None:
+            return value
+
+        # Check if we have a default
+        if key in cls.DEFAULTS:
+            default_val, val_type, description = cls.DEFAULTS[key]
+            cls.set(db, key, default_val, val_type, description)
+            return default_val
+
+        return None
+
+    @classmethod
+    def ensure_defaults(cls, db):
+        """Ensure all default settings exist in the database"""
+        for key, (default_val, val_type, description) in cls.DEFAULTS.items():
+            existing = db.query(cls).filter(cls.key == key).first()
+            if not existing:
+                cls.set(db, key, default_val, val_type, description)

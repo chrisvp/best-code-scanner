@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFile, File, HTTPException
 from typing import Optional
 import os
 import tempfile
@@ -178,10 +178,13 @@ async def start_scan(
         raise HTTPException(status_code=400, detail="Either a Git URL, archive file, or source scan must be provided")
 
     # Handle copy from existing scan - just use the scan_name as display, source_scan_id is stored separately
+    source_config = None
     if has_copy_from:
         source_scan = db.query(Scan).filter(Scan.id == copy_from_scan_id).first()
         if not source_scan:
             raise HTTPException(status_code=400, detail=f"Source scan {copy_from_scan_id} not found")
+        # Load source scan's config to inherit settings like file_filter
+        source_config = db.query(ScanConfig).filter(ScanConfig.scan_id == copy_from_scan_id).first()
         # Use custom scan_name if provided, otherwise show original source
         actual_target = scan_name if scan_name else f"rescan:{source_scan.target_url}"
     # Handle file upload if provided
@@ -202,7 +205,11 @@ async def start_scan(
     db.add(new_scan)
     db.flush()
 
-    # Create Scan Config
+    # Create Scan Config - inherit file_filter from source scan if not explicitly provided
+    inherited_file_filter = file_filter
+    if not inherited_file_filter and source_config and source_config.file_filter:
+        inherited_file_filter = source_config.file_filter
+
     config = ScanConfig(
         scan_id=new_scan.id,
         analysis_mode=analysis_mode,
@@ -216,7 +223,7 @@ async def start_scan(
         batch_size=batch_size,
         chunk_size=chunk_size,
         chunk_strategy=chunk_strategy,
-        file_filter=file_filter,
+        file_filter=inherited_file_filter,
         profile_id=profile_id,
         source_scan_id=copy_from_scan_id if has_copy_from else None
     )
@@ -402,8 +409,8 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
     if not finding:
         return HTMLResponse(content="<h1>Finding not found</h1>", status_code=404)
 
-    # Get available models for the fix generator
-    models = db.query(ModelConfig).order_by(ModelConfig.name).all()
+    # Get available models for chat/fix - only models with is_chat enabled
+    models = db.query(ModelConfig).filter(ModelConfig.is_chat == True).order_by(ModelConfig.name).all()
 
     # Get scan info if available
     scan = None
@@ -418,13 +425,17 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
     # Get scan profiles for rescan dropdown
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
 
+    # Get global settings for default model selection
+    global_settings = {row.key: row.value for row in db.query(GlobalSetting).all()}
+
     return templates.TemplateResponse("finding_details.html", {
         "request": request,
         "finding": finding,
         "models": models,
         "scan": scan,
         "mr_review": mr_review,
-        "profiles": profiles
+        "profiles": profiles,
+        "global_settings": global_settings
     })
 
 
@@ -1120,12 +1131,31 @@ async def get_progress(request: Request, scan_id: int, db: Session = Depends(get
 
 @router.post("/scan/{scan_id}/pause")
 async def pause_scan(scan_id: int, db: Session = Depends(get_db)):
-    """Pause a running scan"""
+    """Pause a running scan and immediately cancel all queued and running requests"""
+    from app.services.orchestration.queue_manager import queue_manager
+
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if scan and scan.status == "running":
         scan.status = "paused"
+
+        # Cancel all queued and running requests for this scan (immediate cancellation)
+        queue_result = queue_manager.cancel_scan(scan_id, cancel_running=True)
+
+        # Also mark pending/running LLM requests as cancelled in the database
+        db_cancelled = db.query(LLMRequestLog).filter(
+            LLMRequestLog.scan_id == scan_id,
+            LLMRequestLog.status.in_(["pending", "running"])
+        ).update({"status": "cancelled"}, synchronize_session=False)
+
         db.commit()
-        return {"status": "paused", "scan_id": scan_id}
+
+        return {
+            "status": "paused",
+            "scan_id": scan_id,
+            "queue_cleared": queue_result["queued"],
+            "running_cancelled": queue_result.get("running_cancelled", 0),
+            "db_cancelled": db_cancelled
+        }
     return {"error": "Cannot pause scan", "current_status": scan.status if scan else None}
 
 
@@ -1137,9 +1167,13 @@ async def resume_scan(
 ):
     """Resume a paused scan"""
     from app.services.orchestration.checkpoint import ScanCheckpoint
+    from app.services.orchestration.queue_manager import queue_manager
 
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if scan and scan.status == "paused":
+        # Remove from cancelled set so new requests can proceed
+        queue_manager.uncancelled_scan(scan_id)
+
         # Recover checkpoint
         checkpoint = ScanCheckpoint(scan_id, db)
         checkpoint.recover()
@@ -1155,7 +1189,9 @@ async def resume_scan(
 
 @router.post("/scan/{scan_id}/stop")
 async def stop_scan(scan_id: int, db: Session = Depends(get_db)):
-    """Force stop a running or paused scan"""
+    """Force stop a running or paused scan and cancel all queued requests"""
+    from app.services.orchestration.queue_manager import queue_manager
+
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
         return {"error": "Scan not found"}
@@ -1163,8 +1199,24 @@ async def stop_scan(scan_id: int, db: Session = Depends(get_db)):
     if scan.status in ("running", "paused", "queued"):
         scan.status = "failed"
         scan.logs = (scan.logs or "") + "\n[STOPPED] Scan manually stopped by user"
+
+        # Cancel all queued requests for this scan
+        queue_result = queue_manager.cancel_scan(scan_id, cancel_running=True)
+
+        # Also mark pending/running LLM requests as cancelled in the database
+        db_cancelled = db.query(LLMRequestLog).filter(
+            LLMRequestLog.scan_id == scan_id,
+            LLMRequestLog.status.in_(["pending", "running"])
+        ).update({"status": "cancelled"}, synchronize_session=False)
+
         db.commit()
-        return {"status": "stopped", "scan_id": scan_id}
+
+        return {
+            "status": "stopped",
+            "scan_id": scan_id,
+            "queue_cleared": queue_result["queued"],
+            "db_cancelled": db_cancelled
+        }
     return {"error": "Scan is not running", "current_status": scan.status}
 
 
@@ -1508,8 +1560,12 @@ from fastapi.responses import StreamingResponse
 
 
 @router.get("/finding/{finding_id}/code-context")
-async def get_code_context(finding_id: int, context_lines: int = 10, db: Session = Depends(get_db)):
-    """Get code context around the vulnerable line with line numbers"""
+async def get_code_context(finding_id: int, context_lines: int = 10, full_file: bool = False, db: Session = Depends(get_db)):
+    """Get code context around the vulnerable line with line numbers.
+
+    If full_file=true, returns entire file contents with vulnerable line marked.
+    Falls back to snippet if file not found on filesystem.
+    """
     finding = db.query(Finding).filter(Finding.id == finding_id).first()
     if not finding:
         return {"error": "Finding not found"}
@@ -1517,12 +1573,19 @@ async def get_code_context(finding_id: int, context_lines: int = 10, db: Session
     file_path = finding.file_path
     line_number = finding.line_number or 1
 
-    # Try to find the actual file
+    # Try to find the actual file with fuzzy matching
     possible_paths = [
         file_path,
         os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend", file_path),
         os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox", file_path),
     ]
+
+    # Also try with scan_id prefix for sandbox files
+    if finding.scan_id:
+        possible_paths.append(os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox", str(finding.scan_id), file_path.split('/')[-1]))
+        # Try stripping sandbox prefix if already included
+        if file_path.startswith("sandbox/"):
+            possible_paths.append(os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend", file_path))
 
     actual_path = None
     for p in possible_paths:
@@ -1534,7 +1597,9 @@ async def get_code_context(finding_id: int, context_lines: int = 10, db: Session
         # Return just the snippet if file not found
         return {
             "lines": [{"number": line_number, "content": finding.snippet or "", "is_vulnerable": True}],
-            "file_found": False
+            "file_found": False,
+            "total_lines": 1,
+            "vulnerable_line": line_number
         }
 
     try:
@@ -1542,8 +1607,15 @@ async def get_code_context(finding_id: int, context_lines: int = 10, db: Session
             all_lines = f.readlines()
 
         total_lines = len(all_lines)
-        start = max(0, line_number - context_lines - 1)
-        end = min(total_lines, line_number + context_lines)
+
+        if full_file:
+            # Return entire file
+            start = 0
+            end = total_lines
+        else:
+            # Return context around vulnerable line
+            start = max(0, line_number - context_lines - 1)
+            end = min(total_lines, line_number + context_lines)
 
         lines = []
         for i in range(start, end):
@@ -1556,7 +1628,9 @@ async def get_code_context(finding_id: int, context_lines: int = 10, db: Session
         return {
             "lines": lines,
             "file_found": True,
-            "vulnerable_line": line_number
+            "total_lines": total_lines,
+            "vulnerable_line": line_number,
+            "file_path": actual_path
         }
     except Exception as e:
         return {"error": str(e), "file_found": False}
@@ -1956,9 +2030,12 @@ async def update_config(
     if form_type == "connection":
         if llm_base_url:
             settings.LLM_BASE_URL = llm_base_url
+            GlobalSetting.set(db, "llm_base_url", llm_base_url, description="LLM API base URL")
         if llm_api_key:
             settings.LLM_API_KEY = llm_api_key
+            GlobalSetting.set(db, "llm_api_key", llm_api_key, description="LLM API key")
         settings.LLM_VERIFY_SSL = llm_verify_ssl
+        GlobalSetting.set(db, "llm_verify_ssl", str(llm_verify_ssl).lower(), "bool", "Verify SSL certificates")
 
         from app.services.llm_provider import llm_provider
         if llm_base_url:
@@ -4809,6 +4886,26 @@ async def get_queue_page(request: Request, db: Session = Depends(get_db)):
     })
 
 
+@router.get("/queue/phase-allocation")
+async def get_phase_allocation():
+    """Get current phase slot allocation status for all running scans"""
+    from app.services.orchestration.queue_manager import phase_allocator
+
+    # Get all registered scans
+    results = {}
+    for scan_id in list(phase_allocator._allocated.keys()):
+        results[scan_id] = phase_allocator.get_allocation_status(scan_id)
+
+    return {
+        "scans": results,
+        "description": {
+            "scanner": "Draft finding identification (70% base)",
+            "verifier": "Finding verification (up to 30%)",
+            "enricher": "Report generation (up to 10%)"
+        }
+    }
+
+
 @router.get("/queue/state")
 async def get_queue_state(db: Session = Depends(get_db)):
     """Get current queue state for all models"""
@@ -4893,6 +4990,43 @@ async def get_queue_state(db: Session = Depends(get_db)):
         "total_queued": total_queued,
         "total_running": total_running,
         "models": list(model_queues.values()),
+    }
+
+
+@router.post("/queue/clear")
+async def clear_queue(db: Session = Depends(get_db)):
+    """Clear all stale queued/running requests.
+
+    Use this when the queue shows requests but no scans are actually running.
+    Clears both the in-memory queue manager and stale database entries.
+    """
+    from app.services.orchestration.queue_manager import queue_manager
+    from datetime import datetime
+
+    # Clear in-memory queue
+    memory_cleared = queue_manager.clear_all()
+
+    # Clear stale database entries (mark as failed with cleanup note)
+    stale_pending = db.query(LLMRequestLog).filter(LLMRequestLog.status == "pending").all()
+    stale_running = db.query(LLMRequestLog).filter(LLMRequestLog.status == "running").all()
+
+    db_cleared = {
+        "pending": len(stale_pending),
+        "running": len(stale_running),
+    }
+
+    for log in stale_pending + stale_running:
+        log.status = "failed"
+        log.parse_error = "Cleared by queue cleanup"
+
+    db.commit()
+
+    return {
+        "success": True,
+        "cleared_at": datetime.now().isoformat(),
+        "memory_queue": memory_cleared,
+        "database_queue": db_cleared,
+        "total_cleared": memory_cleared["queued"] + memory_cleared["running"] + db_cleared["pending"] + db_cleared["running"]
     }
 
 

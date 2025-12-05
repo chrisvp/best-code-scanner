@@ -93,6 +93,7 @@ from app.models.scanner_models import (
 from app.services.orchestration.model_orchestrator import ModelOrchestrator
 from app.services.orchestration.cache import AnalysisCache
 from app.services.orchestration.checkpoint import ScanCheckpoint
+from app.services.orchestration.queue_manager import phase_allocator
 from app.services.ingestion import ingestion_service
 
 # Error handling constants
@@ -331,13 +332,22 @@ class ScanPipeline:
             # Update phase to scanning (the parallel phases track their own progress)
             self._update_phase("scanning")
 
+            # Register with phase allocator for auto-adaptive slot allocation
+            # Use scanner_concurrency as the base for total slots
+            total_slots = self.config.scanner_concurrency or 10
+            phase_allocator.register_scan(self.scan_id, total_slots)
+
             # Run three phases in parallel
             phases_start = time.time()
-            await asyncio.gather(
-                self._run_scanner_phase(),
-                self._run_verifier_phase(),
-                self._run_enricher_phase()
-            )
+            try:
+                await asyncio.gather(
+                    self._run_scanner_phase(),
+                    self._run_verifier_phase(),
+                    self._run_enricher_phase()
+                )
+            finally:
+                # Unregister from phase allocator when done
+                phase_allocator.unregister_scan(self.scan_id)
             self._log_timing("Analysis phases", time.time() - phases_start)
             self._log_timing("Total", time.time() - total_start)
 
@@ -637,6 +647,10 @@ class ScanPipeline:
             if not chunks:
                 break
 
+            # Update phase allocator with pending work count (for adaptive allocation)
+            pending_count = self._get_retry_ready_chunks(base_query).count()
+            phase_allocator.update_queue_depth(self.scan_id, "scanner", pending_count)
+
             # Mark as scanning
             for chunk in chunks:
                 chunk.status = "scanning"
@@ -902,15 +916,18 @@ class ScanPipeline:
                 DraftFinding.created_at
             ).limit(batch_size).all()
 
+            # Update phase allocator with pending draft count (for adaptive allocation)
+            pending_drafts = self.db.query(DraftFinding).filter(
+                DraftFinding.scan_id == self.scan_id,
+                DraftFinding.status == "pending",
+                DraftFinding.initial_votes >= min_votes
+            ).count()
+            phase_allocator.update_queue_depth(self.scan_id, "verifier", pending_drafts)
+
             if not drafts:
                 if self._scanner_complete:
                     # Double-check no more pending
-                    remaining = self.db.query(DraftFinding).filter(
-                        DraftFinding.scan_id == self.scan_id,
-                        DraftFinding.status == "pending",
-                        DraftFinding.initial_votes >= min_votes
-                    ).count()
-                    if remaining == 0:
+                    if pending_drafts == 0:
                         break
                 await asyncio.sleep(0.5)
                 continue
@@ -1029,13 +1046,16 @@ class ScanPipeline:
                 VerifiedFinding.status == "pending"
             ).limit(batch_size).all()
 
+            # Update phase allocator with pending verified count (for adaptive allocation)
+            pending_verified = self.db.query(VerifiedFinding).filter(
+                VerifiedFinding.scan_id == self.scan_id,
+                VerifiedFinding.status == "pending"
+            ).count()
+            phase_allocator.update_queue_depth(self.scan_id, "enricher", pending_verified)
+
             if not verified_list:
                 if self._verifier_complete:
-                    remaining = self.db.query(VerifiedFinding).filter(
-                        VerifiedFinding.scan_id == self.scan_id,
-                        VerifiedFinding.status == "pending"
-                    ).count()
-                    if remaining == 0:
+                    if pending_verified == 0:
                         break
                 await asyncio.sleep(0.5)
                 continue
