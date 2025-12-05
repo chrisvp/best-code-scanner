@@ -285,8 +285,9 @@ class ScanPipeline:
                 ingest_start = time.time()
                 if self.config.source_scan_id:
                     # Reuse existing scan's sandbox (no copy - just reference it)
+                    # Pass db to trace through source_scan_id chain if needed
                     scan_dir = await ingestion_service.copy_from_scan(
-                        str(self.config.source_scan_id), str(self.scan_id)
+                        str(self.config.source_scan_id), str(self.scan_id), db=self.db
                     )
                 elif target.endswith(".zip") or target.endswith(".tar.gz"):
                     scan_dir = await ingestion_service.extract_archive(target, str(self.scan_id))

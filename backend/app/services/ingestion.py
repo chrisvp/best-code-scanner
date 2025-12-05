@@ -85,18 +85,55 @@ class IngestionService:
 
         return target_dir
 
-    async def copy_from_scan(self, source_scan_id: str, target_scan_id: str) -> Path:
+    async def copy_from_scan(self, source_scan_id: str, target_scan_id: str, db=None) -> Path:
         """Reuse an existing scan's sandbox directly (no copy).
 
         The file_filter in ScanConfig controls which files to scan,
         while the full codebase remains available for context (e.g., agentic verifiers).
-        """
-        source_dir = self.sandbox_root / str(source_scan_id)
-        if not source_dir.exists():
-            raise Exception(f"Source scan {source_scan_id} sandbox not found")
 
-        # Just return the source directory - no copying needed
-        # The new scan will use file_filter to limit what's scanned
-        return source_dir
+        If the source scan itself was a rescan (has source_scan_id), trace back
+        through the chain to find the original sandbox with actual code.
+        """
+        current_scan_id = str(source_scan_id)
+        visited = []
+
+        # Trace back through source_scan_id chain to find the ORIGINAL source
+        # (the scan that doesn't have a source_scan_id - i.e., it was cloned/extracted)
+        while current_scan_id:
+            if current_scan_id in visited:
+                break  # Cycle detection
+            visited.append(current_scan_id)
+
+            # Try to find the parent scan's source_scan_id
+            if db:
+                from app.models.scanner_models import ScanConfig
+                config = db.query(ScanConfig).filter(ScanConfig.scan_id == int(current_scan_id)).first()
+                if config and config.source_scan_id:
+                    # This scan was a rescan - continue tracing
+                    current_scan_id = str(config.source_scan_id)
+                    continue
+
+            # No source_scan_id means this is the original source scan
+            break
+
+        # Use the final traced scan's sandbox
+        final_scan_id = visited[-1] if visited else source_scan_id
+        source_dir = self.sandbox_root / str(final_scan_id)
+
+        if source_dir.exists():
+            if final_scan_id != source_scan_id:
+                print(f"[Ingestion] Using sandbox from scan {final_scan_id} (traced from {source_scan_id} via {' -> '.join(visited)})")
+            else:
+                print(f"[Ingestion] Using sandbox from scan {final_scan_id}")
+            return source_dir
+
+        # Fallback: try each sandbox in the chain
+        for scan_id in visited:
+            fallback_dir = self.sandbox_root / str(scan_id)
+            if fallback_dir.exists():
+                print(f"[Ingestion] Using fallback sandbox from scan {scan_id} (traced from {source_scan_id})")
+                return fallback_dir
+
+        raise Exception(f"No sandbox found for scan chain: {' -> '.join(visited)}")
 
 ingestion_service = IngestionService()

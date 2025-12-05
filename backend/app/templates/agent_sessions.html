@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+    .session-row { cursor: pointer; }
+    .session-row:hover { background: rgba(139, 92, 246, 0.1); }
+    .session-detail { display: none; }
+    .session-detail.active { display: table-row; }
+    .session-detail td { width: 100%; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; min-width: 800px; }
+    @media (max-width: 1024px) { .detail-grid { grid-template-columns: 1fr; } }
+    .trace-content { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; max-height: 400px; overflow-y: auto; }
+    .step-card { border-left: 3px solid #6366f1; }
+    .sessions-table { table-layout: fixed; width: 100%; }
+    .sessions-table th, .sessions-table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sessions-table th:nth-child(5), .sessions-table td:nth-child(5) { max-width: 150px; } /* Model column */
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-6 flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl font-bold text-white">Agent Sessions</h1>
+                <p class="text-gray-400 text-sm mt-1">View and manage agent verification sessions</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="cleanupSessions(7)" class="px-3 py-1.5 text-xs font-medium bg-orange-600/20 text-orange-400 hover:bg-orange-600/40 rounded transition-colors">
+                    Cleanup >7 days
+                </button>
+                <button onclick="cleanupSessions(30)" class="px-3 py-1.5 text-xs font-medium bg-red-600/20 text-red-400 hover:bg-red-600/40 rounded transition-colors">
+                    Cleanup >30 days
+                </button>
+            </div>
+        </div>
+
+        <!-- Sessions Table -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-x-auto">
+            <table class="sessions-table">
+                <thead class="bg-gray-800/80 border-b border-gray-700">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">ID</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Verdict</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Confidence</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Model</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Steps</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Duration</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Finding</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Created</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-700">
+                    {% for session in sessions %}
+                    <tr class="session-row" onclick="toggleSessionDetail({{ session.id }})">
+                        <td class="px-4 py-3 text-sm text-gray-300">#{{ session.id }}</td>
+                        <td class="px-4 py-3">
+                            {% if session.status == 'completed' %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-400">completed</span>
+                            {% elif session.status == 'running' %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-blue-500/20 text-blue-400">running</span>
+                            {% elif session.status == 'failed' %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400">failed</span>
+                            {% elif session.status == 'max_steps' %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-yellow-500/20 text-yellow-400">max_steps</span>
+                            {% else %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-gray-500/20 text-gray-400">{{ session.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3">
+                            {% if session.verdict == 'VERIFIED' %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-400">VERIFIED</span>
+                            {% elif session.verdict == 'REJECTED' %}
+                            <span class="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-400">REJECTED</span>
+                            {% else %}
+                            <span class="text-gray-500 text-sm">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-300">
+                            {% if session.confidence %}{{ session.confidence }}%{% else %}-{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-400 font-mono text-xs">{{ session.model_name or '-' }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-300">{{ session.total_steps }}/{{ session.max_steps }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-300">
+                            {% if session.duration_ms %}{{ (session.duration_ms / 1000) | round(1) }}s{% else %}-{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm">
+                            {% if session.finding_id %}
+                            <a href="/finding/{{ session.finding_id }}" class="text-blue-400 hover:underline" onclick="event.stopPropagation()">
+                                Finding #{{ session.finding_id }}
+                            </a>
+                            {% else %}-{% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-400">
+                            {{ session.created_at.strftime('%Y-%m-%d %H:%M') if session.created_at else '-' }}
+                        </td>
+                        <td class="px-4 py-3">
+                            <button onclick="event.stopPropagation(); deleteSession({{ session.id }})"
+                                    class="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                        </td>
+                    </tr>
+                    <!-- Expandable detail row -->
+                    <tr id="detail-{{ session.id }}" class="session-detail bg-gray-900/50">
+                        <td colspan="10" class="px-4 py-4">
+                            <div class="detail-grid">
+                                <!-- Reasoning -->
+                                <div class="bg-gray-800 rounded p-4">
+                                    <h4 class="text-sm font-medium text-gray-300 mb-2">Reasoning</h4>
+                                    <p class="text-sm text-gray-400">{{ session.reasoning or 'No reasoning provided' }}</p>
+
+                                    {% if session.attack_path %}
+                                    <h4 class="text-sm font-medium text-gray-300 mt-4 mb-2">Attack Path</h4>
+                                    <p class="text-sm text-gray-400">{{ session.attack_path }}</p>
+                                    {% endif %}
+
+                                    {% if session.error_message %}
+                                    <h4 class="text-sm font-medium text-red-400 mt-4 mb-2">Error</h4>
+                                    <p class="text-sm text-red-300">{{ session.error_message }}</p>
+                                    {% endif %}
+                                </div>
+
+                                <!-- Execution Trace -->
+                                <div class="bg-gray-800 rounded p-4">
+                                    <h4 class="text-sm font-medium text-gray-300 mb-2">Execution Trace</h4>
+                                    {% if session.execution_trace %}
+                                    <div class="space-y-2 max-h-80 overflow-y-auto">
+                                        {% for step in session.execution_trace %}
+                                        <div class="step-card bg-gray-900 rounded p-3 pl-4">
+                                            <div class="text-xs text-purple-400 font-medium">Step {{ step.step }}</div>
+                                            {% if step.thought %}
+                                            <p class="text-xs text-gray-400 mt-1 line-clamp-3">{{ step.thought[:300] }}{% if step.thought|length > 300 %}...{% endif %}</p>
+                                            {% endif %}
+                                            {% if step.tool_name %}
+                                            <div class="mt-2 text-xs">
+                                                <span class="text-cyan-400 font-mono">{{ step.tool_name }}</span>
+                                                <span class="text-gray-500">({{ step.tool_params }})</span>
+                                            </div>
+                                            {% if step.tool_result %}
+                                            <pre class="mt-1 text-xs text-gray-500 bg-gray-950 p-2 rounded overflow-x-auto">{{ step.tool_result[:200] }}{% if step.tool_result|length > 200 %}...{% endif %}</pre>
+                                            {% endif %}
+                                            {% endif %}
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    {% else %}
+                                    <p class="text-sm text-gray-500">No execution trace available</p>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="10" class="px-4 py-8 text-center text-gray-400">
+                            No agent sessions found
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleSessionDetail(sessionId) {
+    const detail = document.getElementById(`detail-${sessionId}`);
+    if (detail) {
+        detail.classList.toggle('active');
+    }
+}
+
+async function deleteSession(sessionId) {
+    if (!confirm('Delete this session?')) return;
+
+    try {
+        const response = await fetch(`/agent-sessions/${sessionId}`, {
+            method: 'DELETE'
+        });
+        if (response.ok) {
+            location.reload();
+        } else {
+            alert('Failed to delete session');
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function cleanupSessions(days) {
+    if (!confirm(`Delete all sessions older than ${days} days?`)) return;
+
+    try {
+        const response = await fetch(`/agent-sessions?older_than_days=${days}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        if (data.success) {
+            alert(`Deleted ${data.deleted} sessions`);
+            location.reload();
+        } else {
+            alert('Failed to cleanup sessions');
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+</script>
+{% endblock %}

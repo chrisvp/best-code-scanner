@@ -76,12 +76,20 @@
                         Reparse
                     </button>
                     {% if scan %}
-                    <button onclick="agentVerify()" id="agent-verify-btn" class="text-xs px-2 py-1 rounded font-medium bg-purple-600/20 text-purple-400 hover:bg-purple-600/40 transition-colors flex items-center gap-1" title="Run agent-based deep verification">
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                        </svg>
-                        Agent Verify
-                    </button>
+                    <div class="flex items-center gap-1">
+                        <select id="agent-model-select" class="text-xs px-1.5 py-1 rounded bg-slate-700 text-gray-300 border border-slate-600 focus:outline-none focus:ring-1 focus:ring-purple-500">
+                            <option value="">Auto</option>
+                            {% for model in models %}
+                            <option value="{{ model.id }}">{{ model.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <button onclick="agentVerify()" id="agent-verify-btn" class="text-xs px-2 py-1 rounded font-medium bg-purple-600/20 text-purple-400 hover:bg-purple-600/40 transition-colors flex items-center gap-1" title="Run agent-based deep verification">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                            </svg>
+                            Agent Verify
+                        </button>
+                    </div>
                     {% endif %}
                     <button onclick="deleteFinding()" class="text-xs px-2 py-1 rounded font-medium bg-red-600/20 text-red-400 hover:bg-red-600/40 transition-colors flex items-center gap-1" title="Delete this finding">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -653,7 +661,7 @@ function updateRetryButton() {
     }
 }
 
-// Agent verification - deep analysis with code exploration
+// Agent verification - deep analysis with code exploration (with SSE streaming)
 async function agentVerify() {
     const btn = document.getElementById('agent-verify-btn');
     if (!btn) return;
@@ -667,53 +675,113 @@ async function agentVerify() {
         Verifying...
     `;
 
-    // Add a message to chat to show progress
-    addMessage('assistant', '🤖 Starting agent verification. This may take 30-60 seconds as the agent explores the codebase...');
+    // Create streaming progress panel
+    const progressHtml = `
+        <div id="agent-progress-panel" class="bg-gray-800 rounded-lg p-3 border border-purple-500/30">
+            <div class="flex items-center gap-2 mb-2">
+                <svg class="w-4 h-4 text-purple-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                </svg>
+                <span class="text-sm font-medium text-purple-300">Agent Verification</span>
+                <span id="agent-step-counter" class="text-xs text-gray-500 ml-auto">Starting...</span>
+            </div>
+            <div id="agent-steps-container" class="space-y-2 max-h-60 overflow-y-auto custom-scrollbar"></div>
+        </div>
+    `;
+    addMessage('assistant', progressHtml, false);
+
+    const stepsContainer = document.getElementById('agent-steps-container');
+    const stepCounter = document.getElementById('agent-step-counter');
 
     try {
-        const formData = new FormData();
-        // You could add model_id selection here if desired
+        const modelSelect = document.getElementById('agent-model-select');
+        const modelId = modelSelect && modelSelect.value ? modelSelect.value : '';
 
-        const response = await fetch(`/finding/${findingId}/agent-verify`, {
-            method: 'POST',
-            body: formData
-        });
+        const url = `/finding/${findingId}/agent-verify/stream${modelId ? '?model_id=' + modelId : ''}`;
+        const eventSource = new EventSource(url);
+        let stepCount = 0;
 
-        const data = await response.json();
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
 
-        if (data.success) {
-            const verdict = data.verified ? '✅ VERIFIED' : '❌ REJECTED';
-            const confidence = data.confidence || 'N/A';
+            if (data.type === 'step') {
+                stepCount++;
+                stepCounter.textContent = `Step ${stepCount}`;
 
-            let resultMsg = `**Agent Verification Complete**\n\n`;
-            resultMsg += `**Verdict:** ${verdict}\n`;
-            resultMsg += `**Confidence:** ${confidence}%\n\n`;
+                const step = data.step;
+                const stepDiv = document.createElement('div');
+                stepDiv.className = 'bg-gray-900/50 rounded p-2 border-l-2 border-purple-500/50 text-xs';
 
-            if (data.reasoning) {
-                resultMsg += `**Reasoning:**\n${data.reasoning}\n\n`;
+                let stepHtml = `<div class="text-purple-400 font-medium mb-1">Step ${step.step}</div>`;
+                if (step.thought) {
+                    const thoughtTruncated = step.thought.length > 200 ? step.thought.substring(0, 200) + '...' : step.thought;
+                    stepHtml += `<div class="text-gray-400 mb-1">${escapeHtml(thoughtTruncated)}</div>`;
+                }
+                if (step.tool_name) {
+                    stepHtml += `<div class="text-cyan-400 font-mono">→ ${step.tool_name}</div>`;
+                    if (step.tool_params) {
+                        stepHtml += `<div class="text-gray-500 font-mono text-[10px] truncate">${escapeHtml(step.tool_params)}</div>`;
+                    }
+                }
+                if (step.is_final) {
+                    stepHtml += `<div class="text-green-400 mt-1 font-medium">✓ Reached conclusion</div>`;
+                }
+
+                stepDiv.innerHTML = stepHtml;
+                stepsContainer.appendChild(stepDiv);
+                stepsContainer.scrollTop = stepsContainer.scrollHeight;
+            } else if (data.type === 'result') {
+                eventSource.close();
+
+                // Update progress panel to show completion
+                stepCounter.textContent = `Complete (${stepCount} steps)`;
+                document.querySelector('#agent-progress-panel svg').classList.remove('animate-pulse');
+
+                if (data.success) {
+                    const verdict = data.verified ? '✅ VERIFIED' : '❌ REJECTED';
+                    const confidence = data.confidence || 'N/A';
+
+                    let resultMsg = `**Agent Verification Complete**\n\n`;
+                    resultMsg += `**Verdict:** ${verdict}\n`;
+                    resultMsg += `**Confidence:** ${confidence}%\n\n`;
+
+                    if (data.reasoning) {
+                        resultMsg += `**Reasoning:**\n${data.reasoning}\n\n`;
+                    }
+
+                    if (data.attack_path && data.verified) {
+                        resultMsg += `**Attack Path:**\n${data.attack_path}\n\n`;
+                    }
+
+                    if (data.session_id) {
+                        resultMsg += `*Session ID: ${data.session_id}*`;
+                    }
+
+                    addMessage('assistant', resultMsg);
+                } else {
+                    addMessage('assistant', `❌ Agent verification failed: ${data.error || 'Unknown error'}`);
+                }
+
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
+            } else if (data.type === 'error') {
+                eventSource.close();
+                addMessage('assistant', `❌ Error: ${data.error || 'Unknown error'}`);
+                btn.disabled = false;
+                btn.innerHTML = originalHTML;
             }
+        };
 
-            if (data.attack_path && data.verified) {
-                resultMsg += `**Attack Path:**\n${data.attack_path}\n\n`;
-            }
-
-            if (data.session_id) {
-                resultMsg += `*Session ID: ${data.session_id} (check agent_verification_sessions table for full trace)*`;
-            }
-
-            addMessage('assistant', resultMsg);
-
-            // If there's a trace, add it as a separate collapsible section
-            if (data.trace && data.trace.length > 100) {
-                addMessage('assistant', `<details><summary>📋 Execution Trace (click to expand)</summary>\n\n\`\`\`\n${data.trace}\n\`\`\`\n</details>`);
-            }
-        } else {
-            addMessage('assistant', `❌ Agent verification failed: ${data.error || 'Unknown error'}\n\n${data.traceback || ''}`);
-        }
+        eventSource.onerror = function(err) {
+            eventSource.close();
+            stepCounter.textContent = 'Error';
+            addMessage('assistant', `❌ Connection error during agent verification`);
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        };
 
     } catch (err) {
         addMessage('assistant', `❌ Error during agent verification: ${err.message}`);
-    } finally {
         btn.disabled = false;
         btn.innerHTML = originalHTML;
     }

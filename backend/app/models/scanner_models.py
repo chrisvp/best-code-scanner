@@ -28,6 +28,9 @@ class ModelConfig(Base):
     is_cleanup = Column(Boolean, default=False)  # Model for cleaning up malformed LLM responses
     is_chat = Column(Boolean, default=False)  # Default model for chat interface
 
+    # Response format: 'markers' (text-based), 'json' (structured JSON), 'json_schema' (JSON with schema enforcement)
+    response_format = Column(String, default='markers')
+
     analysis_prompt_template = Column(Text, nullable=True)
     verification_prompt_template = Column(Text, nullable=True)
 
@@ -577,9 +580,9 @@ class LLMRequestLog(Base):
     created_at = Column(DateTime(timezone=True), default=local_now)
 
 
-class AgentVerificationSession(Base):
-    """Log of agent verification sessions with full execution trace"""
-    __tablename__ = "agent_verification_sessions"
+class AgentSession(Base):
+    """Log of agent sessions with full execution trace (verification, exploration, etc.)"""
+    __tablename__ = "agent_sessions"
 
     id = Column(Integer, primary_key=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)

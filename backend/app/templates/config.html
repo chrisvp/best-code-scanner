@@ -1013,6 +1013,15 @@
                     <input type="number" name="votes" value="1" min="1" max="5"
                         class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Response Format</label>
+                    <select name="response_format" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="markers" selected>Markers (text-based)</option>
+                        <option value="json">JSON (structured)</option>
+                        <option value="json_schema">JSON Schema (strict)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">How this model outputs structured data</p>
+                </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-model-modal').classList.add('hidden')"
@@ -1060,6 +1069,15 @@
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-1">Votes</label>
                     <input type="number" name="votes" id="edit-model-votes" min="1" max="5" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Response Format</label>
+                    <select name="response_format" id="edit-model-response-format" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="markers">Markers (text-based)</option>
+                        <option value="json">JSON (structured)</option>
+                        <option value="json_schema">JSON Schema (strict)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">How this model outputs structured data</p>
                 </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
@@ -1475,7 +1493,7 @@ File: {file_path}
 
 <script>
 const modelsData = {
-    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }} },{% endfor %}
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, response_format: "{{ model.response_format or 'markers' }}" },{% endfor %}
 };
 
 // Output format templates - appended to prompts based on output_mode
@@ -1687,7 +1705,7 @@ async function submitModelForm(event) {
     event.preventDefault();
     const form = event.target;
     const formData = new FormData(form);
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')) };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, api_key: formData.get('api_key') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), response_format: formData.get('response_format') || 'markers' };
     const response = await fetch('/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
 }
@@ -1700,6 +1718,7 @@ function editModel(id) {
     document.getElementById('edit-model-max-tokens').value = m.max_tokens;
     document.getElementById('edit-model-max-concurrent').value = m.max_concurrent;
     document.getElementById('edit-model-votes').value = m.votes;
+    document.getElementById('edit-model-response-format').value = m.response_format || 'markers';
     document.getElementById('edit-model-modal').classList.remove('hidden');
 }
 
@@ -1708,7 +1727,7 @@ async function submitEditModelForm(event) {
     const form = event.target;
     const formData = new FormData(form);
     const id = formData.get('model_id');
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')) };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), response_format: formData.get('response_format') || 'markers' };
     if (formData.get('api_key')) data.api_key = formData.get('api_key');
     const response = await fetch(`/models/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');

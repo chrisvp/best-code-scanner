@@ -263,10 +263,10 @@ ALTER TABLE mr_reviews ADD COLUMN provider VARCHAR DEFAULT 'gitlab';
 ALTER TABLE mr_reviews ADD COLUMN github_repo_id INTEGER REFERENCES github_repos(id);
 ```
 
-For agent verification sessions (December 2025), run:
+For agent sessions (December 2025), run:
 ```sql
--- Create agent_verification_sessions table
-CREATE TABLE IF NOT EXISTS agent_verification_sessions (
+-- Create agent_sessions table (generic for verification, exploration, etc.)
+CREATE TABLE IF NOT EXISTS agent_sessions (
     id INTEGER PRIMARY KEY,
     scan_id INTEGER REFERENCES scans(id),
     finding_id INTEGER REFERENCES findings(id),
@@ -289,9 +289,12 @@ CREATE TABLE IF NOT EXISTS agent_verification_sessions (
     completed_at TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_avs_scan_id ON agent_verification_sessions(scan_id);
-CREATE INDEX IF NOT EXISTS idx_avs_finding_id ON agent_verification_sessions(finding_id);
-CREATE INDEX IF NOT EXISTS idx_avs_status ON agent_verification_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_as_scan_id ON agent_sessions(scan_id);
+CREATE INDEX IF NOT EXISTS idx_as_finding_id ON agent_sessions(finding_id);
+CREATE INDEX IF NOT EXISTS idx_as_status ON agent_sessions(status);
+
+-- If migrating from agent_verification_sessions:
+-- ALTER TABLE agent_verification_sessions RENAME TO agent_sessions;
 ```
 
 ## Future Features

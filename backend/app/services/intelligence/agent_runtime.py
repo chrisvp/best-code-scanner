@@ -4,12 +4,32 @@ Enables agentic verification and interactive code exploration.
 """
 import json
 import re
-from typing import List, Dict, Optional, Any, Callable
+import asyncio
+from typing import List, Dict, Optional, Any, Callable, AsyncGenerator, Literal
 from dataclasses import dataclass, field
 from enum import Enum
 
 from app.services.intelligence.codebase_tools import CodebaseTools, ToolResult
 from app.services.orchestration.model_orchestrator import ModelPool
+
+# JSON schema for agent responses (used with guided_json mode)
+AGENT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thinking": {"type": "string", "description": "Your analysis and reasoning"},
+        "action": {
+            "type": "object",
+            "properties": {
+                "type": {"type": "string", "enum": ["tool_call", "final_answer"]},
+                "tool_name": {"type": "string"},
+                "tool_params": {"type": "object"},
+                "answer": {"type": "string"}
+            },
+            "required": ["type"]
+        }
+    },
+    "required": ["thinking", "action"]
+}
 
 
 class AgentState(Enum):
@@ -30,6 +50,17 @@ class AgentStep:
     tool_result: Optional[str] = None
     is_final: bool = False
     final_answer: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        return {
+            'step': self.step_number,
+            'thought': self.thought[:500] if self.thought else None,
+            'tool_name': self.tool_name,
+            'tool_params': self.tool_params,
+            'tool_result': self.tool_result[:500] if self.tool_result else None,
+            'is_final': self.is_final
+        }
 
 
 @dataclass
@@ -64,6 +95,9 @@ class AgentRuntime:
     Implements a ReAct-style loop: Thought -> Action -> Observation
     """
 
+    # Minimum number of tool uses before allowing final answer
+    MIN_TOOL_USES = 2
+
     SYSTEM_PROMPT = """You are a security expert analyzing code to verify potential vulnerabilities.
 You have access to tools to explore the codebase. Use them to trace data flow and prove whether a vulnerability is real.
 
@@ -92,14 +126,29 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
 *END_TOOL_CALL*
 """
 
+    # JSON mode format instruction
+    JSON_FORMAT = """You MUST respond in valid JSON format. Your response must be a single JSON object.
+
+For tool calls:
+{"thinking": "your analysis...", "action": {"type": "tool_call", "tool_name": "read_file", "tool_params": {"path": "file.c", "start_line": 100}}}
+
+For final answer:
+{"thinking": "your reasoning...", "action": {"type": "final_answer", "answer": "VERDICT: VERIFIED\\nCONFIDENCE: 85\\nREASONING: ...\\nATTACK_PATH: ..."}}
+
+Always output ONLY valid JSON with no additional text before or after.
+"""
+
     def __init__(
         self,
         model_pool: ModelPool,
         tools: CodebaseTools,
         max_steps: int = 10,
+        min_tool_uses: int = 2,
         verbose: bool = False,
         scan_id: int = None,
-        finding_id: int = None
+        finding_id: int = None,
+        step_callback: Optional[Callable[[AgentStep], None]] = None,
+        response_format: Literal["markers", "json", "json_schema"] = "markers"
     ):
         """
         Initialize the agent runtime.
@@ -108,16 +157,23 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
             model_pool: Model pool for LLM calls
             tools: CodebaseTools instance for code navigation
             max_steps: Maximum number of agent steps before stopping
+            min_tool_uses: Minimum tool uses before allowing final answer
             verbose: Whether to print debug info
             scan_id: Scan ID for logging context
             finding_id: Finding ID for logging context
+            step_callback: Optional callback called after each step (for streaming)
+            response_format: Output format - 'markers' (text), 'json', or 'json_schema' (vLLM guided)
         """
         self.model_pool = model_pool
         self.tools = tools
         self.max_steps = max_steps
+        self.min_tool_uses = min_tool_uses
         self.verbose = verbose
         self.scan_id = scan_id
         self.finding_id = finding_id
+        self.tool_use_count = 0  # Track tool usage
+        self.step_callback = step_callback
+        self.response_format = response_format
 
         # Set log context for the model pool
         if scan_id or finding_id:
@@ -126,6 +182,22 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
                 phase='agent_verifier',
                 analyzer_name=f'finding_{finding_id}' if finding_id else None
             )
+
+    async def _call_llm(self, prompt: str) -> str:
+        """Make LLM call with appropriate output format."""
+        if self.response_format in ("json", "json_schema"):
+            # Use call_batch for JSON modes to pass output_mode
+            output_mode = "json" if self.response_format == "json" else "guided_json"
+            json_schema = json.dumps(AGENT_JSON_SCHEMA) if self.response_format == "json_schema" else None
+            results = await self.model_pool.call_batch(
+                [prompt],
+                output_mode=output_mode,
+                json_schema=json_schema
+            )
+            return results[0] if results else ""
+        else:
+            # Use regular call for text-based markers format
+            return await self.model_pool.call(prompt)
 
     async def run(self, task: str, context: str = "") -> AgentResult:
         """
@@ -140,6 +212,9 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
         """
         steps: List[AgentStep] = []
         conversation = self._build_initial_prompt(task, context)
+        self.tool_use_count = 0  # Reset for this run
+        retry_count = 0
+        max_retries = 1  # Allow one retry for malformed tool calls
 
         for step_num in range(1, self.max_steps + 1):
             if self.verbose:
@@ -147,7 +222,7 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
 
             # Get LLM response
             try:
-                response = await self.model_pool.call(conversation)
+                response = await self._call_llm(conversation)
             except Exception as e:
                 return AgentResult(
                     state=AgentState.FAILED,
@@ -158,25 +233,51 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
 
             # Parse the response
             step = self._parse_response(response, step_num)
-            steps.append(step)
 
             if self.verbose:
-                print(f"Thought: {step.thought[:200]}...")
+                print(f"Thought: {step.thought[:200]}..." if step.thought else "No thought")
                 if step.tool_name:
                     print(f"Tool: {step.tool_name}")
 
-            # Check for final answer
+            # Check for final answer - but enforce minimum tool usage first
             if step.is_final:
-                return AgentResult(
-                    state=AgentState.COMPLETED,
-                    steps=steps,
-                    final_answer=step.final_answer
-                )
+                if self.tool_use_count < self.min_tool_uses:
+                    # Not enough tools used - ignore final answer and prompt for more investigation
+                    if self.verbose:
+                        print(f"Final answer rejected: only {self.tool_use_count}/{self.min_tool_uses} tools used")
+                    step.is_final = False
+                    step.final_answer = None
+                    conversation += f"\n\nAssistant: {response}\n\nYou must use at least {self.min_tool_uses} tools before providing a final answer. You have only used {self.tool_use_count}. Please use a tool to investigate further."
+                    steps.append(step)
+                    if self.step_callback:
+                        self.step_callback(step)
+                    continue
+                else:
+                    steps.append(step)
+                    if self.step_callback:
+                        self.step_callback(step)
+                    return AgentResult(
+                        state=AgentState.COMPLETED,
+                        steps=steps,
+                        final_answer=step.final_answer
+                    )
+
+            steps.append(step)
+            if self.step_callback:
+                self.step_callback(step)
 
             # Execute tool if requested
             if step.tool_name:
+                # Check if tool params failed to parse - retry once
+                if step.tool_name and step.tool_params is None and retry_count < max_retries:
+                    retry_count += 1
+                    conversation += f"\n\nAssistant: {response}\n\nError: Your tool call had invalid or missing JSON parameters. Please try again with valid JSON in this format:\n*TOOL_CALL*\nname: {step.tool_name}\nparams: {{\"key\": \"value\"}}\n*END_TOOL_CALL*"
+                    continue
+
                 result = self.tools.execute_tool(step.tool_name, step.tool_params or {})
-                step.tool_result = result.to_string()
+                step.tool_result = self._format_tool_result(result)
+                self.tool_use_count += 1
+                retry_count = 0  # Reset retry count on successful tool use
 
                 if self.verbose:
                     print(f"Tool result: {step.tool_result[:200]}...")
@@ -195,12 +296,36 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
             error=f"Reached maximum {self.max_steps} steps"
         )
 
+    def _format_tool_result(self, result) -> str:
+        """Format tool result with better error messages."""
+        if result.success:
+            return result.to_string()
+
+        # Enhance error messages for common issues
+        error = result.error or "Unknown error"
+
+        if "Unmatched" in error or "regex" in error.lower():
+            return f"Error: Invalid regex pattern. Special characters like (, ), [, ], {{, }} need to be escaped with backslash. Try a simpler pattern or escape special chars.\nOriginal error: {error}"
+
+        if "not found" in error.lower():
+            return f"Error: {error}\nTip: Use list_files to see available files, or search_code to find the right file."
+
+        if "permission" in error.lower():
+            return f"Error: {error}\nThe file may not be accessible."
+
+        return f"Error: {error}"
+
     def _build_initial_prompt(self, task: str, context: str) -> str:
         """Build the initial prompt for the agent"""
         tool_desc = self.tools.get_tool_descriptions()
 
         system = self.SYSTEM_PROMPT.format(tool_descriptions=tool_desc)
-        system += "\n\n" + self.TOOL_CALL_FORMAT
+
+        # Use JSON format instructions for json modes, otherwise use markers
+        if self.response_format in ("json", "json_schema"):
+            system += "\n\n" + self.JSON_FORMAT
+        else:
+            system += "\n\n" + self.TOOL_CALL_FORMAT
 
         prompt = f"{system}\n\n"
         if context:
@@ -210,23 +335,21 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
         return prompt
 
     def _parse_response(self, response: str, step_num: int) -> AgentStep:
-        """Parse an LLM response into an AgentStep"""
+        """Parse an LLM response into an AgentStep.
+
+        IMPORTANT: Tool calls are prioritized over final answers.
+        If both are present, execute the tool first - the model should iterate.
+        """
         step = AgentStep(step_number=step_num, thought="")
 
-        # Check for final answer
-        final_match = re.search(
-            r'\*FINAL_ANSWER\*(.+?)\*END_FINAL_ANSWER\*',
-            response,
-            re.DOTALL | re.IGNORECASE
-        )
-        if final_match:
-            step.is_final = True
-            step.final_answer = final_match.group(1).strip()
-            # Extract thought as everything before the final answer
-            step.thought = response[:final_match.start()].strip()
-            return step
+        # Try JSON parsing first for json response_format modes
+        if self.response_format in ("json", "json_schema"):
+            json_step = self._parse_json_response(response, step_num)
+            if json_step:
+                return json_step
+            # Fall through to markers parsing if JSON parse fails
 
-        # Check for tool call
+        # Check for tool call FIRST - always execute tools before conclusions
         tool_match = re.search(
             r'\*TOOL_CALL\*(.+?)\*END_TOOL_CALL\*',
             response,
@@ -240,7 +363,7 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
             if name_match:
                 step.tool_name = name_match.group(1)
 
-            # Extract params
+            # Extract params - try multiple formats
             params_match = re.search(r'params:\s*(\{.+?\})', tool_block, re.DOTALL)
             if params_match:
                 try:
@@ -248,7 +371,6 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
                 except json.JSONDecodeError:
                     # Try to fix common issues
                     params_str = params_match.group(1)
-                    # Replace single quotes with double quotes
                     params_str = params_str.replace("'", '"')
                     try:
                         step.tool_params = json.loads(params_str)
@@ -257,11 +379,64 @@ params: {"path": "firmware_updater.cpp", "start_line": 320, "end_line": 340}
 
             # Thought is everything before the tool call
             step.thought = response[:tool_match.start()].strip()
-        else:
-            # No tool call or final answer - whole response is thought
-            step.thought = response.strip()
+            return step  # Return immediately - execute tool before any final answer
 
+        # Only check for final answer if NO tool calls
+        final_match = re.search(
+            r'\*FINAL_ANSWER\*(.+?)\*END_FINAL_ANSWER\*',
+            response,
+            re.DOTALL | re.IGNORECASE
+        )
+        if final_match:
+            step.is_final = True
+            step.final_answer = final_match.group(1).strip()
+            step.thought = response[:final_match.start()].strip()
+            return step
+
+        # No tool call or final answer - whole response is thought
+        step.thought = response.strip()
         return step
+
+    def _parse_json_response(self, response: str, step_num: int) -> Optional[AgentStep]:
+        """Parse a JSON-formatted agent response.
+
+        Expected format:
+        {
+            "thinking": "analysis and reasoning...",
+            "action": {
+                "type": "tool_call" | "final_answer",
+                "tool_name": "...",  // for tool_call
+                "tool_params": {...},  // for tool_call
+                "answer": "..."  // for final_answer
+            }
+        }
+        """
+        try:
+            # Try to extract JSON from response (may have extra text around it)
+            json_match = re.search(r'\{[\s\S]*\}', response)
+            if not json_match:
+                return None
+
+            data = json.loads(json_match.group(0))
+
+            step = AgentStep(step_number=step_num, thought="")
+            step.thought = data.get("thinking", "")
+
+            action = data.get("action", {})
+            action_type = action.get("type", "")
+
+            if action_type == "tool_call":
+                step.tool_name = action.get("tool_name")
+                step.tool_params = action.get("tool_params", {})
+            elif action_type == "final_answer":
+                step.is_final = True
+                step.final_answer = action.get("answer", "")
+
+            return step
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            if self.verbose:
+                print(f"JSON parse error: {e}")
+            return None
 
     def _extract_best_answer(self, steps: List[AgentStep]) -> Optional[str]:
         """Try to extract a useful answer from incomplete execution"""
@@ -276,63 +451,57 @@ class AgenticVerifier:
     """
     Agentic verification of security findings.
     Uses the agent runtime to trace vulnerabilities and prove/disprove them.
-    Pre-fetches relevant context to reduce model hallucinations.
     Stores detailed session logs for debugging and analysis.
     """
 
-    VERIFICATION_TASK = """Verify this potential security vulnerability:
+    VERIFICATION_TASK = """You are verifying a potential security vulnerability. Your goal is to INVESTIGATE using tools before reaching any conclusion.
 
-**Title:** {title}
-**Type:** {vuln_type}
-**Severity:** {severity}
-**File:** {file_path}
-**Line:** {line_number}
+## Finding to Verify
+- **Title:** {title}
+- **Type:** {vuln_type}
+- **Severity:** {severity}
+- **File:** {file_path}
+- **Line:** {line_number}
+- **Snippet:** `{snippet}`
+- **Initial Assessment:** {reason}
 
-**Reported Code Snippet:**
-```
-{snippet}
-```
+## YOUR TASK
 
-**Initial Assessment:** {reason}
+You MUST use tools to investigate this finding. Do NOT provide a final answer until you have:
+1. Read the actual code around line {line_number} in {file_path}
+2. Traced data flow to find where inputs come from
+3. Checked for callers or entry points
 
-=== PRE-FETCHED CONTEXT (DO NOT SEARCH FOR THESE - ALREADY PROVIDED) ===
+## IMPORTANT RULES
 
-**Available files in codebase:**
-{file_list}
+1. **USE TOOLS FIRST** - You must use at least 2-3 tools before concluding
+2. **ONE ACTION PER STEP** - Either use a tool OR give a final answer, never both
+3. **INVESTIGATE THOROUGHLY** - Don't assume anything, verify with actual code
 
-**Full file content ({file_path}):**
-```
-{file_content}
-```
+## Suggested Investigation Steps
 
-**Callers of this code:**
-{callers}
+Step 1: Use `read_file` to see the code around line {line_number}
+Step 2: Use `trace_data_flow` or `find_callers` to understand input sources
+Step 3: Use `get_call_graph` or `find_entry_points` if needed
 
-=== END PRE-FETCHED CONTEXT ===
+## Verdict Guidelines
 
-Your job is to determine if this is a TRUE vulnerability that could be exploitable.
-You may use tools to gather ADDITIONAL context (e.g., trace data flow, read other files).
+**VERIFY** (True Positive) if ANY apply:
+- Dangerous pattern exists (system(), sprintf to fixed buffer, use-after-free, format string)
+- User input could reach this code path
+- Function is exported/public
+- No validation or bypassable validation
 
-CRITICAL: Missing a real vulnerability is FAR WORSE than a false positive. When in doubt, VERIFY.
+**REJECT** (False Positive) ONLY if you PROVE ALL:
+- Pattern does NOT exist in actual code
+- Mathematically proven bounds checking
+- Code is 100% unreachable
 
-VERIFY (mark as True Positive) if ANY of these apply:
-- The dangerous code pattern exists (system(), sprintf to fixed buffer, use-after-free, format string without specifier, etc.)
-- User/external input COULD reach this code path (even indirectly or in future code changes)
-- The function is exported/public and could be called with malicious input
-- There's no validation, or validation could be bypassed
-- You're uncertain whether it's exploitable - VERIFY to be safe
+When in doubt, VERIFY. Missing a real vulnerability is worse than a false positive.
 
-REJECT (mark as False Positive) ONLY if you can PROVE ALL of these:
-- The exact vulnerability pattern reported does NOT exist in the code, OR
-- There is MATHEMATICALLY PROVEN bounds checking that cannot be bypassed, OR
-- The code is 100% dead (no callers, not exported, impossible to reach)
+## START NOW
 
-Examples that should be VERIFIED even if "currently safe":
-- A function using system() that currently only gets hardcoded strings - VERIFY (future caller could pass user input)
-- A buffer copy that currently fits - VERIFY (buffer sizes could change)
-- A format string from a config file - VERIFY (config could be attacker-controlled)
-
-Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
+Begin by using the `read_file` tool to examine the code. Do NOT provide your final answer yet."""
 
     def __init__(
         self,
@@ -340,79 +509,27 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         tools: CodebaseTools,
         max_steps: int = 8,
         scan_id: int = None,
-        finding_id: int = None
+        finding_id: int = None,
+        response_format: Literal["markers", "json", "json_schema"] = "markers"
     ):
         self.model_pool = model_pool
         self.tools = tools
         self.max_steps = max_steps
         self.scan_id = scan_id
         self.finding_id = finding_id
+        self.response_format = response_format
         self.runtime = AgentRuntime(
             model_pool, tools, max_steps=max_steps,
-            scan_id=scan_id, finding_id=finding_id
+            scan_id=scan_id, finding_id=finding_id,
+            response_format=response_format
         )
 
-    def _prefetch_context(self, file_path: str, snippet: str, line_number: int) -> Dict[str, str]:
-        """
-        Pre-fetch relevant context to include in the prompt.
-        This reduces the need for the model to search/read files.
-        """
-        context = {
-            'file_list': '',
-            'file_content': '',
-            'callers': ''
-        }
-
-        # Get list of files in codebase
+    def _get_available_files(self) -> str:
+        """Get a brief list of available files for context."""
         files_result = self.tools.list_files()
         if files_result.success:
-            context['file_list'] = files_result.data[:2000]  # Limit size
-
-        # Read the full file content (or around the line if file is large)
-        file_result = self.tools.read_file(file_path)
-        if file_result.success:
-            content = file_result.data
-            # If file is huge, just get context around the line
-            if len(content) > 10000 and line_number > 0:
-                # Get 100 lines around the target
-                file_result = self.tools.read_file(file_path, max(1, line_number - 50), line_number + 50)
-                if file_result.success:
-                    context['file_content'] = file_result.data
-                else:
-                    context['file_content'] = content[:10000] + "\n... (truncated)"
-            else:
-                context['file_content'] = content
-        else:
-            # Try fuzzy match
-            context['file_content'] = f"File not found: {file_path}\nError: {file_result.error}"
-
-        # Find callers - extract function name from snippet if possible
-        import re
-        # Try to find function being called in the snippet
-        func_patterns = [
-            r'(\w+)\s*\(',  # function call
-            r'(\w+)\s*=',   # assignment target
-        ]
-        func_name = None
-        for pattern in func_patterns:
-            match = re.search(pattern, snippet)
-            if match:
-                func_name = match.group(1)
-                # Skip common keywords
-                if func_name not in ['if', 'for', 'while', 'return', 'int', 'char', 'void']:
-                    break
-                func_name = None
-
-        if func_name:
-            callers_result = self.tools.find_callers(func_name)
-            if callers_result.success:
-                context['callers'] = callers_result.data[:3000]  # Limit size
-            else:
-                context['callers'] = f"No callers found for '{func_name}'"
-        else:
-            context['callers'] = "(Could not extract function name from snippet)"
-
-        return context
+            return files_result.data[:1500]  # Brief list only
+        return "Unable to list files"
 
     async def verify(
         self,
@@ -441,8 +558,8 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         from datetime import datetime
         start_time = time.time()
 
-        # Pre-fetch context to spoon-feed the model
-        prefetched = self._prefetch_context(file_path, snippet, line_number)
+        # Build task with minimal context - let agent discover via tools
+        available_files = self._get_available_files()
 
         task = self.VERIFICATION_TASK.format(
             title=title,
@@ -451,19 +568,19 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
             file_path=file_path,
             line_number=line_number,
             snippet=snippet,
-            reason=reason,
-            file_list=prefetched['file_list'],
-            file_content=prefetched['file_content'],
-            callers=prefetched['callers']
+            reason=reason
         )
+
+        # Add available files as context (but not file content)
+        context = f"Available files in codebase:\n{available_files}"
 
         # Create session log in database
         session_id = None
         try:
             from app.core.database import SessionLocal
-            from app.models.scanner_models import AgentVerificationSession
+            from app.models.scanner_models import AgentSession
             db = SessionLocal()
-            session = AgentVerificationSession(
+            session = AgentSession(
                 scan_id=self.scan_id,
                 finding_id=self.finding_id,
                 draft_finding_id=draft_finding_id,
@@ -472,9 +589,7 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
                 max_steps=self.max_steps,
                 task_prompt=task[:10000],  # Truncate if too long
                 prefetched_context={
-                    'file_list': prefetched['file_list'][:1000],
-                    'file_content_length': len(prefetched['file_content']),
-                    'callers': prefetched['callers'][:1000]
+                    'available_files': available_files[:1000]
                 }
             )
             db.add(session)
@@ -484,7 +599,7 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         except Exception as e:
             print(f"Failed to create agent session log: {e}")
 
-        result = await self.runtime.run(task)
+        result = await self.runtime.run(task, context)
 
         # Parse the final answer
         verification = self._parse_verification(result)
@@ -498,8 +613,8 @@ Be thorough but efficient. Focus on analyzing the pre-fetched context first."""
         if session_id:
             try:
                 db = SessionLocal()
-                session = db.query(AgentVerificationSession).filter(
-                    AgentVerificationSession.id == session_id
+                session = db.query(AgentSession).filter(
+                    AgentSession.id == session_id
                 ).first()
                 if session:
                     session.status = result.state.value

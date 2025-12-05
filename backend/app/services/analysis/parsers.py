@@ -184,8 +184,9 @@ class DraftParser:
         # Look for ```json ... ``` blocks
         json_block_match = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text)
         if json_block_match:
+            json_text = self._clean_json(json_block_match.group(1))
             try:
-                data = json.loads(json_block_match.group(1))
+                data = json.loads(json_text)
                 if isinstance(data, list):
                     return self._normalize_json_findings(data)
             except json.JSONDecodeError:
@@ -194,8 +195,20 @@ class DraftParser:
         # Look for bare JSON array
         array_match = re.search(r'\[\s*\{[\s\S]*?\}\s*\]', text)
         if array_match:
+            json_text = self._clean_json(array_match.group(0))
             try:
-                data = json.loads(array_match.group(0))
+                data = json.loads(json_text)
+                if isinstance(data, list):
+                    return self._normalize_json_findings(data)
+            except json.JSONDecodeError:
+                pass
+
+        # Look for JSON object with "findings" key
+        findings_match = re.search(r'\{[^{}]*"findings"\s*:\s*(\[[\s\S]*?\])', text)
+        if findings_match:
+            json_text = self._clean_json(findings_match.group(1))
+            try:
+                data = json.loads(json_text)
                 if isinstance(data, list):
                     return self._normalize_json_findings(data)
             except json.JSONDecodeError:
@@ -206,6 +219,12 @@ class DraftParser:
             return []
 
         return None
+
+    def _clean_json(self, text: str) -> str:
+        """Basic JSON cleanup for minor formatting issues"""
+        # Remove trailing commas before } or ]
+        text = re.sub(r',\s*([}\]])', r'\1', text)
+        return text.strip()
 
     def _normalize_json_findings(self, findings: List[dict]) -> List[dict]:
         """Normalize JSON findings to expected format"""

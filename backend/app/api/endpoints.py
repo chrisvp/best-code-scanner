@@ -328,7 +328,7 @@ async def delete_finding(finding_id: int, db: Session = Depends(get_db)):
 @router.post("/finding/{finding_id}/agent-verify")
 async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: Session = Depends(get_db)):
     """Run agent-based verification on a finding"""
-    from app.models.scanner_models import ScanFile, ScanFileChunk, AgentVerificationSession
+    from app.models.scanner_models import ScanFile, ScanFileChunk, AgentSession
     from app.services.orchestration.model_orchestrator import ModelPool
 
     finding = db.query(Finding).filter(Finding.id == finding_id).first()
@@ -377,12 +377,16 @@ async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: 
             db=db
         )
 
+        # Get response format from model config
+        response_format = getattr(model_config, 'response_format', 'markers') or 'markers'
+
         agentic_verifier = AgenticVerifier(
             model_pool=model_pool,
             tools=codebase_tools,
             max_steps=10,
             scan_id=finding.scan_id,
-            finding_id=finding_id
+            finding_id=finding_id,
+            response_format=response_format
         )
 
         # Run verification
@@ -392,7 +396,7 @@ async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: 
             severity=finding.severity or "Medium",
             file_path=os.path.basename(finding.file_path) if finding.file_path else "unknown",
             line_number=finding.line_number or 0,
-            snippet=finding.code_snippet or "",
+            snippet=finding.snippet or "",
             reason=finding.vulnerability_details or ""
         )
 
@@ -417,14 +421,147 @@ async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: 
         return JSONResponse({"error": str(e), "traceback": traceback.format_exc()}, status_code=500)
 
 
+@router.get("/finding/{finding_id}/agent-verify/stream")
+async def agent_verify_finding_stream(finding_id: int, model_id: int = None, db: Session = Depends(get_db)):
+    """Run agent-based verification with SSE streaming of progress"""
+    from app.models.scanner_models import ScanFile, AgentSession
+    from app.services.orchestration.model_orchestrator import ModelPool
+    from starlette.responses import StreamingResponse
+    import asyncio
+    import json as json_module
+
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return JSONResponse({"error": "Finding not found"}, status_code=404)
+
+    # Get model for agent verification
+    if model_id:
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    else:
+        model_config = db.query(ModelConfig).first()
+
+    if not model_config:
+        return JSONResponse({"error": "No model available"}, status_code=400)
+
+    # Get codebase root from scan
+    codebase_path = None
+    if finding.scan_id:
+        scan_file = db.query(ScanFile).filter(ScanFile.scan_id == finding.scan_id).first()
+        if scan_file:
+            import os
+            codebase_path = scan_file.file_path
+            while codebase_path and os.path.basename(os.path.dirname(codebase_path)) != 'sandbox':
+                codebase_path = os.path.dirname(codebase_path)
+            if not codebase_path or not os.path.exists(codebase_path):
+                codebase_path = f"sandbox/{finding.scan_id}"
+
+    if not codebase_path or not os.path.exists(codebase_path):
+        return JSONResponse({"error": f"Codebase not found"}, status_code=400)
+
+    async def generate_events():
+        step_queue = asyncio.Queue()
+
+        def step_callback(step):
+            """Called after each agent step"""
+            asyncio.get_event_loop().call_soon_threadsafe(
+                step_queue.put_nowait,
+                step.to_dict()
+            )
+
+        try:
+            from app.services.intelligence.codebase_tools import CodebaseTools
+            from app.services.intelligence.agent_runtime import AgenticVerifier, AgentRuntime
+
+            # Create model pool
+            db_local = SessionLocal()
+            model_cfg = db_local.query(ModelConfig).filter(ModelConfig.id == model_config.id).first()
+            db_local.expunge(model_cfg)
+            db_local.close()
+
+            model_pool = ModelPool(model_cfg)
+            await model_pool.start()
+
+            codebase_tools = CodebaseTools(
+                scan_id=finding.scan_id,
+                root_dir=codebase_path,
+                db=SessionLocal()
+            )
+
+            # Get response format from model config
+            response_format = getattr(model_cfg, 'response_format', 'markers') or 'markers'
+
+            # Create runtime with callback
+            runtime = AgentRuntime(
+                model_pool=model_pool,
+                tools=codebase_tools,
+                max_steps=10,
+                scan_id=finding.scan_id,
+                finding_id=finding_id,
+                step_callback=step_callback,
+                response_format=response_format
+            )
+
+            # Start verification in background task
+            async def run_verification():
+                verifier = AgenticVerifier(
+                    model_pool=model_pool,
+                    tools=codebase_tools,
+                    max_steps=10,
+                    scan_id=finding.scan_id,
+                    finding_id=finding_id,
+                    response_format=response_format
+                )
+                # Override runtime to use callback
+                verifier.runtime = runtime
+
+                result = await verifier.verify(
+                    title=finding.description or "Unknown",
+                    vuln_type=finding.category or "Unknown",
+                    severity=finding.severity or "Medium",
+                    file_path=os.path.basename(finding.file_path) if finding.file_path else "unknown",
+                    line_number=finding.line_number or 0,
+                    snippet=finding.snippet or "",
+                    reason=finding.vulnerability_details or ""
+                )
+                await model_pool.stop()
+                return result
+
+            verification_task = asyncio.create_task(run_verification())
+
+            # Stream steps as they arrive
+            while not verification_task.done():
+                try:
+                    step_data = await asyncio.wait_for(step_queue.get(), timeout=0.5)
+                    yield f"data: {json_module.dumps({'type': 'step', 'step': step_data})}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive ping
+                    yield f"data: {json_module.dumps({'type': 'ping'})}\n\n"
+
+            # Drain any remaining steps from queue
+            while not step_queue.empty():
+                step_data = step_queue.get_nowait()
+                yield f"data: {json_module.dumps({'type': 'step', 'step': step_data})}\n\n"
+
+            # Get final result
+            result = await verification_task
+            yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'verified': result['verified'], 'confidence': result['confidence'], 'reasoning': result.get('reasoning', ''), 'attack_path': result.get('attack_path', ''), 'session_id': result.get('session_id')})}\n\n"
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(generate_events(), media_type="text/event-stream")
+
+
 @router.get("/finding/{finding_id}/agent-sessions")
 async def get_finding_agent_sessions(finding_id: int, db: Session = Depends(get_db)):
     """Get agent verification sessions for a finding"""
-    from app.models.scanner_models import AgentVerificationSession
+    from app.models.scanner_models import AgentSession
 
-    sessions = db.query(AgentVerificationSession).filter(
-        AgentVerificationSession.finding_id == finding_id
-    ).order_by(AgentVerificationSession.created_at.desc()).all()
+    sessions = db.query(AgentSession).filter(
+        AgentSession.finding_id == finding_id
+    ).order_by(AgentSession.created_at.desc()).all()
 
     return JSONResponse({
         "sessions": [
@@ -973,7 +1110,8 @@ async def create_model(request: Request, db: Session = Depends(get_db)):
         max_tokens=data.get('max_tokens', 4096),
         max_concurrent=data.get('max_concurrent', 2),
         votes=data.get('votes', 1),
-        chunk_size=data.get('chunk_size', 3000)
+        chunk_size=data.get('chunk_size', 3000),
+        response_format=data.get('response_format', 'markers')
     )
     db.add(model)
     db.commit()
@@ -1012,6 +1150,8 @@ async def update_model(model_id: int, request: Request, db: Session = Depends(ge
         model.votes = data['votes']
     if 'chunk_size' in data:
         model.chunk_size = data['chunk_size']
+    if 'response_format' in data:
+        model.response_format = data['response_format']
 
     db.commit()
     return {"status": "updated", "id": model.id, "name": model.name}
@@ -4326,6 +4466,84 @@ async def retry_review(
 
     # Note: In a real implementation, this would re-queue the review for processing
     return {"id": review.id, "status": "retry_queued"}
+
+
+# ============================================================================
+# ============================================================================
+# Agent Sessions Page - View agent execution logs
+# ============================================================================
+
+@router.get("/agent-sessions", response_class=HTMLResponse)
+async def agent_sessions_page(request: Request, db: Session = Depends(get_db)):
+    """Page to view all agent sessions"""
+    from app.models.scanner_models import AgentSession
+
+    sessions = db.query(AgentSession).order_by(AgentSession.created_at.desc()).limit(100).all()
+
+    return templates.TemplateResponse("agent_sessions.html", {
+        "request": request,
+        "sessions": sessions,
+    })
+
+
+@router.get("/agent-sessions/{session_id}")
+async def get_agent_session(session_id: int, db: Session = Depends(get_db)):
+    """Get a single agent session with full trace"""
+    from app.models.scanner_models import AgentSession
+
+    session = db.query(AgentSession).filter(AgentSession.id == session_id).first()
+    if not session:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    return JSONResponse({
+        "id": session.id,
+        "scan_id": session.scan_id,
+        "finding_id": session.finding_id,
+        "draft_finding_id": session.draft_finding_id,
+        "status": session.status,
+        "model_name": session.model_name,
+        "verdict": session.verdict,
+        "confidence": session.confidence,
+        "reasoning": session.reasoning,
+        "attack_path": session.attack_path,
+        "total_steps": session.total_steps,
+        "max_steps": session.max_steps,
+        "total_tokens": session.total_tokens,
+        "duration_ms": session.duration_ms,
+        "execution_trace": session.execution_trace,
+        "task_prompt": session.task_prompt,
+        "prefetched_context": session.prefetched_context,
+        "error_message": session.error_message,
+        "created_at": session.created_at.isoformat() if session.created_at else None,
+        "completed_at": session.completed_at.isoformat() if session.completed_at else None,
+    })
+
+
+@router.delete("/agent-sessions/{session_id}")
+async def delete_agent_session(session_id: int, db: Session = Depends(get_db)):
+    """Delete an agent session"""
+    from app.models.scanner_models import AgentSession
+
+    session = db.query(AgentSession).filter(AgentSession.id == session_id).first()
+    if not session:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    db.delete(session)
+    db.commit()
+    return JSONResponse({"success": True})
+
+
+@router.delete("/agent-sessions")
+async def cleanup_agent_sessions(older_than_days: int = 7, db: Session = Depends(get_db)):
+    """Delete agent sessions older than N days"""
+    from app.models.scanner_models import AgentSession
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.now() - timedelta(days=older_than_days)
+    deleted = db.query(AgentSession).filter(AgentSession.created_at < cutoff).delete()
+    db.commit()
+
+    return JSONResponse({"success": True, "deleted": deleted})
 
 
 # ============================================================================
