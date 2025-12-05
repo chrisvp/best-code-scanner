@@ -134,13 +134,26 @@
                         </svg>
                         Model Configurations
                     </h2>
-                    <button onclick="document.getElementById('add-model-modal').classList.remove('hidden')"
-                        class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-                        </svg>
-                        Add Model
-                    </button>
+                    <div class="flex gap-2">
+                        <button onclick="discoverModels()"
+                            id="discover-models-btn"
+                            class="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
+                            <svg class="w-4 h-4" id="discover-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                            </svg>
+                            <svg class="w-4 h-4 hidden animate-spin" id="discover-spinner" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            <span id="discover-text">Discover Models</span>
+                        </button>
+                        <button onclick="document.getElementById('add-model-modal').classList.remove('hidden')"
+                            class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                            </svg>
+                            Add Model
+                        </button>
+                    </div>
                 </div>
 
                 {% if models %}
@@ -440,25 +453,38 @@
                                     <option value="hybrid" {% if profile.agentic_verifier_mode == 'hybrid' %}selected{% endif %}>Hybrid (voting + agentic for uncertain)</option>
                                     <option value="full" {% if profile.agentic_verifier_mode == 'full' %}selected{% endif %}>Full (always use agentic)</option>
                                 </select>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" id="agentic-steps-{{ profile.id }}"
+                                        value="{{ profile.agentic_verifier_max_steps or 8 }}"
+                                        min="3" max="20"
+                                        onchange="updateAgenticVerifier({{ profile.id }})"
+                                        class="w-16 px-2 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+                                        title="Max reasoning steps">
+                                    <span class="text-xs text-gray-500">steps</span>
+                                </div>
                             </div>
-                            <div id="agentic-model-row-{{ profile.id }}" class="flex items-center gap-3 {% if profile.agentic_verifier_mode == 'skip' or not profile.agentic_verifier_mode %}hidden{% endif %}">
-                                <select id="agentic-model-{{ profile.id }}"
-                                    onchange="updateAgenticVerifier({{ profile.id }})"
-                                    class="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500">
-                                    <option value="">-- Select model --</option>
+                            <div id="agentic-model-row-{{ profile.id }}" class="{% if profile.agentic_verifier_mode == 'skip' or not profile.agentic_verifier_mode %}hidden{% endif %}">
+                                <p class="text-xs text-gray-500 mb-2">Select models for agent verification (tool calling required):</p>
+                                <div class="grid grid-cols-2 gap-2">
+                                    {% set agent_model_ids = profile.agent_models | map(attribute='model_id') | list %}
                                     {% for model in models %}
-                                    <option value="{{ model.id }}" {% if profile.agentic_verifier_model_id == model.id %}selected{% endif %}>
-                                        {{ model.name }}
-                                    </option>
+                                    {% if model.tool_call_format and model.tool_call_format != 'none' %}
+                                    <label class="flex items-center gap-2 p-2 bg-gray-900 rounded-lg border border-gray-700 hover:border-gray-600 cursor-pointer">
+                                        <input type="checkbox"
+                                            class="agent-model-checkbox-{{ profile.id }} w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-800"
+                                            value="{{ model.id }}"
+                                            onchange="updateAgentModels({{ profile.id }})"
+                                            {% if model.id in agent_model_ids %}checked{% endif %}>
+                                        <span class="text-sm text-white">{{ model.name }}</span>
+                                        <span class="text-[10px] text-gray-500 ml-auto">{{ model.tool_call_format }}</span>
+                                    </label>
+                                    {% endif %}
                                     {% endfor %}
-                                </select>
-                                <input type="number" id="agentic-steps-{{ profile.id }}"
-                                    value="{{ profile.agentic_verifier_max_steps or 8 }}"
-                                    min="3" max="20"
-                                    onchange="updateAgenticVerifier({{ profile.id }})"
-                                    class="w-20 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
-                                    title="Max reasoning steps">
-                                <span class="text-xs text-gray-500">steps</span>
+                                </div>
+                                {% set tool_models_count = models | selectattr('tool_call_format') | rejectattr('tool_call_format', 'equalto', 'none') | list | length %}
+                                {% if tool_models_count == 0 %}
+                                <p class="text-xs text-yellow-500 mt-2">No models with tool calling support configured. Use "Discover Models" to detect capabilities.</p>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -964,6 +990,54 @@
     </div>
 </div>
 
+<!-- Discover Models Modal -->
+<div id="discover-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="flex justify-between items-center mb-4">
+            <div>
+                <h2 class="text-xl font-bold text-white">Discovered Models</h2>
+                <p class="text-sm text-gray-400" id="discover-summary">Select models to import</p>
+            </div>
+            <button onclick="document.getElementById('discover-modal').classList.add('hidden')"
+                class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto" id="discovered-models-list">
+            <!-- Discovered models will be populated here -->
+        </div>
+
+        <div class="flex justify-between items-center mt-4 pt-4 border-t border-gray-700">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="select-all-models" onchange="toggleAllDiscoveredModels(this.checked)"
+                        class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-green-600 focus:ring-green-500">
+                    <label for="select-all-models" class="text-sm text-gray-400">Select all</label>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="update-existing-models"
+                        class="w-4 h-4 rounded bg-gray-900 border-gray-600 text-blue-600 focus:ring-blue-500">
+                    <label for="update-existing-models" class="text-sm text-gray-400">Update existing models</label>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button type="button" onclick="document.getElementById('discover-modal').classList.add('hidden')"
+                    class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
+                <button type="button" onclick="importSelectedModels()"
+                    class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                    </svg>
+                    Import Selected
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Add Model Modal -->
 <div id="add-model-modal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
     <div class="bg-gray-800 rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
@@ -1022,6 +1096,15 @@
                     </select>
                     <p class="text-xs text-gray-500 mt-1">How this model outputs structured data</p>
                 </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Tool Calling Format</label>
+                    <select name="tool_call_format" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="none" selected>None (text-based tools)</option>
+                        <option value="openai">OpenAI (Llama 3.1+, Mistral, Qwen, DeepSeek)</option>
+                        <option value="hermes">Hermes (Nous Hermes models)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Native tool calling format for agents</p>
+                </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-model-modal').classList.add('hidden')"
@@ -1078,6 +1161,15 @@
                         <option value="json_schema">JSON Schema (strict)</option>
                     </select>
                     <p class="text-xs text-gray-500 mt-1">How this model outputs structured data</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">Tool Calling Format</label>
+                    <select name="tool_call_format" id="edit-model-tool-call-format" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="none">None (text-based tools)</option>
+                        <option value="openai">OpenAI (Llama 3.1+, Mistral, Qwen, DeepSeek)</option>
+                        <option value="hermes">Hermes (Nous Hermes models)</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Native tool calling format for agents</p>
                 </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
@@ -1180,26 +1272,9 @@ File: {file_path}
 
 {output_format}</textarea>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
-                    <select name="output_mode" id="add-analyzer-output-mode" onchange="toggleJsonSchema(this, 'add-analyzer')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="markers">Markers (*DRAFT:, *VOTE:, etc.)</option>
-                        <option value="json">JSON (response_format)</option>
-                        <option value="guided_json">Guided JSON (vLLM schema)</option>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
-                </div>
-                <div id="add-analyzer-schema-container" class="hidden">
-                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
-                    <textarea name="json_schema" id="add-analyzer-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only, not all models support this)</p>
-                </div>
-                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
-                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
-                        Format Instructions Preview (auto-appended to prompt as {output_format})
-                    </summary>
-                    <pre id="add-analyzer-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
-                </details>
+                <p class="text-xs text-gray-500 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700">
+                    Output format is determined by the model's configured response_format setting.
+                </p>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-analyzer-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1252,26 +1327,9 @@ File: {file_path}
                     <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
                     <textarea name="prompt_template" id="edit-analyzer-prompt" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
-                    <select name="output_mode" id="edit-analyzer-output-mode" onchange="toggleJsonSchema(this, 'edit-analyzer')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="markers">Markers (*DRAFT:, *VOTE:, etc.)</option>
-                        <option value="json">JSON (response_format)</option>
-                        <option value="guided_json">Guided JSON (vLLM schema)</option>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
-                </div>
-                <div id="edit-analyzer-schema-container" class="hidden">
-                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
-                    <textarea name="json_schema" id="edit-analyzer-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only, not all models support this)</p>
-                </div>
-                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
-                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
-                        Format Instructions Preview (auto-appended to prompt as {output_format})
-                    </summary>
-                    <pre id="edit-analyzer-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
-                </details>
+                <p class="text-xs text-gray-500 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700">
+                    Output format is determined by the model's configured response_format setting.
+                </p>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('edit-analyzer-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1339,26 +1397,9 @@ File: {file_path}
 
 {output_format}</textarea>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
-                    <select name="output_mode" id="add-verifier-output-mode" onchange="toggleJsonSchema(this, 'add-verifier')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
-                        <option value="markers">Markers (*VOTE:, etc.)</option>
-                        <option value="json">JSON (response_format)</option>
-                        <option value="guided_json">Guided JSON (vLLM schema)</option>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
-                </div>
-                <div id="add-verifier-schema-container" class="hidden">
-                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
-                    <textarea name="json_schema" id="add-verifier-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only)</p>
-                </div>
-                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
-                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
-                        Format Instructions Preview (auto-appended to prompt as {output_format})
-                    </summary>
-                    <pre id="add-verifier-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
-                </details>
+                <p class="text-xs text-gray-500 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700">
+                    Output format is determined by the model's configured response_format setting.
+                </p>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-verifier-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1411,26 +1452,9 @@ File: {file_path}
                     <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template</label>
                     <textarea name="prompt_template" id="edit-verifier-prompt" rows="10" required class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-1">Output Mode</label>
-                    <select name="output_mode" id="edit-verifier-output-mode" onchange="toggleJsonSchema(this, 'edit-verifier')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
-                        <option value="markers">Markers (*VOTE:, etc.)</option>
-                        <option value="json">JSON (response_format)</option>
-                        <option value="guided_json">Guided JSON (vLLM schema)</option>
-                    </select>
-                    <p class="text-xs text-gray-500 mt-1">How to parse LLM responses</p>
-                </div>
-                <div id="edit-verifier-schema-container" class="hidden">
-                    <label class="block text-sm font-medium text-gray-300 mb-1">JSON Schema</label>
-                    <textarea name="json_schema" id="edit-verifier-json-schema" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Enter JSON schema for guided decoding..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1">Schema for guided_json mode (vLLM only)</p>
-                </div>
-                <details class="bg-gray-900/50 rounded-lg border border-gray-700">
-                    <summary class="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
-                        Format Instructions Preview (auto-appended to prompt as {output_format})
-                    </summary>
-                    <pre id="edit-verifier-format-preview" class="px-3 py-2 text-xs text-gray-400 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"></pre>
-                </details>
+                <p class="text-xs text-gray-500 bg-gray-900/50 rounded-lg px-3 py-2 border border-gray-700">
+                    Output format is determined by the model's configured response_format setting.
+                </p>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('edit-verifier-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1493,196 +1517,8 @@ File: {file_path}
 
 <script>
 const modelsData = {
-    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, response_format: "{{ model.response_format or 'markers' }}" },{% endfor %}
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, response_format: "{{ model.response_format or 'markers' }}", tool_call_format: "{{ model.tool_call_format or 'none' }}" },{% endfor %}
 };
-
-// Output format templates - appended to prompts based on output_mode
-const outputFormatTemplates = {
-    // For analyzers (draft scanning)
-    analyzer: {
-        markers: `=== OUTPUT FORMAT ===
-For each vulnerability found, use this EXACT format:
-
-*DRAFT: [descriptive title]
-*TYPE: CWE-XXX
-*SEVERITY: Critical/High/Medium/Low
-*LINE: [exact line number from code above]
-*SNIPPET: [the vulnerable code]
-*REASON: [one sentence explanation]
-*END_DRAFT
-
-If no vulnerabilities found, respond with: *DRAFT:NONE`,
-
-        json: `=== OUTPUT FORMAT ===
-Respond with a JSON object containing a "findings" array. Each finding should have:
-- title: Brief descriptive title
-- vulnerability_type: CWE ID (e.g., "CWE-78")
-- severity: "Critical", "High", "Medium", or "Low"
-- line_number: Exact line number from the code
-- snippet: The vulnerable code
-- reason: One sentence explanation
-
-Example:
-{"findings": [{"title": "Buffer Overflow", "vulnerability_type": "CWE-120", "severity": "High", "line_number": 42, "snippet": "strcpy(buf, input)", "reason": "Unbounded copy into fixed buffer"}]}
-
-If no vulnerabilities: {"findings": []}`,
-
-        guided_json: `=== OUTPUT FORMAT ===
-Respond with JSON matching the required schema. Include all findings in the "findings" array.
-Each finding must have: title, vulnerability_type (CWE-XXX), severity, line_number, snippet, reason.
-If no vulnerabilities found, return: {"findings": []}`
-    },
-
-    // For verifiers (voting)
-    verifier: {
-        markers: `=== OUTPUT FORMAT ===
-Respond with your vote using this EXACT format:
-
-*VOTE: VERIFY/WEAKNESS/REJECT
-*CONFIDENCE: [0-100]
-*REASONING: [your explanation]
-*END_VERIFIED
-
-Vote meanings:
-- VERIFY: Real, exploitable security vulnerability
-- WEAKNESS: Code quality issue but not directly exploitable
-- REJECT: False positive, not a real issue`,
-
-        json: `=== OUTPUT FORMAT ===
-Respond with a JSON object:
-- vote: "VERIFY", "WEAKNESS", or "REJECT"
-- confidence: Number 0-100
-- reasoning: Your explanation
-
-Example: {"vote": "VERIFY", "confidence": 85, "reasoning": "User input flows directly to system() without sanitization"}`,
-
-        guided_json: `=== OUTPUT FORMAT ===
-Respond with JSON matching the required schema.
-Vote must be one of: VERIFY, WEAKNESS, REJECT
-Confidence is 0-100. Include your reasoning.`
-    },
-
-    // For enrichers (full reports)
-    enricher: {
-        markers: `=== OUTPUT FORMAT ===
-*FINDING: [title]
-*CATEGORY: [CWE category]
-*SEVERITY: Critical/High/Medium/Low
-*CVSS: [0.0-10.0]
-*VULNERABILITY_DETAILS: [detailed explanation]
-*PROOF_OF_CONCEPT: [exploitation steps or code]
-*CORRECTED_CODE: [fixed version of vulnerable code]
-*REMEDIATION_STEPS: [how to fix]
-*REFERENCES: [relevant links or documentation]
-*END_FINDING`,
-
-        json: `=== OUTPUT FORMAT ===
-Respond with a JSON object containing:
-- title, category, severity, cvss_score (0-10)
-- vulnerability_details: Detailed explanation
-- proof_of_concept: How to exploit
-- corrected_code: Fixed code
-- remediation_steps: How to fix
-- references: Relevant documentation`,
-
-        guided_json: `=== OUTPUT FORMAT ===
-Respond with JSON matching the required schema with all fields populated.`
-    }
-};
-
-// JSON Schema presets for guided decoding
-const schemaPresets = {
-    draft_finding: {
-        type: "object",
-        properties: {
-            findings: {
-                type: "array",
-                items: {
-                    type: "object",
-                    properties: {
-                        title: { type: "string", description: "Brief title of the vulnerability" },
-                        vulnerability_type: { type: "string", description: "CWE ID or vulnerability category" },
-                        severity: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
-                        line_number: { type: "integer", description: "Line number where vulnerability occurs" },
-                        snippet: { type: "string", description: "Relevant code snippet" },
-                        reason: { type: "string", description: "Why this is a vulnerability" }
-                    },
-                    required: ["title", "vulnerability_type", "severity", "line_number", "snippet", "reason"]
-                }
-            }
-        },
-        required: ["findings"]
-    },
-    verification_vote: {
-        type: "object",
-        properties: {
-            vote: { type: "string", enum: ["VERIFY", "WEAKNESS", "REJECT"] },
-            confidence: { type: "integer", minimum: 0, maximum: 100 },
-            reasoning: { type: "string", description: "Explanation for the vote" },
-            attack_scenario: { type: "string", description: "How could this be exploited (if VERIFY)" }
-        },
-        required: ["vote", "confidence", "reasoning"]
-    },
-    enriched_finding: {
-        type: "object",
-        properties: {
-            title: { type: "string" },
-            category: { type: "string" },
-            severity: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
-            cvss_score: { type: "number", minimum: 0, maximum: 10 },
-            vulnerability_details: { type: "string" },
-            proof_of_concept: { type: "string" },
-            corrected_code: { type: "string" },
-            remediation_steps: { type: "string" },
-            references: { type: "string" }
-        },
-        required: ["title", "category", "severity", "vulnerability_details", "corrected_code", "remediation_steps"]
-    }
-};
-
-// Toggle JSON schema textarea visibility based on output mode
-function toggleJsonSchema(select, prefix) {
-    const container = document.getElementById(`${prefix}-schema-container`);
-    if (select.value === 'guided_json') {
-        container.classList.remove('hidden');
-        // Auto-load the appropriate schema based on type
-        const textarea = document.getElementById(`${prefix}-json-schema`);
-        if (textarea && !textarea.value.trim()) {
-            // Determine type from prefix and load appropriate schema
-            let presetName = 'draft_finding';  // default for analyzers
-            if (prefix.includes('verifier')) presetName = 'verification_vote';
-            else if (prefix.includes('enricher')) presetName = 'enriched_finding';
-
-            const schema = schemaPresets[presetName];
-            if (schema) {
-                textarea.value = JSON.stringify(schema, null, 2);
-            }
-        }
-    } else {
-        container.classList.add('hidden');
-    }
-    // Update format preview
-    updateFormatPreview(prefix);
-}
-
-// Update the format preview based on output mode
-function updateFormatPreview(prefix) {
-    const previewEl = document.getElementById(`${prefix}-format-preview`);
-    if (!previewEl) return;
-
-    const outputModeSelect = document.getElementById(`${prefix}-output-mode`) ||
-                              document.querySelector(`#${prefix.replace('edit-', '').replace('add-', '')} [name="output_mode"]`);
-    if (!outputModeSelect) return;
-
-    const mode = outputModeSelect.value || 'markers';
-    // Determine type (analyzer, verifier, enricher) from prefix
-    let type = 'analyzer';
-    if (prefix.includes('verifier')) type = 'verifier';
-    else if (prefix.includes('enricher')) type = 'enricher';
-
-    const template = outputFormatTemplates[type]?.[mode] || '';
-    previewEl.textContent = template;
-}
 
 function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-gray-400', 'border-transparent'); b.classList.remove('text-white', 'border-blue-500'); });
@@ -1719,6 +1555,7 @@ function editModel(id) {
     document.getElementById('edit-model-max-concurrent').value = m.max_concurrent;
     document.getElementById('edit-model-votes').value = m.votes;
     document.getElementById('edit-model-response-format').value = m.response_format || 'markers';
+    document.getElementById('edit-model-tool-call-format').value = m.tool_call_format || 'none';
     document.getElementById('edit-model-modal').classList.remove('hidden');
 }
 
@@ -1727,7 +1564,7 @@ async function submitEditModelForm(event) {
     const form = event.target;
     const formData = new FormData(form);
     const id = formData.get('model_id');
-    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), response_format: formData.get('response_format') || 'markers' };
+    const data = { name: formData.get('name'), base_url: formData.get('base_url') || null, max_tokens: parseInt(formData.get('max_tokens')), max_concurrent: parseInt(formData.get('max_concurrent')), votes: parseInt(formData.get('votes')), response_format: formData.get('response_format') || 'markers', tool_call_format: formData.get('tool_call_format') || 'none' };
     if (formData.get('api_key')) data.api_key = formData.get('api_key');
     const response = await fetch(`/models/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
     if (response.ok) location.reload(); else alert((await response.json()).error || 'Failed');
@@ -1736,6 +1573,168 @@ async function submitEditModelForm(event) {
 async function deleteModel(id, name) { if (!confirm(`Delete "${name}"?`)) return; if ((await fetch(`/models/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteProfile(id, name) { if (!confirm(`Delete profile "${name}"?`)) return; if ((await fetch(`/profiles/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function duplicateProfile(id, name) { if ((await fetch(`/profiles/${id}/duplicate`, { method: 'POST' })).ok) location.reload(); else alert('Failed to duplicate profile'); }
+
+// Model Discovery
+let discoveredModelsData = [];
+
+async function discoverModels() {
+    const btn = document.getElementById('discover-models-btn');
+    const icon = document.getElementById('discover-icon');
+    const spinner = document.getElementById('discover-spinner');
+    const text = document.getElementById('discover-text');
+
+    // Show loading state
+    btn.disabled = true;
+    icon.classList.add('hidden');
+    spinner.classList.remove('hidden');
+    text.textContent = 'Discovering...';
+
+    try {
+        const response = await fetch('/models/discover', { method: 'POST' });
+        const data = await response.json();
+
+        if (data.error) {
+            alert('Error: ' + data.error);
+            return;
+        }
+
+        discoveredModelsData = data.discovered || [];
+        renderDiscoveredModels(data);
+
+        // Show modal
+        document.getElementById('discover-modal').classList.remove('hidden');
+
+    } catch (error) {
+        alert('Failed to discover models: ' + error.message);
+    } finally {
+        // Reset button
+        btn.disabled = false;
+        icon.classList.remove('hidden');
+        spinner.classList.add('hidden');
+        text.textContent = 'Discover Models';
+    }
+}
+
+function renderDiscoveredModels(data) {
+    const container = document.getElementById('discovered-models-list');
+    const summary = document.getElementById('discover-summary');
+
+    const existingCount = data.discovered.filter(m => m.already_exists).length;
+    summary.textContent = `Found ${data.total} models (${data.new} new, ${existingCount} existing)`;
+
+    if (!data.discovered || data.discovered.length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-8">No models found</div>';
+        return;
+    }
+
+    const html = data.discovered.map((model, idx) => {
+        const isNew = !model.already_exists;
+        const hasError = model.error && !model.test_passed;
+        const canSelect = !hasError && model.test_passed;
+
+        return `
+            <div class="p-4 border-b border-gray-700 hover:bg-gray-700/30">
+                <div class="flex items-start gap-3">
+                    <input type="checkbox"
+                        id="model-check-${idx}"
+                        data-model-idx="${idx}"
+                        data-is-existing="${model.already_exists}"
+                        class="discover-model-check mt-1 w-4 h-4 rounded bg-gray-900 border-gray-600 ${model.already_exists ? 'text-blue-600' : 'text-green-600'} focus:ring-green-500"
+                        ${!canSelect ? 'disabled' : ''}
+                        ${canSelect && isNew ? 'checked' : ''}>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="font-medium text-white">${model.name}</span>
+                            ${model.already_exists ? '<span class="text-xs px-2 py-0.5 bg-blue-900 text-blue-300 rounded">Existing</span>' : '<span class="text-xs px-2 py-0.5 bg-green-900 text-green-300 rounded">New</span>'}
+                            ${hasError ? '<span class="text-xs px-2 py-0.5 bg-red-900 text-red-300 rounded">Test failed</span>' : ''}
+                            ${model.test_passed ? '<span class="text-xs px-2 py-0.5 bg-gray-700 text-gray-300 rounded">Tested OK</span>' : ''}
+                        </div>
+                        ${model.error ? `<div class="text-xs text-red-400 mb-2">${model.error}</div>` : ''}
+                        <div class="flex flex-wrap gap-3 text-xs">
+                            <span class="flex items-center gap-1 ${model.supports_guided_json ? 'text-green-400' : model.supports_json ? 'text-blue-400' : 'text-gray-500'}">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${model.supports_json ? 'M5 13l4 4L19 7' : 'M6 18L18 6M6 6l12 12'}"></path>
+                                </svg>
+                                ${model.supports_guided_json ? 'Guided JSON (vLLM)' : model.supports_json ? 'JSON Mode' : 'No JSON'}
+                            </span>
+                            <span class="flex items-center gap-1 ${model.supports_tools ? 'text-green-400' : model.expected_tool_format !== 'none' ? 'text-yellow-400' : 'text-gray-500'}">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${model.supports_tools || model.expected_tool_format !== 'none' ? 'M5 13l4 4L19 7' : 'M6 18L18 6M6 6l12 12'}"></path>
+                                </svg>
+                                ${model.supports_tools ? 'Tools (' + model.tool_call_format + ')' : model.expected_tool_format !== 'none' ? 'Expected: ' + model.expected_tool_format : 'No Tools'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = html;
+}
+
+function toggleAllDiscoveredModels(checked) {
+    document.querySelectorAll('.discover-model-check:not(:disabled)').forEach(cb => {
+        cb.checked = checked;
+    });
+}
+
+async function importSelectedModels() {
+    const selectedIndices = [];
+    let hasExisting = false;
+
+    document.querySelectorAll('.discover-model-check:checked').forEach(cb => {
+        selectedIndices.push(parseInt(cb.dataset.modelIdx));
+        if (cb.dataset.isExisting === 'true') hasExisting = true;
+    });
+
+    if (selectedIndices.length === 0) {
+        alert('No models selected');
+        return;
+    }
+
+    const updateExisting = document.getElementById('update-existing-models').checked;
+
+    // Confirm if updating existing models
+    if (hasExisting && updateExisting) {
+        const existingNames = selectedIndices
+            .map(idx => discoveredModelsData[idx])
+            .filter(m => m.already_exists)
+            .map(m => m.name);
+
+        if (!confirm(`Update ${existingNames.length} existing model(s)?\n\n${existingNames.join('\n')}\n\nThis will update their response_format and tool_call_format settings.`)) {
+            return;
+        }
+    }
+
+    const modelsToImport = selectedIndices.map(idx => discoveredModelsData[idx]);
+
+    try {
+        const response = await fetch('/models/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                models: modelsToImport,
+                update_existing: updateExisting
+            })
+        });
+
+        const data = await response.json();
+
+        const messages = [];
+        if (data.total_imported > 0) messages.push(`Imported ${data.total_imported} new models`);
+        if (data.total_updated > 0) messages.push(`Updated ${data.total_updated} existing models`);
+
+        if (messages.length > 0) {
+            alert(messages.join('\n'));
+            location.reload();
+        } else {
+            alert('No changes made');
+        }
+    } catch (error) {
+        alert('Failed to import models: ' + error.message);
+    }
+}
 
 function editProfileName(id, currentName) {
     document.getElementById('profile-name-display-' + id).classList.add('hidden');
@@ -1893,12 +1892,6 @@ async function editAnalyzer(profileId, analyzerId) {
         document.getElementById('edit-analyzer-file-filter').value = analyzer.file_filter || '';
         document.getElementById('edit-analyzer-run-order').value = analyzer.run_order || 1;
         document.getElementById('edit-analyzer-prompt').value = analyzer.prompt_template || '';
-        document.getElementById('edit-analyzer-output-mode').value = analyzer.output_mode || 'markers';
-        document.getElementById('edit-analyzer-json-schema').value = analyzer.json_schema || '';
-
-        // Show/hide schema container based on output mode
-        const outputModeSelect = document.getElementById('edit-analyzer-output-mode');
-        toggleJsonSchema(outputModeSelect, 'edit-analyzer');
 
         document.getElementById('edit-analyzer-modal').classList.remove('hidden');
     } catch (err) {
@@ -1966,12 +1959,6 @@ async function editVerifier(profileId, verifierId) {
         document.getElementById('edit-verifier-min-confidence').value = verifier.min_confidence || 0;
         document.getElementById('edit-verifier-run-order').value = verifier.run_order || 1;
         document.getElementById('edit-verifier-prompt').value = verifier.prompt_template || '';
-        document.getElementById('edit-verifier-output-mode').value = verifier.output_mode || 'markers';
-        document.getElementById('edit-verifier-json-schema').value = verifier.json_schema || '';
-
-        // Show/hide schema container based on output mode
-        const outputModeSelect = document.getElementById('edit-verifier-output-mode');
-        toggleJsonSchema(outputModeSelect, 'edit-verifier');
 
         document.getElementById('edit-verifier-modal').classList.remove('hidden');
     } catch (err) {
@@ -2037,7 +2024,6 @@ async function updateEnricher(profileId) {
 
 async function updateAgenticVerifier(profileId) {
     const modeSelect = document.getElementById(`agentic-mode-${profileId}`);
-    const modelSelect = document.getElementById(`agentic-model-${profileId}`);
     const stepsInput = document.getElementById(`agentic-steps-${profileId}`);
     const modelRow = document.getElementById(`agentic-model-row-${profileId}`);
 
@@ -2052,7 +2038,6 @@ async function updateAgenticVerifier(profileId) {
 
     const params = new URLSearchParams();
     params.append('agentic_verifier_mode', mode);
-    params.append('agentic_verifier_model_id', modelSelect.value || '');
     params.append('agentic_verifier_max_steps', stepsInput.value || '8');
 
     try {
@@ -2067,6 +2052,25 @@ async function updateAgenticVerifier(profileId) {
         }
     } catch (err) {
         alert('Error updating agentic verifier: ' + err.message);
+    }
+}
+
+async function updateAgentModels(profileId) {
+    const checkboxes = document.querySelectorAll(`.agent-model-checkbox-${profileId}:checked`);
+    const modelIds = Array.from(checkboxes).map(cb => cb.value);
+
+    try {
+        const response = await fetch(`/profiles/${profileId}/agent-models`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model_ids: modelIds })
+        });
+        if (!response.ok) {
+            const data = await response.json();
+            alert(data.error || 'Failed to update agent models');
+        }
+    } catch (err) {
+        alert('Error updating agent models: ' + err.message);
     }
 }
 

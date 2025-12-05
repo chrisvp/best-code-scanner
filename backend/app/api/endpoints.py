@@ -233,7 +233,7 @@ async def start_scan(
 
 @router.get("/scan/{scan_id}")
 async def get_scan_details(request: Request, scan_id: int, db: Session = Depends(get_db)):
-    from app.models.scanner_models import ScanErrorLog, LLMRequestLog, ScanProfile
+    from app.models.scanner_models import ScanErrorLog, LLMRequestLog, ScanProfile, AgentSession
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
         return HTMLResponse(content="<h1>Scan not found</h1>", status_code=404)
@@ -247,12 +247,57 @@ async def get_scan_details(request: Request, scan_id: int, db: Session = Depends
     ).order_by(LLMRequestLog.created_at.desc()).limit(200).all()
     # Get profiles for revalidate modal
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
+
+    # Get draft findings with vote summaries
+    draft_findings = db.query(DraftFinding).filter(
+        DraftFinding.scan_id == scan_id
+    ).order_by(DraftFinding.created_at.desc()).all()
+
+    # Enrich drafts with vote counts and agent session info
+    draft_data = []
+    for draft in draft_findings:
+        # Count votes by decision
+        votes = db.query(VerificationVote).filter(
+            VerificationVote.draft_finding_id == draft.id
+        ).all()
+        verify_count = sum(1 for v in votes if v.decision == 'VERIFY')
+        weakness_count = sum(1 for v in votes if v.decision == 'WEAKNESS')
+        reject_count = sum(1 for v in votes if v.decision == 'REJECT')
+        abstain_count = sum(1 for v in votes if v.decision == 'ABSTAIN')
+
+        # Check for agent session
+        agent_session = db.query(AgentSession).filter(
+            AgentSession.draft_finding_id == draft.id
+        ).first()
+
+        # Get file path from chunk
+        file_path = None
+        if draft.chunk_id:
+            chunk = db.query(ScanFileChunk).filter(ScanFileChunk.id == draft.chunk_id).first()
+            if chunk:
+                scan_file = db.query(ScanFile).filter(ScanFile.id == chunk.scan_file_id).first()
+                if scan_file:
+                    file_path = scan_file.file_path
+
+        draft_data.append({
+            'draft': draft,
+            'file_path': file_path,
+            'verify_count': verify_count,
+            'weakness_count': weakness_count,
+            'reject_count': reject_count,
+            'abstain_count': abstain_count,
+            'total_votes': len(votes),
+            'votes': votes,
+            'agent_session': agent_session
+        })
+
     return templates.TemplateResponse("scan_detail.html", {
         "request": request,
         "scan": scan,
         "errors": errors,
         "logs": logs,
-        "profiles": profiles
+        "profiles": profiles,
+        "draft_data": draft_data
     })
 
 
@@ -275,6 +320,76 @@ async def get_scan_logs_partial(request: Request, scan_id: int, db: Session = De
     return templates.TemplateResponse("partials/scan_logs.html", {
         "request": request,
         "logs": logs
+    })
+
+
+@router.get("/scan/{scan_id}/draft/{draft_id}/agent-log")
+async def get_draft_agent_log(scan_id: int, draft_id: int, db: Session = Depends(get_db)):
+    """Get agent session log formatted as terminal output for a draft finding"""
+    from app.models.scanner_models import AgentSession
+
+    agent_session = db.query(AgentSession).filter(
+        AgentSession.draft_finding_id == draft_id
+    ).first()
+
+    if not agent_session:
+        return JSONResponse({"error": "No agent session found", "log": ""})
+
+    # Format execution trace as terminal log
+    log_lines = []
+    log_lines.append(f"=== Agent Verification Session ===")
+    log_lines.append(f"Model: {agent_session.model_name or 'unknown'}")
+    log_lines.append(f"Status: {agent_session.status}")
+    log_lines.append(f"Steps: {agent_session.total_steps}/{agent_session.max_steps}")
+    if agent_session.duration_ms:
+        log_lines.append(f"Duration: {agent_session.duration_ms / 1000:.1f}s")
+    log_lines.append("")
+
+    # Format execution trace
+    if agent_session.execution_trace:
+        for step in agent_session.execution_trace:
+            step_num = step.get('step', '?')
+            log_lines.append(f"--- Step {step_num} ---")
+
+            thought = step.get('thought', '')
+            if thought:
+                # Truncate long thoughts
+                if len(thought) > 500:
+                    thought = thought[:500] + "..."
+                log_lines.append(f"[Thought] {thought}")
+
+            tool_name = step.get('tool_name')
+            if tool_name:
+                params = step.get('tool_params', {})
+                log_lines.append(f"[Tool] {tool_name}({params})")
+
+                result = step.get('tool_result', '')
+                if result:
+                    if len(result) > 300:
+                        result = result[:300] + "..."
+                    log_lines.append(f"[Result] {result}")
+
+            log_lines.append("")
+
+    # Final verdict
+    if agent_session.verdict:
+        log_lines.append("=== Final Verdict ===")
+        log_lines.append(f"VERDICT: {agent_session.verdict}")
+        if agent_session.confidence:
+            log_lines.append(f"CONFIDENCE: {agent_session.confidence}%")
+        if agent_session.reasoning:
+            log_lines.append(f"REASONING: {agent_session.reasoning}")
+        if agent_session.attack_path:
+            log_lines.append(f"ATTACK PATH: {agent_session.attack_path}")
+
+    if agent_session.error_message:
+        log_lines.append(f"\n[ERROR] {agent_session.error_message}")
+
+    return JSONResponse({
+        "log": "\n".join(log_lines),
+        "verdict": agent_session.verdict,
+        "confidence": agent_session.confidence,
+        "status": agent_session.status
     })
 
 
@@ -377,8 +492,9 @@ async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: 
             db=db
         )
 
-        # Get response format from model config
+        # Get response format and tool call format from model config
         response_format = getattr(model_config, 'response_format', 'markers') or 'markers'
+        tool_call_format = getattr(model_config, 'tool_call_format', 'none') or 'none'
 
         agentic_verifier = AgenticVerifier(
             model_pool=model_pool,
@@ -386,7 +502,8 @@ async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: 
             max_steps=10,
             scan_id=finding.scan_id,
             finding_id=finding_id,
-            response_format=response_format
+            response_format=response_format,
+            tool_call_format=tool_call_format
         )
 
         # Run verification
@@ -1082,6 +1199,8 @@ async def list_models(db: Session = Depends(get_db)):
             "id": m.id,
             "name": m.name,
             "base_url": m.base_url,
+            "max_tokens": m.max_tokens,
+            "max_context_length": getattr(m, 'max_context_length', 0) or 0,
             "max_concurrent": m.max_concurrent,
             "votes": m.votes,
             "is_analyzer": m.is_analyzer,
@@ -1108,10 +1227,12 @@ async def create_model(request: Request, db: Session = Depends(get_db)):
         base_url=data.get('base_url'),
         api_key=data.get('api_key'),
         max_tokens=data.get('max_tokens', 4096),
+        max_context_length=data.get('max_context_length', 0),
         max_concurrent=data.get('max_concurrent', 2),
         votes=data.get('votes', 1),
         chunk_size=data.get('chunk_size', 3000),
-        response_format=data.get('response_format', 'markers')
+        response_format=data.get('response_format', 'markers'),
+        tool_call_format=data.get('tool_call_format', 'none')
     )
     db.add(model)
     db.commit()
@@ -1144,6 +1265,8 @@ async def update_model(model_id: int, request: Request, db: Session = Depends(ge
         model.api_key = data['api_key']
     if 'max_tokens' in data:
         model.max_tokens = data['max_tokens']
+    if 'max_context_length' in data:
+        model.max_context_length = data['max_context_length']
     if 'max_concurrent' in data:
         model.max_concurrent = data['max_concurrent']
     if 'votes' in data:
@@ -1152,6 +1275,8 @@ async def update_model(model_id: int, request: Request, db: Session = Depends(ge
         model.chunk_size = data['chunk_size']
     if 'response_format' in data:
         model.response_format = data['response_format']
+    if 'tool_call_format' in data:
+        model.tool_call_format = data['tool_call_format']
 
     db.commit()
     return {"status": "updated", "id": model.id, "name": model.name}
@@ -2927,6 +3052,50 @@ async def update_profile_agentic_verifier(
         "agentic_verifier_mode": profile.agentic_verifier_mode,
         "agentic_verifier_model_id": profile.agentic_verifier_model_id,
         "agentic_verifier_max_steps": profile.agentic_verifier_max_steps
+    }
+
+
+@router.put("/profiles/{profile_id}/agent-models")
+async def update_profile_agent_models(
+    profile_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Update a profile's agent models (multiple models for agent verification)"""
+    from app.models.scanner_models import ProfileAgentModel
+
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return JSONResponse({"error": "Profile not found"}, status_code=404)
+
+    data = await request.json()
+    model_ids = data.get("model_ids", [])
+
+    # Convert to integers
+    model_ids = [int(mid) for mid in model_ids if mid]
+
+    # Delete existing agent models for this profile
+    db.query(ProfileAgentModel).filter(ProfileAgentModel.profile_id == profile_id).delete()
+
+    # Add new agent models
+    for model_id in model_ids:
+        # Verify model exists and supports tool calling
+        model = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+        if model and model.tool_call_format and model.tool_call_format != "none":
+            agent_model = ProfileAgentModel(
+                profile_id=profile_id,
+                model_id=model_id,
+                enabled=True
+            )
+            db.add(agent_model)
+
+    db.commit()
+
+    # Return current agent models
+    agent_models = db.query(ProfileAgentModel).filter(ProfileAgentModel.profile_id == profile_id).all()
+    return {
+        "status": "updated",
+        "agent_model_ids": [am.model_id for am in agent_models]
     }
 
 
@@ -4810,4 +4979,786 @@ async def get_llm_log_stats(db: Session = Depends(get_db)):
         "by_phase": {phase: count for phase, count in phase_counts},
         "by_model": {model: count for model, count in model_counts},
         "recent_scans": [{"scan_id": s, "log_count": c} for s, c in recent_scans if s],
+    }
+
+
+# =============================================================================
+# LLM Queue Monitoring Endpoints
+# =============================================================================
+
+@router.get("/queue")
+async def get_queue_page(request: Request, db: Session = Depends(get_db)):
+    """Queue monitoring dashboard page"""
+    # Get all configured models
+    models = db.query(ModelConfig).all()
+
+    return templates.TemplateResponse("queue.html", {
+        "request": request,
+        "models": [{"id": m.id, "name": m.name, "max_concurrent": m.max_concurrent} for m in models],
+    })
+
+
+@router.get("/queue/state")
+async def get_queue_state(db: Session = Depends(get_db)):
+    """Get current queue state for all models"""
+    from datetime import datetime, timedelta
+
+    # Get all models
+    models = db.query(ModelConfig).all()
+
+    # Get pending and running requests from LLMRequestLog
+    pending = db.query(LLMRequestLog).filter(LLMRequestLog.status == "pending").all()
+    running = db.query(LLMRequestLog).filter(LLMRequestLog.status == "running").all()
+
+    # Get recent completed/failed (last 5 minutes)
+    cutoff = datetime.now() - timedelta(minutes=5)
+    recent = db.query(LLMRequestLog).filter(
+        LLMRequestLog.status.in_(["completed", "failed"]),
+        LLMRequestLog.created_at >= cutoff
+    ).order_by(LLMRequestLog.created_at.desc()).limit(50).all()
+
+    # Group by model
+    model_queues = {}
+    for model in models:
+        model_queues[model.name] = {
+            "name": model.name,
+            "max_concurrent": model.max_concurrent,
+            "queued": [],
+            "running": [],
+            "recent_completed": [],
+            "recent_failed": [],
+        }
+
+    # Add pending requests
+    for log in pending:
+        if log.model_name in model_queues:
+            model_queues[log.model_name]["queued"].append({
+                "id": log.id,
+                "scan_id": log.scan_id,
+                "phase": log.phase,
+                "analyzer_name": log.analyzer_name,
+                "file_path": log.file_path,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            })
+
+    # Add running requests
+    for log in running:
+        if log.model_name in model_queues:
+            model_queues[log.model_name]["running"].append({
+                "id": log.id,
+                "scan_id": log.scan_id,
+                "phase": log.phase,
+                "analyzer_name": log.analyzer_name,
+                "file_path": log.file_path,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            })
+
+    # Add recent completed/failed
+    for log in recent:
+        if log.model_name in model_queues:
+            entry = {
+                "id": log.id,
+                "scan_id": log.scan_id,
+                "phase": log.phase,
+                "analyzer_name": log.analyzer_name,
+                "file_path": log.file_path,
+                "duration_ms": log.duration_ms,
+                "tokens_in": log.tokens_in,
+                "tokens_out": log.tokens_out,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "status": log.status,
+            }
+            if log.status == "completed":
+                model_queues[log.model_name]["recent_completed"].append(entry)
+            else:
+                model_queues[log.model_name]["recent_failed"].append(entry)
+
+    # Calculate totals
+    total_queued = sum(len(q["queued"]) for q in model_queues.values())
+    total_running = sum(len(q["running"]) for q in model_queues.values())
+
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "total_queued": total_queued,
+        "total_running": total_running,
+        "models": list(model_queues.values()),
+    }
+
+
+@router.get("/queue/stream")
+async def stream_queue_updates(request: Request, db: Session = Depends(get_db)):
+    """SSE stream of queue state updates"""
+    from starlette.responses import StreamingResponse
+    from datetime import datetime, timedelta
+    import json as json_module
+    import asyncio
+
+    async def generate_events():
+        """Generate SSE events for queue updates"""
+        last_state = None
+
+        while True:
+            # Check if client disconnected
+            if await request.is_disconnected():
+                break
+
+            try:
+                # Get current state (use a fresh session for each query)
+                db_local = SessionLocal()
+                try:
+                    models = db_local.query(ModelConfig).all()
+                    pending = db_local.query(LLMRequestLog).filter(LLMRequestLog.status == "pending").all()
+                    running = db_local.query(LLMRequestLog).filter(LLMRequestLog.status == "running").all()
+
+                    # Get recent completed/failed (last 1 minute for streaming)
+                    cutoff = datetime.now() - timedelta(minutes=1)
+                    recent = db_local.query(LLMRequestLog).filter(
+                        LLMRequestLog.status.in_(["completed", "failed"]),
+                        LLMRequestLog.created_at >= cutoff
+                    ).order_by(LLMRequestLog.created_at.desc()).limit(20).all()
+
+                    # Build state
+                    model_queues = {}
+                    for model in models:
+                        model_queues[model.name] = {
+                            "name": model.name,
+                            "max_concurrent": model.max_concurrent,
+                            "queued_count": 0,
+                            "running_count": 0,
+                            "queued": [],
+                            "running": [],
+                            "recent": [],
+                        }
+
+                    for log in pending:
+                        if log.model_name in model_queues:
+                            model_queues[log.model_name]["queued_count"] += 1
+                            model_queues[log.model_name]["queued"].append({
+                                "id": log.id,
+                                "scan_id": log.scan_id,
+                                "phase": log.phase,
+                                "analyzer_name": log.analyzer_name,
+                                "file_path": os.path.basename(log.file_path) if log.file_path else None,
+                                "created_at": log.created_at.isoformat() if log.created_at else None,
+                            })
+
+                    for log in running:
+                        if log.model_name in model_queues:
+                            model_queues[log.model_name]["running_count"] += 1
+                            model_queues[log.model_name]["running"].append({
+                                "id": log.id,
+                                "scan_id": log.scan_id,
+                                "phase": log.phase,
+                                "analyzer_name": log.analyzer_name,
+                                "file_path": os.path.basename(log.file_path) if log.file_path else None,
+                                "created_at": log.created_at.isoformat() if log.created_at else None,
+                            })
+
+                    for log in recent:
+                        if log.model_name in model_queues:
+                            model_queues[log.model_name]["recent"].append({
+                                "id": log.id,
+                                "scan_id": log.scan_id,
+                                "phase": log.phase,
+                                "status": log.status,
+                                "duration_ms": log.duration_ms,
+                                "tokens_out": log.tokens_out,
+                            })
+
+                    state = {
+                        "timestamp": datetime.now().isoformat(),
+                        "total_queued": len(pending),
+                        "total_running": len(running),
+                        "models": list(model_queues.values()),
+                    }
+
+                    # Only send if state changed
+                    state_json = json_module.dumps(state)
+                    if state_json != last_state:
+                        last_state = state_json
+                        yield f"data: {state_json}\n\n"
+
+                finally:
+                    db_local.close()
+
+            except Exception as e:
+                yield f"data: {json_module.dumps({'error': str(e)})}\n\n"
+
+            # Poll every 500ms
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(generate_events(), media_type="text/event-stream")
+
+
+# =============================================================================
+# Model Discovery Endpoint
+# =============================================================================
+
+@router.post("/models/discover")
+async def discover_models(request: Request, db: Session = Depends(get_db)):
+    """
+    Discover models from the default LLM API endpoint.
+    Tests each model for JSON mode and tool calling support.
+    """
+    import httpx
+    import asyncio
+
+    # Get default settings
+    base_url = None
+    api_key = None
+
+    # Try to get from global settings first
+    base_url_setting = db.query(GlobalSetting).filter(GlobalSetting.key == "llm_base_url").first()
+    api_key_setting = db.query(GlobalSetting).filter(GlobalSetting.key == "llm_api_key").first()
+
+    if base_url_setting:
+        base_url = base_url_setting.value
+    if api_key_setting:
+        api_key = api_key_setting.value
+
+    # Fall back to config settings
+    if not base_url:
+        from app.core.config import settings as app_settings
+        base_url = app_settings.LLM_BASE_URL
+        api_key = api_key or app_settings.LLM_API_KEY
+
+    if not base_url:
+        return JSONResponse({"error": "No LLM base URL configured. Set it in Connection settings first."}, status_code=400)
+
+    # Normalize base URL
+    base = base_url.rstrip('/')
+    if not base.endswith('/v1'):
+        base = f"{base}/v1"
+
+    discovered = []
+    errors = []
+
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        # Fetch available models
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            response = await client.get(f"{base}/models", headers=headers)
+
+            if response.status_code != 200:
+                return JSONResponse({
+                    "error": f"Failed to fetch models: HTTP {response.status_code}",
+                    "detail": response.text[:500]
+                }, status_code=400)
+
+            data = response.json()
+            models_data = data.get("data", [])
+
+            if not models_data:
+                return JSONResponse({"error": "No models found at endpoint", "models": []}, status_code=200)
+
+        except Exception as e:
+            return JSONResponse({"error": f"Failed to connect to LLM API: {str(e)}"}, status_code=400)
+
+        # Known tool calling formats by model family
+        def get_expected_tool_format(model_name: str) -> str:
+            """Determine expected tool calling format based on model name."""
+            name_lower = model_name.lower()
+
+            # Hermes models use Hermes format
+            if "hermes" in name_lower:
+                return "hermes"
+
+            # Mistral/Mixtral models - native tool support
+            if "mistral" in name_lower or "mixtral" in name_lower:
+                return "openai"
+
+            # Llama 3.1+ and 3.2+ have native tool support
+            if "llama-3.1" in name_lower or "llama-3.2" in name_lower or "llama3.1" in name_lower or "llama3.2" in name_lower:
+                return "openai"
+
+            # Qwen 2.5 has tool support
+            if "qwen2.5" in name_lower or "qwen-2.5" in name_lower:
+                return "openai"
+
+            # DeepSeek models
+            if "deepseek" in name_lower:
+                return "openai"
+
+            # Command-R models
+            if "command-r" in name_lower or "command_r" in name_lower:
+                return "openai"
+
+            # Functionary models are specifically for function calling
+            if "functionary" in name_lower:
+                return "openai"
+
+            # Default - no known format
+            return "none"
+
+        # Test each model
+        async def test_model(model_info):
+            model_id = model_info.get("id", "")
+            # Extract max_model_len from vLLM response (context window size)
+            max_context = model_info.get("max_model_len", 0) or model_info.get("context_length", 0) or 0
+            result = {
+                "name": model_id,
+                "base_url": "",  # Use default
+                "max_tokens": 4096,
+                "max_context_length": max_context,
+                "max_concurrent": 2,
+                "response_format": "markers",
+                "tool_call_format": "none",
+                "supports_json": False,
+                "supports_guided_json": False,
+                "supports_tools": False,
+                "test_passed": False,
+                "error": None,
+                "expected_tool_format": get_expected_tool_format(model_id)
+            }
+
+            # Skip embedding models
+            if "embed" in model_id.lower():
+                result["error"] = "Embedding model (skipped)"
+                return result
+
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+            # Test 1: Basic completion
+            try:
+                basic_response = await client.post(
+                    f"{base}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": "Say 'test' and nothing else."}],
+                        "max_tokens": 10,
+                        "temperature": 0
+                    },
+                    timeout=30.0
+                )
+
+                if basic_response.status_code != 200:
+                    result["error"] = f"Basic test failed: HTTP {basic_response.status_code}"
+                    return result
+
+                result["test_passed"] = True
+
+            except Exception as e:
+                result["error"] = f"Basic test failed: {str(e)}"
+                return result
+
+            # Test 2a: vLLM guided_json (preferred)
+            test_schema = {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"}
+                },
+                "required": ["status"]
+            }
+
+            try:
+                guided_response = await client.post(
+                    f"{base}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": "Return JSON with status set to ok."}],
+                        "max_tokens": 50,
+                        "temperature": 0,
+                        "guided_json": test_schema
+                    },
+                    timeout=30.0
+                )
+
+                if guided_response.status_code == 200:
+                    # Validate the response is actually valid JSON with the required field
+                    try:
+                        resp_data = guided_response.json()
+                        content = resp_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        parsed = json.loads(content)
+                        # Check if response matches schema (has 'status' key)
+                        if isinstance(parsed, dict) and "status" in parsed:
+                            result["supports_guided_json"] = True
+                            result["supports_json"] = True
+                            result["response_format"] = "guided_json"
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        pass  # Response wasn't valid JSON - guided_json not working
+
+            except Exception:
+                pass
+
+            # Test 2b: OpenAI JSON mode (fallback)
+            if not result["supports_guided_json"]:
+                try:
+                    json_response = await client.post(
+                        f"{base}/chat/completions",
+                        headers=headers,
+                        json={
+                            "model": model_id,
+                            "messages": [{"role": "user", "content": "Return a JSON object with key 'status' and value 'ok'."}],
+                            "max_tokens": 50,
+                            "temperature": 0,
+                            "response_format": {"type": "json_object"}
+                        },
+                        timeout=30.0
+                    )
+
+                    if json_response.status_code == 200:
+                        # Validate the response is actually valid JSON
+                        try:
+                            resp_data = json_response.json()
+                            content = resp_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            parsed = json.loads(content)
+                            if isinstance(parsed, dict):
+                                result["supports_json"] = True
+                                result["response_format"] = "json"
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            pass  # Response wasn't valid JSON
+
+                except Exception:
+                    pass
+
+            # Test 3: Tool calling (OpenAI format - used by vLLM)
+            try:
+                tools_response = await client.post(
+                    f"{base}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_id,
+                        "messages": [{"role": "user", "content": "What is 2+2? Use the calculate tool."}],
+                        "max_tokens": 100,
+                        "temperature": 0,
+                        "tools": [{
+                            "type": "function",
+                            "function": {
+                                "name": "calculate",
+                                "description": "Perform a calculation",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "expression": {"type": "string", "description": "Math expression"}
+                                    },
+                                    "required": ["expression"]
+                                }
+                            }
+                        }],
+                        "tool_choice": "auto"
+                    },
+                    timeout=30.0
+                )
+
+                if tools_response.status_code == 200:
+                    resp_data = tools_response.json()
+                    choices = resp_data.get("choices", [])
+                    if choices:
+                        message = choices[0].get("message", {})
+                        # Check if model used tool calling
+                        if message.get("tool_calls"):
+                            result["supports_tools"] = True
+                            result["tool_call_format"] = "openai"
+                        else:
+                            # API accepted tools param - check if model family supports it
+                            expected = result["expected_tool_format"]
+                            if expected != "none":
+                                result["supports_tools"] = True
+                                result["tool_call_format"] = expected
+
+            except Exception:
+                pass
+
+            # If no tool test passed but we know the model family supports tools, set it
+            if not result["supports_tools"] and result["expected_tool_format"] != "none":
+                result["tool_call_format"] = result["expected_tool_format"]
+                result["supports_tools"] = True  # Assume support based on model family
+
+            return result
+
+        # Test all models concurrently (with limit)
+        semaphore = asyncio.Semaphore(3)  # Max 3 concurrent tests
+
+        async def test_with_semaphore(model_info):
+            async with semaphore:
+                return await test_model(model_info)
+
+        tasks = [test_with_semaphore(m) for m in models_data]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for r in results:
+            if isinstance(r, Exception):
+                errors.append(str(r))
+            elif isinstance(r, dict):
+                discovered.append(r)
+
+    # Check which models already exist
+    existing_names = {m.name for m in db.query(ModelConfig.name).all()}
+
+    for model in discovered:
+        model["already_exists"] = model["name"] in existing_names
+
+    return {
+        "discovered": discovered,
+        "total": len(discovered),
+        "new": len([m for m in discovered if not m.get("already_exists")]),
+        "errors": errors
+    }
+
+
+@router.post("/models/import")
+async def import_discovered_models(request: Request, db: Session = Depends(get_db)):
+    """Import discovered models into the database"""
+    data = await request.json()
+    models_to_import = data.get("models", [])
+    update_existing = data.get("update_existing", False)
+
+    imported = []
+    updated = []
+    skipped = []
+
+    for model_data in models_to_import:
+        name = model_data.get("name")
+        if not name:
+            continue
+
+        # Check if already exists
+        existing = db.query(ModelConfig).filter(ModelConfig.name == name).first()
+        if existing:
+            if update_existing:
+                # Update existing model with discovered capabilities
+                if model_data.get("response_format"):
+                    existing.response_format = model_data["response_format"]
+                if model_data.get("tool_call_format"):
+                    existing.tool_call_format = model_data["tool_call_format"]
+                if model_data.get("max_context_length"):
+                    existing.max_context_length = model_data["max_context_length"]
+                updated.append(name)
+            else:
+                skipped.append(name)
+            continue
+
+        model = ModelConfig(
+            name=name,
+            base_url=model_data.get("base_url", ""),
+            api_key=model_data.get("api_key", ""),
+            max_tokens=model_data.get("max_tokens", 4096),
+            max_context_length=model_data.get("max_context_length", 0),
+            max_concurrent=model_data.get("max_concurrent", 2),
+            votes=model_data.get("votes", 1),
+            chunk_size=model_data.get("chunk_size", 3000),
+            response_format=model_data.get("response_format", "markers"),
+            tool_call_format=model_data.get("tool_call_format", "none"),
+            is_analyzer=model_data.get("is_analyzer", False),
+            is_verifier=model_data.get("is_verifier", False),
+            is_cleanup=model_data.get("is_cleanup", False),
+            is_chat=model_data.get("is_chat", False),
+        )
+        db.add(model)
+        imported.append(name)
+
+    db.commit()
+
+    return {
+        "imported": imported,
+        "updated": updated,
+        "skipped": skipped,
+        "total_imported": len(imported),
+        "total_updated": len(updated)
+    }
+
+
+@router.post("/models/sync-context-length")
+async def sync_model_context_lengths(db: Session = Depends(get_db)):
+    """
+    Sync max_context_length for all existing models from the v1/models endpoint.
+    Fetches model info and updates the max_context_length for matching models.
+    """
+    import httpx
+
+    # Get default settings
+    base_url = None
+    api_key = None
+
+    # Try to get from global settings first
+    base_url_setting = db.query(GlobalSetting).filter(GlobalSetting.key == "llm_base_url").first()
+    api_key_setting = db.query(GlobalSetting).filter(GlobalSetting.key == "llm_api_key").first()
+
+    if base_url_setting:
+        base_url = base_url_setting.value
+    if api_key_setting:
+        api_key = api_key_setting.value
+
+    # Fall back to config settings
+    if not base_url:
+        from app.core.config import settings as app_settings
+        base_url = app_settings.LLM_BASE_URL
+        api_key = api_key or app_settings.LLM_API_KEY
+
+    if not base_url:
+        return JSONResponse({"error": "No LLM base URL configured"}, status_code=400)
+
+    # Normalize base URL
+    base = base_url.rstrip('/')
+    if not base.endswith('/v1'):
+        base = f"{base}/v1"
+
+    updated = []
+    not_found = []
+    errors = []
+
+    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        # Fetch available models
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            response = await client.get(f"{base}/models", headers=headers)
+
+            if response.status_code != 200:
+                return JSONResponse({
+                    "error": f"Failed to fetch models: HTTP {response.status_code}",
+                    "detail": response.text[:500]
+                }, status_code=400)
+
+            data = response.json()
+            models_data = data.get("data", [])
+
+            # Build lookup by model ID
+            api_models = {}
+            for m in models_data:
+                model_id = m.get("id", "")
+                max_context = m.get("max_model_len", 0) or m.get("context_length", 0) or 0
+                api_models[model_id] = max_context
+
+        except Exception as e:
+            return JSONResponse({"error": f"Failed to connect to LLM API: {str(e)}"}, status_code=400)
+
+    # Update all existing models
+    db_models = db.query(ModelConfig).all()
+    for model in db_models:
+        if model.name in api_models:
+            new_context = api_models[model.name]
+            if new_context > 0:
+                model.max_context_length = new_context
+                updated.append({"name": model.name, "max_context_length": new_context})
+        else:
+            not_found.append(model.name)
+
+    db.commit()
+
+    return {
+        "updated": updated,
+        "not_found": not_found,
+        "total_updated": len(updated)
+    }
+
+
+@router.post("/profiles/create-full")
+async def create_full_scan_profile(request: Request, db: Session = Depends(get_db)):
+    """
+    Create a comprehensive scan profile with:
+    - An analyzer for each model
+    - A verifier for each model
+    - Agent verification enabled for tool-calling models
+    """
+    from app.models.scanner_models import ScanProfile, ProfileAnalyzer, ProfileVerifier
+
+    # Get all models
+    models = db.query(ModelConfig).all()
+    if not models:
+        return JSONResponse({"error": "No models configured. Add models first."}, status_code=400)
+
+    # Create the profile
+    profile = ScanProfile(
+        name="Full Multi-Model Scan",
+        description="Comprehensive scan using all available models as analyzers and verifiers",
+        is_active=True,
+        verification_threshold=2,
+        enrichment_model_id=models[0].id if models else None,
+        use_agent_verification=True
+    )
+    db.add(profile)
+    db.flush()  # Get the profile ID
+
+    # Default analyzer prompt
+    analyzer_prompt = """Analyze the following {language} code for security vulnerabilities.
+
+Focus on:
+- Input validation issues (SQL injection, command injection, XSS, path traversal)
+- Memory safety issues (buffer overflow, use-after-free, null pointer dereference)
+- Authentication/authorization flaws
+- Cryptographic weaknesses
+- Resource leaks and denial of service vectors
+
+Code to analyze:
+```{language}
+{code}
+```
+
+{output_format}"""
+
+    # Default verifier prompt
+    verifier_prompt = """You are a security expert verifying a potential vulnerability finding.
+
+## Reported Vulnerability
+**Type:** {vulnerability_type}
+**Severity:** {severity}
+**Title:** {title}
+
+## Code Context
+```
+{code_context}
+```
+
+## Finding Details
+{details}
+
+Evaluate if this is a real, exploitable security vulnerability. Consider:
+1. Can an attacker actually trigger this code path?
+2. Is user input involved that could be malicious?
+3. Are there existing mitigations or sanitization?
+4. What is the realistic impact if exploited?
+
+{output_format}"""
+
+    analyzers_created = 0
+    verifiers_created = 0
+    agents_enabled = 0
+
+    # Create an analyzer and verifier for each model
+    for idx, model in enumerate(models):
+        # Create analyzer
+        analyzer = ProfileAnalyzer(
+            profile_id=profile.id,
+            name=f"{model.name} Analyzer",
+            model_id=model.id,
+            prompt_template=analyzer_prompt,
+            chunk_size=6000,
+            file_filter="*.py,*.c,*.cpp,*.h,*.hpp,*.js,*.ts,*.java,*.go,*.rs",
+            run_order=idx + 1,
+            role="analyzer",
+            enabled=True
+        )
+        db.add(analyzer)
+        analyzers_created += 1
+
+        # Create verifier
+        verifier = ProfileVerifier(
+            profile_id=profile.id,
+            name=f"{model.name} Verifier",
+            model_id=model.id,
+            prompt_template=verifier_prompt,
+            vote_weight=1.0,
+            min_confidence=0,
+            run_order=idx + 1,
+            enabled=True
+        )
+        db.add(verifier)
+        verifiers_created += 1
+
+        # Track if model supports tool calling (for agent verification)
+        if model.tool_call_format and model.tool_call_format != "none":
+            agents_enabled += 1
+
+    db.commit()
+
+    return {
+        "success": True,
+        "profile_id": profile.id,
+        "profile_name": profile.name,
+        "analyzers_created": analyzers_created,
+        "verifiers_created": verifiers_created,
+        "models_with_agent_support": agents_enabled,
+        "message": f"Created profile with {analyzers_created} analyzers and {verifiers_created} verifiers. {agents_enabled} models support agent verification."
     }

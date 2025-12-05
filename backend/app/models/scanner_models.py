@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Float, JSON, case
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Boolean, Float, JSON, case, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -19,6 +19,7 @@ class ModelConfig(Base):
     base_url = Column(String)
     api_key = Column(String)
     max_tokens = Column(Integer, default=4096)
+    max_context_length = Column(Integer, default=0)  # Model's max context window (0 = unknown, use max_tokens as-is)
     max_concurrent = Column(Integer, default=2)  # Concurrency per model
     votes = Column(Integer, default=1)  # Voting weight for consensus
     chunk_size = Column(Integer, default=3000)  # Average tokens per chunk for this model
@@ -30,6 +31,10 @@ class ModelConfig(Base):
 
     # Response format: 'markers' (text-based), 'json' (structured JSON), 'json_schema' (JSON with schema enforcement)
     response_format = Column(String, default='markers')
+
+    # Tool calling format for agents: 'none' (text-based), 'openai' (OpenAI function calling), 'hermes' (Hermes format)
+    # When set, agents will use native tool calling API instead of text-based tool parsing
+    tool_call_format = Column(String, default='none')
 
     analysis_prompt_template = Column(Text, nullable=True)
     verification_prompt_template = Column(Text, nullable=True)
@@ -190,14 +195,20 @@ class DraftFinding(Base):
     source_models = Column(JSON, nullable=True)  # List of model names that detected this finding
     dedup_key = Column(String, index=True)  # Key for deduplication (file+line+type hash)
 
+    # Analyzer tracking - which analyzer found this draft
+    analyzer_id = Column(Integer, ForeignKey("profile_analyzers.id"), nullable=True)
+    analyzer_name = Column(String, nullable=True)  # Denormalized for easy display
+
     status = Column(String, default="pending", index=True)  # pending/verifying/verified/weakness/rejected
     verification_notes = Column(Text)  # Verifier reasoning for verify/reject decision
     verification_votes = Column(Integer)  # Number of verifiers that agreed
 
     created_at = Column(DateTime(timezone=True), default=local_now)
 
-    # Relationship to votes for debugging
+    # Relationships
     votes = relationship("VerificationVote", back_populates="draft_finding")
+    analyzer = relationship("ProfileAnalyzer", foreign_keys=[analyzer_id])
+    agent_sessions = relationship("AgentSession", back_populates="draft_finding", foreign_keys="AgentSession.draft_finding_id")
 
 
 class VerifiedFinding(Base):
@@ -299,6 +310,7 @@ class ScanProfile(Base):
     # Relationships
     analyzers = relationship("ProfileAnalyzer", back_populates="profile", order_by="ProfileAnalyzer.run_order")
     verifiers = relationship("ProfileVerifier", back_populates="profile", order_by="ProfileVerifier.run_order")
+    agent_models = relationship("ProfileAgentModel", back_populates="profile")
     enricher_model = relationship("ModelConfig", foreign_keys=[enricher_model_id])
     agentic_verifier_model = relationship("ModelConfig", foreign_keys=[agentic_verifier_model_id])
 
@@ -346,6 +358,25 @@ class ProfileAnalyzer(Base):
 
     profile = relationship("ScanProfile", back_populates="analyzers")
     model = relationship("ModelConfig")
+
+
+class ProfileAgentModel(Base):
+    """Junction table for multiple agent models per profile"""
+    __tablename__ = "profile_agent_models"
+
+    id = Column(Integer, primary_key=True)
+    profile_id = Column(Integer, ForeignKey("scan_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    model_id = Column(Integer, ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False)
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=local_now)
+
+    # Relationships
+    profile = relationship("ScanProfile", back_populates="agent_models")
+    model = relationship("ModelConfig")
+
+    __table_args__ = (
+        UniqueConstraint('profile_id', 'model_id', name='uq_profile_agent_model'),
+    )
 
 
 class WebhookConfig(Base):
@@ -619,6 +650,9 @@ class AgentSession(Base):
 
     created_at = Column(DateTime(timezone=True), default=local_now)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    draft_finding = relationship("DraftFinding", back_populates="agent_sessions", foreign_keys=[draft_finding_id])
 
 
 class MRReview(Base):

@@ -1,0 +1,763 @@
+{% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<style>
+    .log-row { cursor: pointer; }
+    .log-row:hover { background: rgba(59, 130, 246, 0.1); }
+    .log-detail { display: none; }
+    .log-detail.active { display: block; }
+    .response-content { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; max-height: 400px; overflow-y: auto; }
+    .prompt-content { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; max-height: 300px; overflow-y: auto; }
+    .tab-btn.active { color: #fff; border-color: #3b82f6; }
+</style>
+
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-6">
+            <h1 class="text-2xl font-bold text-white">Tuning</h1>
+            <p class="text-gray-400 text-sm mt-1">Test and tune LLM configurations, output formats, and view request logs</p>
+        </div>
+
+        <!-- Tabs -->
+        <div class="border-b border-gray-700 mb-6">
+            <nav class="flex gap-1">
+                <button onclick="switchTab('format-tester')" id="tab-format-tester"
+                    class="tab-btn active px-4 py-2.5 text-sm font-medium text-white border-b-2 border-blue-500 -mb-px">
+                    Output Format Tester
+                </button>
+                <button onclick="switchTab('llm-logs')" id="tab-llm-logs"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    LLM Logs
+                </button>
+            </nav>
+        </div>
+
+        <!-- Tab: Output Format Tester -->
+        <div id="panel-format-tester" class="tab-panel">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Test Configuration -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path>
+                            </svg>
+                            Test Configuration
+                        </h2>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Select Models</label>
+                            <div id="model-checkboxes" class="space-y-2 max-h-48 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                <div class="text-gray-500 text-sm">Loading models...</div>
+                            </div>
+                            <button onclick="selectAllModels()" class="mt-2 text-xs text-blue-400 hover:text-blue-300">Select All</button>
+                            <span class="text-gray-600 mx-2">|</span>
+                            <button onclick="deselectAllModels()" class="text-xs text-gray-400 hover:text-gray-300">Deselect All</button>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Role</label>
+                            <select id="test-role" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="analyzer">Analyzer (Draft Scanning)</option>
+                                <option value="verifier">Verifier (Voting)</option>
+                                <option value="enricher">Enricher (Reports)</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Output Modes to Test</label>
+                            <div class="space-y-2">
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" class="output-mode-checkbox" value="markers" checked>
+                                    Markers (Text Tags)
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" class="output-mode-checkbox" value="json">
+                                    JSON
+                                </label>
+                                <label class="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" class="output-mode-checkbox" value="guided_json">
+                                    Guided JSON (Schema)
+                                </label>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Test Code Sample</label>
+                            <select id="test-sample" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="buffer_overflow">Buffer Overflow (C)</option>
+                                <option value="sql_injection">SQL Injection (Python)</option>
+                                <option value="command_injection">Command Injection (C)</option>
+                                <option value="custom">Custom Code...</option>
+                            </select>
+                        </div>
+
+                        <div id="custom-code-section" class="hidden">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Custom Code</label>
+                            <textarea id="custom-code" rows="6" placeholder="Paste your test code here..."
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                            <div class="mt-1">
+                                <label class="block text-xs text-gray-500 mb-1">Language</label>
+                                <input type="text" id="custom-language" value="c" placeholder="c, python, etc."
+                                    class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
+
+                        <button onclick="runFormatTest()" id="run-test-btn"
+                            class="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Run Test
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Test Results -->
+                <div class="lg:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            Test Results
+                        </h2>
+                        <span id="test-status" class="text-xs text-gray-500"></span>
+                    </div>
+                    <div class="p-4 overflow-y-auto max-h-[600px]" id="test-results">
+                        <div class="text-center text-gray-500 py-12">
+                            <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                            </svg>
+                            <p>Select models and output modes, then click "Run Test"</p>
+                            <p class="text-sm mt-1">Tests will send a sample vulnerability to each model with each output format</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: LLM Logs -->
+        <div id="panel-llm-logs" class="tab-panel hidden">
+            <div class="flex h-[calc(100vh-200px)]">
+                <!-- Sidebar - Filters & Stats -->
+                <div class="w-72 bg-gray-800/30 border border-gray-700 rounded-lg p-4 overflow-y-auto mr-4">
+                    <!-- Stats -->
+                    <div id="stats-panel" class="mb-6">
+                        <h3 class="text-sm font-medium text-gray-400 mb-3">Statistics</h3>
+                        <div class="space-y-2 text-sm" id="stats-content">
+                            <div class="text-gray-500">Loading...</div>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="space-y-4">
+                        <h3 class="text-sm font-medium text-gray-400">Filters</h3>
+
+                        <div>
+                            <label class="text-xs text-gray-500">Scan ID</label>
+                            <input type="number" id="filter-scan-id" placeholder="All scans"
+                                class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+                        </div>
+
+                        <div>
+                            <label class="text-xs text-gray-500">Phase</label>
+                            <select id="filter-phase" class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+                                <option value="">All phases</option>
+                                <option value="scanner">Scanner</option>
+                                <option value="verifier">Verifier</option>
+                                <option value="enricher">Enricher</option>
+                                <option value="chat">Chat</option>
+                                <option value="cleanup">Cleanup</option>
+                                <option value="mr_review">MR Review</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="text-xs text-gray-500">Model</label>
+                            <input type="text" id="filter-model" placeholder="All models"
+                                class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+                        </div>
+
+                        <div>
+                            <label class="text-xs text-gray-500">Parse Status</label>
+                            <select id="filter-parse-success" class="w-full mt-1 px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+                                <option value="">All</option>
+                                <option value="true">Success</option>
+                                <option value="false">Failed</option>
+                            </select>
+                        </div>
+
+                        <button onclick="loadLogs()" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors">
+                            Apply Filters
+                        </button>
+
+                        <button onclick="clearOldLogs()" class="w-full px-4 py-2 text-red-300 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg transition-colors text-sm">
+                            Clear Old Logs
+                        </button>
+                    </div>
+
+                    <!-- Recent Scans -->
+                    <div class="mt-6" id="recent-scans-panel">
+                        <h3 class="text-sm font-medium text-gray-400 mb-3">Recent Scans</h3>
+                        <div class="space-y-1" id="recent-scans-content">
+                            <div class="text-gray-500 text-sm">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Content -->
+                <div class="flex-1 flex gap-4 overflow-hidden">
+                    <!-- Log List -->
+                    <div class="flex-1 bg-gray-800/30 border border-gray-700 rounded-lg overflow-y-auto p-4" id="logs-container">
+                        <div class="text-gray-500 text-center py-8">Click "Apply Filters" or select a scan to load logs</div>
+                    </div>
+
+                    <!-- Detail Panel -->
+                    <div class="w-[500px] bg-gray-800/30 border border-gray-700 rounded-lg overflow-y-auto" id="detail-panel">
+                        <div class="p-6 text-center text-gray-500">
+                            <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <p>Select a log entry to view details</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Tab switching
+function switchTab(tabId) {
+    // Update tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active', 'text-white', 'border-blue-500');
+        btn.classList.add('text-gray-400', 'border-transparent');
+    });
+    const activeBtn = document.getElementById('tab-' + tabId);
+    if (activeBtn) {
+        activeBtn.classList.add('active', 'text-white', 'border-blue-500');
+        activeBtn.classList.remove('text-gray-400', 'border-transparent');
+    }
+
+    // Update panels
+    document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.add('hidden'));
+    const activePanel = document.getElementById('panel-' + tabId);
+    if (activePanel) activePanel.classList.remove('hidden');
+
+    // Save to localStorage
+    localStorage.setItem('tuning_active_tab', tabId);
+
+    // Load data if needed
+    if (tabId === 'llm-logs') {
+        loadStats();
+    }
+}
+
+// Restore active tab
+const savedTab = localStorage.getItem('tuning_active_tab');
+if (savedTab) {
+    switchTab(savedTab);
+}
+
+// =====================
+// OUTPUT FORMAT TESTER
+// =====================
+let availableModels = [];
+
+const TEST_SAMPLES = {
+    buffer_overflow: {
+        language: 'c',
+        code: `void process_input(char *user_input) {
+    char buffer[64];
+    strcpy(buffer, user_input);  // No bounds checking
+    printf("Processed: %s\\n", buffer);
+}`
+    },
+    sql_injection: {
+        language: 'python',
+        code: `def get_user(username):
+    query = "SELECT * FROM users WHERE name = '" + username + "'"
+    cursor.execute(query)
+    return cursor.fetchone()`
+    },
+    command_injection: {
+        language: 'c',
+        code: `void run_command(char *filename) {
+    char cmd[256];
+    sprintf(cmd, "cat %s", filename);
+    system(cmd);  // User input passed to system()
+}`
+    }
+};
+
+async function loadModels() {
+    try {
+        const response = await fetch('/models');
+        availableModels = await response.json();
+
+        const container = document.getElementById('model-checkboxes');
+        if (availableModels.length === 0) {
+            container.innerHTML = '<div class="text-gray-500 text-sm">No models configured</div>';
+            return;
+        }
+
+        container.innerHTML = availableModels.map(model => `
+            <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white">
+                <input type="checkbox" class="model-checkbox" value="${model.id}" data-name="${model.name}"
+                    ${model.is_analyzer ? 'checked' : ''}>
+                ${model.name}
+                ${model.is_analyzer ? '<span class="text-xs text-blue-400">(analyzer)</span>' : ''}
+            </label>
+        `).join('');
+    } catch (e) {
+        console.error('Failed to load models:', e);
+    }
+}
+
+function selectAllModels() {
+    document.querySelectorAll('.model-checkbox').forEach(cb => cb.checked = true);
+}
+
+function deselectAllModels() {
+    document.querySelectorAll('.model-checkbox').forEach(cb => cb.checked = false);
+}
+
+// Show/hide custom code section
+document.getElementById('test-sample').addEventListener('change', function() {
+    const customSection = document.getElementById('custom-code-section');
+    if (this.value === 'custom') {
+        customSection.classList.remove('hidden');
+    } else {
+        customSection.classList.add('hidden');
+    }
+});
+
+async function runFormatTest() {
+    const selectedModels = Array.from(document.querySelectorAll('.model-checkbox:checked'))
+        .map(cb => ({ id: cb.value, name: cb.dataset.name }));
+
+    const selectedModes = Array.from(document.querySelectorAll('.output-mode-checkbox:checked'))
+        .map(cb => cb.value);
+
+    const role = document.getElementById('test-role').value;
+    const sampleType = document.getElementById('test-sample').value;
+
+    if (selectedModels.length === 0) {
+        alert('Please select at least one model');
+        return;
+    }
+
+    if (selectedModes.length === 0) {
+        alert('Please select at least one output mode');
+        return;
+    }
+
+    let testCode, language;
+    if (sampleType === 'custom') {
+        testCode = document.getElementById('custom-code').value;
+        language = document.getElementById('custom-language').value || 'c';
+        if (!testCode.trim()) {
+            alert('Please enter custom code to test');
+            return;
+        }
+    } else {
+        const sample = TEST_SAMPLES[sampleType];
+        testCode = sample.code;
+        language = sample.language;
+    }
+
+    // Disable button and show progress
+    const btn = document.getElementById('run-test-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="animate-spin">⏳</span> Running tests...';
+
+    const resultsContainer = document.getElementById('test-results');
+    resultsContainer.innerHTML = '<div class="text-center text-gray-400 py-8"><span class="animate-pulse">Running tests...</span></div>';
+
+    const totalTests = selectedModels.length * selectedModes.length;
+    let completedTests = 0;
+    const results = [];
+
+    // Run tests sequentially to avoid overloading
+    for (const model of selectedModels) {
+        for (const mode of selectedModes) {
+            try {
+                document.getElementById('test-status').textContent = `Testing ${model.name} with ${mode}... (${completedTests + 1}/${totalTests})`;
+
+                const response = await fetch('/tuning/test-format', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model_id: model.id,
+                        role: role,
+                        output_mode: mode,
+                        code: testCode,
+                        language: language
+                    })
+                });
+
+                const result = await response.json();
+                results.push({
+                    model: model.name,
+                    mode: mode,
+                    ...result
+                });
+            } catch (e) {
+                results.push({
+                    model: model.name,
+                    mode: mode,
+                    error: e.message,
+                    parse_success: false
+                });
+            }
+            completedTests++;
+        }
+    }
+
+    // Display results
+    displayTestResults(results);
+
+    // Re-enable button
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+    </svg> Run Test`;
+    document.getElementById('test-status').textContent = `Completed ${totalTests} tests`;
+}
+
+function displayTestResults(results) {
+    const container = document.getElementById('test-results');
+
+    // Group by model
+    const byModel = {};
+    results.forEach(r => {
+        if (!byModel[r.model]) byModel[r.model] = [];
+        byModel[r.model].push(r);
+    });
+
+    // Summary stats
+    const successCount = results.filter(r => r.parse_success).length;
+    const totalCount = results.length;
+
+    let html = `
+        <div class="mb-4 p-3 bg-gray-900 rounded-lg border border-gray-700">
+            <div class="flex items-center justify-between">
+                <span class="text-sm text-gray-400">Overall Results</span>
+                <span class="text-sm ${successCount === totalCount ? 'text-green-400' : 'text-yellow-400'}">
+                    ${successCount}/${totalCount} parsed successfully
+                </span>
+            </div>
+        </div>
+    `;
+
+    for (const [modelName, modelResults] of Object.entries(byModel)) {
+        const modelSuccess = modelResults.filter(r => r.parse_success).length;
+
+        html += `
+            <div class="mb-4 bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                <div class="px-4 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
+                    <span class="font-medium text-gray-200">${escapeHtml(modelName)}</span>
+                    <span class="text-xs ${modelSuccess === modelResults.length ? 'text-green-400' : 'text-yellow-400'}">
+                        ${modelSuccess}/${modelResults.length} OK
+                    </span>
+                </div>
+                <div class="divide-y divide-gray-700">
+        `;
+
+        for (const result of modelResults) {
+            const statusColor = result.parse_success ? 'text-green-400' : 'text-red-400';
+            const statusIcon = result.parse_success ? '✓' : '✗';
+
+            html += `
+                <div class="p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm text-gray-400">${result.mode}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="${statusColor} text-sm">${statusIcon} ${result.parse_success ? 'Parsed' : 'Failed'}</span>
+                            ${result.duration_ms ? `<span class="text-xs text-gray-500">${(result.duration_ms/1000).toFixed(1)}s</span>` : ''}
+                        </div>
+                    </div>
+                    ${result.findings_count !== undefined ? `
+                        <div class="text-xs text-gray-500 mb-2">Found ${result.findings_count} findings</div>
+                    ` : ''}
+                    ${result.error ? `
+                        <div class="text-xs text-red-400 bg-red-500/10 rounded p-2">${escapeHtml(result.error)}</div>
+                    ` : ''}
+                    ${result.raw_response ? `
+                        <details class="mt-2">
+                            <summary class="text-xs text-blue-400 cursor-pointer hover:text-blue-300">View Response</summary>
+                            <pre class="mt-2 p-2 bg-gray-950 rounded text-xs text-gray-400 overflow-x-auto max-h-48">${escapeHtml(result.raw_response)}</pre>
+                        </details>
+                    ` : ''}
+                    ${result.parsed_findings ? `
+                        <details class="mt-2">
+                            <summary class="text-xs text-green-400 cursor-pointer hover:text-green-300">View Parsed Findings</summary>
+                            <pre class="mt-2 p-2 bg-gray-950 rounded text-xs text-gray-400 overflow-x-auto max-h-48">${escapeHtml(JSON.stringify(result.parsed_findings, null, 2))}</pre>
+                        </details>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        html += '</div></div>';
+    }
+
+    container.innerHTML = html;
+}
+
+
+// =====================
+// LLM LOGS
+// =====================
+let currentOffset = 0;
+const limit = 50;
+
+async function loadStats() {
+    try {
+        const response = await fetch('/llm-logs/stats');
+        const stats = await response.json();
+
+        document.getElementById('stats-content').innerHTML = `
+            <div class="flex justify-between"><span class="text-gray-400">Total Logs:</span><span class="text-gray-200">${stats.total}</span></div>
+            <div class="flex justify-between"><span class="text-gray-400">Failed Parses:</span><span class="${stats.failed_parses > 0 ? 'text-red-400' : 'text-green-400'}">${stats.failed_parses}</span></div>
+            <div class="flex justify-between"><span class="text-gray-400">Success Rate:</span><span class="text-gray-200">${stats.success_rate}%</span></div>
+            <hr class="border-gray-700 my-2">
+            <div class="text-xs text-gray-500 mt-2">By Phase:</div>
+            ${Object.entries(stats.by_phase || {}).map(([phase, count]) =>
+                `<div class="flex justify-between text-xs"><span class="text-gray-400">${phase}:</span><span class="text-gray-300">${count}</span></div>`
+            ).join('')}
+            <div class="text-xs text-gray-500 mt-2">By Model:</div>
+            ${Object.entries(stats.by_model || {}).map(([model, count]) =>
+                `<div class="flex justify-between text-xs"><span class="text-gray-400 truncate max-w-[120px]" title="${model}">${model}:</span><span class="text-gray-300">${count}</span></div>`
+            ).join('')}
+        `;
+
+        // Update recent scans
+        document.getElementById('recent-scans-content').innerHTML = (stats.recent_scans || []).length > 0
+            ? stats.recent_scans.map(s =>
+                `<button onclick="filterByScan(${s.scan_id})" class="w-full text-left px-2 py-1 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 rounded transition-colors">
+                    Scan #${s.scan_id} <span class="text-gray-500">(${s.log_count} logs)</span>
+                </button>`
+            ).join('')
+            : '<div class="text-gray-500 text-sm">No scans with logs</div>';
+
+    } catch (e) {
+        console.error('Failed to load stats:', e);
+    }
+}
+
+function filterByScan(scanId) {
+    document.getElementById('filter-scan-id').value = scanId;
+    loadLogs();
+}
+
+async function loadLogs() {
+    currentOffset = 0;
+    await fetchLogs();
+}
+
+async function fetchLogs() {
+    const scanId = document.getElementById('filter-scan-id').value;
+    const phase = document.getElementById('filter-phase').value;
+    const model = document.getElementById('filter-model').value;
+    const parseSuccess = document.getElementById('filter-parse-success').value;
+
+    const params = new URLSearchParams();
+    if (scanId) params.append('scan_id', scanId);
+    if (phase) params.append('phase', phase);
+    if (model) params.append('model', model);
+    if (parseSuccess) params.append('parse_success', parseSuccess);
+    params.append('limit', limit);
+    params.append('offset', currentOffset);
+
+    try {
+        const response = await fetch(`/llm-logs/list?${params}`);
+        const data = await response.json();
+
+        const container = document.getElementById('logs-container');
+
+        if (data.logs.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-gray-500">
+                    <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <p>No logs found</p>
+                    <p class="text-sm mt-1">Run a scan to generate LLM request logs</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="mb-4 flex justify-between items-center">
+                <span class="text-sm text-gray-400">Showing ${data.offset + 1}-${data.offset + data.logs.length} of ${data.total} logs</span>
+                <div class="flex gap-2">
+                    ${data.offset > 0 ? `<button onclick="prevPage()" class="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded">Previous</button>` : ''}
+                    ${data.offset + data.logs.length < data.total ? `<button onclick="nextPage()" class="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded">Next</button>` : ''}
+                </div>
+            </div>
+            <div class="space-y-2">
+                ${data.logs.map(log => `
+                    <div class="log-row bg-gray-800/50 border border-gray-700/50 rounded-lg p-3 ${!log.parse_success ? 'border-l-4 border-l-red-500' : ''}"
+                         onclick="showLogDetail(${log.id})">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-mono text-gray-500">#${log.id}</span>
+                                ${log.scan_id ? `<span class="text-xs bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">Scan ${log.scan_id}</span>` : ''}
+                                <span class="text-xs bg-gray-700 text-gray-300 px-1.5 py-0.5 rounded">${log.phase}</span>
+                                <span class="text-xs text-gray-400 truncate max-w-[200px]" title="${log.model_name}">${log.model_name}</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                ${log.parse_success
+                                    ? `<span class="text-xs text-green-400">OK</span>`
+                                    : `<span class="text-xs text-red-400">Parse Failed</span>`
+                                }
+                                ${log.duration_ms ? `<span class="text-xs text-gray-500">${(log.duration_ms/1000).toFixed(1)}s</span>` : ''}
+                                <span class="text-xs text-gray-500">${new Date(log.created_at).toLocaleTimeString()}</span>
+                            </div>
+                        </div>
+                        ${log.file_path ? `<div class="text-xs text-gray-500 mb-1 truncate">${log.file_path}</div>` : ''}
+                        <div class="text-xs text-gray-400 truncate">${escapeHtml(log.response_preview || 'No response')}</div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+    } catch (e) {
+        console.error('Failed to load logs:', e);
+        document.getElementById('logs-container').innerHTML = `
+            <div class="text-center py-8 text-red-400">Failed to load logs: ${e.message}</div>
+        `;
+    }
+}
+
+function nextPage() {
+    currentOffset += limit;
+    fetchLogs();
+}
+
+function prevPage() {
+    currentOffset = Math.max(0, currentOffset - limit);
+    fetchLogs();
+}
+
+async function showLogDetail(logId) {
+    try {
+        const response = await fetch(`/llm-logs/${logId}`);
+        const log = await response.json();
+
+        document.getElementById('detail-panel').innerHTML = `
+            <div class="p-4 border-b border-gray-700/50">
+                <div class="flex items-center justify-between">
+                    <h3 class="font-medium text-gray-200">Log #${log.id}</h3>
+                    <span class="${log.parse_success ? 'text-green-400' : 'text-red-400'} text-sm">
+                        ${log.parse_success ? 'Parse Success' : 'Parse Failed'}
+                    </span>
+                </div>
+            </div>
+
+            <div class="p-4 space-y-4">
+                <!-- Metadata -->
+                <div class="grid grid-cols-2 gap-2 text-sm">
+                    <div><span class="text-gray-500">Scan ID:</span> <span class="text-gray-300">${log.scan_id || 'N/A'}</span></div>
+                    <div><span class="text-gray-500">Phase:</span> <span class="text-gray-300">${log.phase}</span></div>
+                    <div><span class="text-gray-500">Model:</span> <span class="text-gray-300 text-xs">${log.model_name}</span></div>
+                    <div><span class="text-gray-500">Analyzer:</span> <span class="text-gray-300">${log.analyzer_name || 'N/A'}</span></div>
+                    <div><span class="text-gray-500">Duration:</span> <span class="text-gray-300">${log.duration_ms ? (log.duration_ms/1000).toFixed(2) + 's' : 'N/A'}</span></div>
+                    <div><span class="text-gray-500">Tokens:</span> <span class="text-gray-300">${log.tokens_in || '?'}/${log.tokens_out || '?'}</span></div>
+                </div>
+
+                ${log.file_path ? `<div class="text-sm"><span class="text-gray-500">File:</span> <span class="text-gray-300 text-xs font-mono">${log.file_path}</span></div>` : ''}
+
+                ${log.parse_error ? `
+                    <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+                        <div class="text-sm font-medium text-red-400 mb-1">Parse Error</div>
+                        <div class="text-xs text-red-300 font-mono">${escapeHtml(log.parse_error)}</div>
+                    </div>
+                ` : ''}
+
+                <!-- Request Prompt -->
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <h4 class="text-sm font-medium text-gray-400">Request Prompt</h4>
+                        <button onclick="copyToClipboard('request-prompt')" class="text-xs text-blue-400 hover:text-blue-300">Copy</button>
+                    </div>
+                    <div id="request-prompt" class="prompt-content bg-gray-900 border border-gray-700 rounded-lg p-3 text-gray-300">${escapeHtml(log.request_prompt || 'No prompt')}</div>
+                </div>
+
+                <!-- Raw Response -->
+                <div>
+                    <div class="flex justify-between items-center mb-2">
+                        <h4 class="text-sm font-medium text-gray-400">Raw Response</h4>
+                        <button onclick="copyToClipboard('raw-response')" class="text-xs text-blue-400 hover:text-blue-300">Copy</button>
+                    </div>
+                    <div id="raw-response" class="response-content bg-gray-900 border border-gray-700 rounded-lg p-3 text-gray-300">${escapeHtml(log.raw_response || 'No response')}</div>
+                </div>
+
+                ${log.parsed_result ? `
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-400 mb-2">Parsed Result</h4>
+                        <pre class="bg-gray-900 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 overflow-x-auto">${escapeHtml(JSON.stringify(log.parsed_result, null, 2))}</pre>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+
+    } catch (e) {
+        console.error('Failed to load log detail:', e);
+    }
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function copyToClipboard(elementId) {
+    const element = document.getElementById(elementId);
+    const text = element.textContent;
+    navigator.clipboard.writeText(text);
+}
+
+async function clearOldLogs() {
+    const days = prompt('Clear logs older than how many days?', '7');
+    if (!days) return;
+
+    if (!confirm(`This will delete all logs older than ${days} days. Continue?`)) return;
+
+    try {
+        const response = await fetch(`/llm-logs?older_than_days=${days}`, { method: 'DELETE' });
+        const result = await response.json();
+        alert(`Deleted ${result.deleted} logs`);
+        loadStats();
+        loadLogs();
+    } catch (e) {
+        alert('Failed to clear logs: ' + e.message);
+    }
+}
+
+// Initialize
+document.addEventListener('DOMContentLoaded', function() {
+    loadModels();
+    // Only load stats if on logs tab
+    if (localStorage.getItem('tuning_active_tab') === 'llm-logs') {
+        loadStats();
+    }
+});
+</script>
+{% endblock %}

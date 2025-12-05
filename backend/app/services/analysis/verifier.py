@@ -170,11 +170,16 @@ REJECT if:
             draft_contexts.append({
                 'title': draft.title,
                 'vuln_type': draft.vulnerability_type,
+                'vulnerability_type': draft.vulnerability_type,  # Alias for custom templates
                 'severity': draft.severity,
                 'line': draft.line_number,
+                'line_number': draft.line_number,  # Alias
                 'snippet': draft.snippet or '',
+                'code_snippet': draft.snippet or '',  # Alias
                 'reason': draft.reason or '',
-                'context': context
+                'details': draft.reason or '',  # Alias for custom templates
+                'context': context,
+                'code_context': context  # Alias for custom templates
             })
 
         # Collect votes from ALL verifier models
@@ -182,6 +187,7 @@ REJECT if:
 
         # Run all models in parallel
         async def get_model_votes(pool: ModelPool) -> tuple:
+            print(f"[Verifier] Starting votes for model {pool.config.name}")
             try:
                 # Check for profile verifier configuration
                 profile_verifier = self._profile_verifiers.get(pool.config.id)
@@ -206,14 +212,18 @@ REJECT if:
                     phase='verifier',
                 )
 
+                print(f"[Verifier] Calling {pool.config.name} with {len(model_prompts)} prompts")
                 responses = await pool.call_batch(
                     model_prompts,
                     output_mode=output_mode,
                     json_schema=json_schema
                 )
+                print(f"[Verifier] {pool.config.name} returned {len(responses)} responses")
                 return (pool.config.name, responses)
             except Exception as e:
                 print(f"Verifier {pool.config.name} failed: {e}")
+                import traceback
+                traceback.print_exc()
                 return (pool.config.name, ["" for _ in draft_contexts])
 
         vote_tasks = [get_model_votes(pool) for pool in verifier_pools]

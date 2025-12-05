@@ -49,6 +49,7 @@ class Finding(Base):
     id = Column(Integer, primary_key=True, index=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
     verified_id = Column(Integer, ForeignKey("verified_findings.id"), nullable=True)
+    draft_id = Column(Integer, ForeignKey("draft_findings.id"), nullable=True, index=True)  # Direct link to original draft
     mr_review_id = Column(Integer, ForeignKey("mr_reviews.id"), nullable=True, index=True)
 
     file_path = Column(String, nullable=False)

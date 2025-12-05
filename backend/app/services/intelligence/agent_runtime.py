@@ -5,12 +5,48 @@ Enables agentic verification and interactive code exploration.
 import json
 import re
 import asyncio
+import httpx
 from typing import List, Dict, Optional, Any, Callable, AsyncGenerator, Literal
 from dataclasses import dataclass, field
 from enum import Enum
 
 from app.services.intelligence.codebase_tools import CodebaseTools, ToolResult
 from app.services.orchestration.model_orchestrator import ModelPool
+from app.services.token_utils import calculate_max_tokens, is_max_tokens_error, calculate_retry_max_tokens
+
+
+def get_openai_tools_schema(tools: CodebaseTools) -> List[Dict[str, Any]]:
+    """Convert codebase tools to OpenAI function calling format."""
+    openai_tools = []
+    for tool in tools.TOOL_DEFINITIONS:
+        # Convert parameters to JSON Schema format
+        properties = {}
+        required = []
+        for param_name, param_desc in tool.get("parameters", {}).items():
+            is_optional = "(optional)" in param_desc.lower()
+            properties[param_name] = {
+                "type": "string",
+                "description": param_desc.replace("(optional) ", "")
+            }
+            # Handle special types
+            if "line" in param_name.lower():
+                properties[param_name]["type"] = "integer"
+            if not is_optional:
+                required.append(param_name)
+
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        })
+    return openai_tools
 
 # JSON schema for agent responses (used with guided_json mode)
 AGENT_JSON_SCHEMA = {
@@ -148,7 +184,8 @@ Always output ONLY valid JSON with no additional text before or after.
         scan_id: int = None,
         finding_id: int = None,
         step_callback: Optional[Callable[[AgentStep], None]] = None,
-        response_format: Literal["markers", "json", "json_schema"] = "markers"
+        response_format: Literal["markers", "json", "json_schema"] = "markers",
+        tool_call_format: Literal["none", "openai", "hermes"] = "none"
     ):
         """
         Initialize the agent runtime.
@@ -163,6 +200,7 @@ Always output ONLY valid JSON with no additional text before or after.
             finding_id: Finding ID for logging context
             step_callback: Optional callback called after each step (for streaming)
             response_format: Output format - 'markers' (text), 'json', or 'json_schema' (vLLM guided)
+            tool_call_format: Native tool calling format - 'none', 'openai', or 'hermes'
         """
         self.model_pool = model_pool
         self.tools = tools
@@ -174,6 +212,10 @@ Always output ONLY valid JSON with no additional text before or after.
         self.tool_use_count = 0  # Track tool usage
         self.step_callback = step_callback
         self.response_format = response_format
+        self.tool_call_format = tool_call_format
+
+        # Prepare OpenAI tools schema if using native tool calling
+        self.openai_tools = get_openai_tools_schema(tools) if tool_call_format == "openai" else None
 
         # Set log context for the model pool
         if scan_id or finding_id:
@@ -199,6 +241,88 @@ Always output ONLY valid JSON with no additional text before or after.
             # Use regular call for text-based markers format
             return await self.model_pool.call(prompt)
 
+    async def _call_llm_with_tools(self, messages: List[Dict[str, Any]], retry_max_tokens: int = None) -> Dict[str, Any]:
+        """Make LLM call with native tool calling support.
+
+        Args:
+            messages: OpenAI-format messages list
+            retry_max_tokens: Override max_tokens for retry (used after token limit errors)
+
+        Returns:
+            Dict with 'content' (text response) and 'tool_calls' (list of tool calls if any)
+        """
+        config = self.model_pool.config
+        base_url = config.base_url.rstrip('/') if config.base_url else "http://localhost:8000/v1"
+        api_key = config.api_key or "empty"
+
+        # Calculate effective max_tokens
+        total_content = "".join(m.get("content", "") or "" for m in messages)
+        if retry_max_tokens is not None:
+            effective_max_tokens = retry_max_tokens
+        else:
+            max_context = getattr(config, 'max_context_length', 0) or 0
+            effective_max_tokens = calculate_max_tokens(
+                prompt=total_content,
+                requested_max_tokens=config.max_tokens or 4096,
+                max_context_length=max_context
+            )
+
+        # Construct request payload
+        payload = {
+            "model": config.name,
+            "messages": messages,
+            "max_tokens": effective_max_tokens,
+            "temperature": 0.1,
+            "tools": self.openai_tools,
+            "tool_choice": "auto"
+        }
+
+        # Dynamic timeout: base 240s + 2s per 500 chars of conversation, max 1200s (20 min)
+        total_chars = len(total_content)
+        dynamic_timeout = min(1200.0, 240.0 + (total_chars / 250))
+
+        async with httpx.AsyncClient(verify=False, timeout=dynamic_timeout) as client:
+            response = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+
+            # Check for max_tokens error and retry
+            if response.status_code >= 400:
+                try:
+                    error_body = response.json()
+                    error_detail = error_body.get("error", {})
+                    if isinstance(error_detail, dict):
+                        error_message = error_detail.get("message", str(error_body))
+                    else:
+                        error_message = str(error_detail) or str(error_body)
+                except Exception:
+                    error_message = response.text[:500]
+
+                # Check if this is a max_tokens error that we can retry
+                if retry_max_tokens is None and is_max_tokens_error(error_message):
+                    new_max_tokens = calculate_retry_max_tokens(error_message)
+                    if new_max_tokens and new_max_tokens > 100:
+                        print(f"[AGENT RETRY] max_tokens error, retrying with {new_max_tokens}")
+                        return await self._call_llm_with_tools(messages, retry_max_tokens=new_max_tokens)
+
+                response.raise_for_status()
+
+            data = response.json()
+
+        # Extract response
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+
+        return {
+            "content": message.get("content", ""),
+            "tool_calls": message.get("tool_calls", [])
+        }
+
     async def run(self, task: str, context: str = "") -> AgentResult:
         """
         Run the agent on a task.
@@ -210,6 +334,145 @@ Always output ONLY valid JSON with no additional text before or after.
         Returns:
             AgentResult with the execution trace and final answer
         """
+        # Use native tool calling if supported
+        if self.tool_call_format == "openai" and self.openai_tools:
+            return await self._run_with_native_tools(task, context)
+
+        # Otherwise use text-based approach
+        return await self._run_text_based(task, context)
+
+    async def _run_with_native_tools(self, task: str, context: str = "") -> AgentResult:
+        """Run agent using native OpenAI-style tool calling."""
+        steps: List[AgentStep] = []
+        self.tool_use_count = 0
+
+        # Build initial messages
+        system_msg = f"""You are a security expert analyzing code to verify potential vulnerabilities.
+You have access to tools to explore the codebase. Use them to trace data flow and prove whether a vulnerability is real.
+
+When you have enough information, provide your final verdict in this format:
+VERDICT: VERIFIED or REJECTED
+CONFIDENCE: 0-100
+REASONING: Your explanation
+ATTACK_PATH: (if verified) How an attacker would exploit this
+
+Think step by step. Use tools to gather evidence before concluding.
+You must use at least {self.min_tool_uses} tools before providing a final answer."""
+
+        messages = [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": f"{context}\n\nTask: {task}" if context else task}
+        ]
+
+        for step_num in range(1, self.max_steps + 1):
+            if self.verbose:
+                print(f"\n--- Agent Step {step_num} (native tools) ---")
+
+            try:
+                response = await self._call_llm_with_tools(messages)
+            except Exception as e:
+                return AgentResult(
+                    state=AgentState.FAILED,
+                    steps=steps,
+                    final_answer=None,
+                    error=str(e)
+                )
+
+            content = response.get("content", "")
+            tool_calls = response.get("tool_calls", [])
+
+            # Check if this is a tool call
+            if tool_calls:
+                for tool_call in tool_calls:
+                    func = tool_call.get("function", {})
+                    tool_name = func.get("name", "")
+                    try:
+                        tool_params = json.loads(func.get("arguments", "{}"))
+                    except json.JSONDecodeError:
+                        tool_params = {}
+
+                    step = AgentStep(
+                        step_number=step_num,
+                        thought=content,
+                        tool_name=tool_name,
+                        tool_params=tool_params
+                    )
+
+                    # Execute tool
+                    result = self.tools.execute_tool(tool_name, tool_params)
+                    step.tool_result = self._format_tool_result(result)
+                    self.tool_use_count += 1
+
+                    if self.verbose:
+                        print(f"Tool: {tool_name}({tool_params})")
+                        print(f"Result: {step.tool_result[:200]}...")
+
+                    steps.append(step)
+                    if self.step_callback:
+                        self.step_callback(step)
+
+                    # Add assistant message with tool call
+                    messages.append({
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": [tool_call]
+                    })
+
+                    # Add tool result
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.get("id", f"call_{step_num}"),
+                        "content": step.tool_result
+                    })
+            else:
+                # No tool call - check for final answer
+                step = AgentStep(step_number=step_num, thought=content)
+
+                # Check if it looks like a final answer
+                if "VERDICT:" in content.upper() and self.tool_use_count >= self.min_tool_uses:
+                    step.is_final = True
+                    step.final_answer = content
+                    steps.append(step)
+                    if self.step_callback:
+                        self.step_callback(step)
+                    return AgentResult(
+                        state=AgentState.COMPLETED,
+                        steps=steps,
+                        final_answer=content
+                    )
+                elif self.tool_use_count < self.min_tool_uses:
+                    # Not enough tools used - prompt to continue
+                    steps.append(step)
+                    if self.step_callback:
+                        self.step_callback(step)
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({
+                        "role": "user",
+                        "content": f"You must use at least {self.min_tool_uses} tools before providing a final answer. You have only used {self.tool_use_count}. Please use a tool to investigate further."
+                    })
+                else:
+                    # Has final answer
+                    step.is_final = True
+                    step.final_answer = content
+                    steps.append(step)
+                    if self.step_callback:
+                        self.step_callback(step)
+                    return AgentResult(
+                        state=AgentState.COMPLETED,
+                        steps=steps,
+                        final_answer=content
+                    )
+
+        # Max steps reached
+        return AgentResult(
+            state=AgentState.MAX_STEPS_REACHED,
+            steps=steps,
+            final_answer=self._extract_best_answer(steps),
+            error=f"Reached maximum {self.max_steps} steps"
+        )
+
+    async def _run_text_based(self, task: str, context: str = "") -> AgentResult:
+        """Run agent using text-based tool calling (markers/json)."""
         steps: List[AgentStep] = []
         conversation = self._build_initial_prompt(task, context)
         self.tool_use_count = 0  # Reset for this run
@@ -510,7 +773,8 @@ Begin by using the `read_file` tool to examine the code. Do NOT provide your fin
         max_steps: int = 8,
         scan_id: int = None,
         finding_id: int = None,
-        response_format: Literal["markers", "json", "json_schema"] = "markers"
+        response_format: Literal["markers", "json", "json_schema"] = "markers",
+        tool_call_format: Literal["none", "openai", "hermes"] = "none"
     ):
         self.model_pool = model_pool
         self.tools = tools
@@ -518,10 +782,12 @@ Begin by using the `read_file` tool to examine the code. Do NOT provide your fin
         self.scan_id = scan_id
         self.finding_id = finding_id
         self.response_format = response_format
+        self.tool_call_format = tool_call_format
         self.runtime = AgentRuntime(
             model_pool, tools, max_steps=max_steps,
             scan_id=scan_id, finding_id=finding_id,
-            response_format=response_format
+            response_format=response_format,
+            tool_call_format=tool_call_format
         )
 
     def _get_available_files(self) -> str:

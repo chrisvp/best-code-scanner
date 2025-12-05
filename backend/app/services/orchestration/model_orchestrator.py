@@ -5,7 +5,9 @@ import json
 from typing import List, Dict, Optional, Any, Callable
 from app.models.scanner_models import ModelConfig, ScanErrorLog
 from app.services.llm_logger import llm_logger
+from app.services.token_utils import calculate_max_tokens, is_max_tokens_error, calculate_retry_max_tokens
 from app.core.config import settings
+from app.services.orchestration.queue_manager import queue_manager
 
 
 class ModelPool:
@@ -13,9 +15,11 @@ class ModelPool:
 
     def __init__(self, config: ModelConfig, error_callback: Optional[Callable] = None):
         self.config = config
-        self.semaphore = asyncio.Semaphore(config.max_concurrent)  # Default 2
+        # Use global queue manager's semaphore for this model (enforces limits across all pools)
+        model_queue = queue_manager._get_or_create_queue(config.name, config.max_concurrent)
+        self.semaphore = model_queue.semaphore
         self.batch_queue: asyncio.Queue = asyncio.Queue()
-        self.batch_size = 10
+        self.batch_size = config.max_concurrent  # Match batch size to model's concurrency limit
         self.batch_timeout = 0.5  # Seconds to wait for batch to fill
         self._batch_task: Optional[asyncio.Task] = None
         self._running = False
@@ -158,12 +162,27 @@ class ModelPool:
             )
             pending_log_ids.append(log_id)
 
-        async with httpx.AsyncClient(timeout=600.0, verify=False) as client:
+        # Dynamic timeout: base 300s + 1s per 200 chars, max 3600s (1 hour)
+        # Large prompts with many tokens need substantial time for inference
+        max_prompt_len = max(len(p) for p in prompts) if prompts else 0
+        dynamic_timeout = min(3600.0, 300.0 + (max_prompt_len / 200))
+
+        async with httpx.AsyncClient(timeout=dynamic_timeout, verify=False) as client:
             # Rate-limited concurrent requests
-            async def send_one(prompt: str, idx: int) -> tuple:
-                """Returns (response_content, prompt, duration_ms, tokens_in, tokens_out, error, log_id)"""
+            async def send_one(prompt: str, idx: int, retry_max_tokens: int = None) -> tuple:
+                """Returns (response_content, prompt, duration_ms, tokens_in, tokens_out, error, log_id)
+
+                Args:
+                    prompt: The prompt to send
+                    idx: Index in the batch
+                    retry_max_tokens: Override max_tokens for retry (used after token limit errors)
+                """
                 log_id = pending_log_ids[idx] if idx < len(pending_log_ids) else None
                 async with self.semaphore:
+                    # Mark as running now that we have the semaphore
+                    if log_id:
+                        llm_logger.set_running(log_id)
+
                     start_time = time.time()
                     tokens_in = None
                     tokens_out = None
@@ -184,10 +203,21 @@ class ModelPool:
                         else:
                             url = f"{base}/v1/chat/completions"
 
+                        # Calculate dynamic max_tokens based on context limits
+                        if retry_max_tokens is not None:
+                            effective_max_tokens = retry_max_tokens
+                        else:
+                            max_context = getattr(self.config, 'max_context_length', 0) or 0
+                            effective_max_tokens = calculate_max_tokens(
+                                prompt=prompt,
+                                requested_max_tokens=self.config.max_tokens,
+                                max_context_length=max_context
+                            )
+
                         request_payload = {
                             "model": self.config.name,
                             "messages": [{"role": "user", "content": prompt}],
-                            "max_tokens": self.config.max_tokens,
+                            "max_tokens": effective_max_tokens,
                             "temperature": 0.1
                         }
 
@@ -220,9 +250,18 @@ class ModelPool:
                             except Exception:
                                 error_message = response.text[:500]
 
+                            # Check if this is a max_tokens error that we can retry
+                            if retry_max_tokens is None and is_max_tokens_error(error_message):
+                                new_max_tokens = calculate_retry_max_tokens(error_message)
+                                if new_max_tokens and new_max_tokens > 100:
+                                    print(f"[LLM RETRY] {self.config.name} max_tokens error, retrying with {new_max_tokens}")
+                                    # Release semaphore and retry with new max_tokens
+                                    # Note: We need to return and let the caller retry
+                                    return await send_one(prompt, idx, retry_max_tokens=new_max_tokens)
+
                             prompt_len = len(prompt)
                             print(f"[LLM ERROR] {self.config.name} returned {response.status_code}: {error_message}")
-                            print(f"[LLM ERROR] Prompt length: {prompt_len} chars, max_tokens: {self.config.max_tokens}")
+                            print(f"[LLM ERROR] Prompt length: {prompt_len} chars, max_tokens: {effective_max_tokens}")
                             if prompt_len > 1000:
                                 print(f"[LLM ERROR] Prompt preview: {prompt[:500]}...{prompt[-200:]}")
 

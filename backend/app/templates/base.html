@@ -121,13 +121,13 @@
         </div>
     </nav>
 
-    <!-- Main Content -->
-    <main class="h-[calc(100vh-73px)]">
+    <!-- Main Content (account for nav + queue bar) -->
+    <main class="h-[calc(100vh-73px-32px)] pb-8">
         {% block content %}{% endblock %}
     </main>
 
-    <!-- Floating Quick Chat Widget -->
-    <div id="quick-chat" class="fixed bottom-6 right-6 z-50">
+    <!-- Floating Quick Chat Widget (above queue bar) -->
+    <div id="quick-chat" class="fixed bottom-12 right-6 z-50">
         <!-- Chat Toggle Button -->
         <button id="chat-toggle"
                 class="w-14 h-14 bg-blue-600 hover:bg-blue-700 rounded-full shadow-lg flex items-center justify-center transition-all duration-300 hover:scale-110">
@@ -397,6 +397,199 @@
 
         // Load history on page load if panel was open
         loadHistory();
+    })();
+    </script>
+
+    <!-- Queue Status Bar -->
+    <div id="queue-bar" class="fixed bottom-0 left-0 right-0 z-40 transition-all duration-300">
+        <!-- Collapsed Bar -->
+        <div id="queue-bar-collapsed" class="bg-gray-900/95 backdrop-blur-sm border-t border-gray-700/50 px-4 py-1.5 flex items-center justify-between cursor-pointer hover:bg-gray-800/95 transition-colors"
+             onclick="toggleQueueBar()">
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <div id="queue-status-dot" class="w-2 h-2 bg-gray-600 rounded-full"></div>
+                    <span class="text-xs text-gray-400 font-medium">LLM Queue</span>
+                </div>
+                <div id="queue-mini-stats" class="flex items-center gap-3 text-xs">
+                    <!-- Mini stats populated by JS -->
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="queue-expand-hint" class="text-xs text-gray-500">Click to expand</span>
+                <svg id="queue-chevron" class="w-4 h-4 text-gray-500 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>
+                </svg>
+            </div>
+        </div>
+
+        <!-- Expanded Panel -->
+        <div id="queue-bar-expanded" class="hidden bg-gray-900/98 backdrop-blur-sm border-t border-gray-700/50">
+            <div class="px-4 py-2 border-b border-gray-800 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <span class="text-sm font-medium text-white">LLM Queue Monitor</span>
+                    <div class="flex items-center gap-4 text-xs">
+                        <span class="text-yellow-400"><span id="queue-total-queued">0</span> queued</span>
+                        <span class="text-green-400"><span id="queue-total-running">0</span> running</span>
+                    </div>
+                </div>
+                <button onclick="toggleQueueBar()" class="text-gray-400 hover:text-white p-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+            </div>
+            <div id="queue-models-container" class="px-4 py-3 flex gap-3 overflow-x-auto custom-scrollbar" style="max-height: 140px;">
+                <!-- Model queue cards populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Queue Status Bar
+    (function() {
+        let eventSource = null;
+        let isExpanded = false;
+        let lastData = null;
+
+        const statusDot = document.getElementById('queue-status-dot');
+        const miniStats = document.getElementById('queue-mini-stats');
+        const modelsContainer = document.getElementById('queue-models-container');
+        const totalQueued = document.getElementById('queue-total-queued');
+        const totalRunning = document.getElementById('queue-total-running');
+        const chevron = document.getElementById('queue-chevron');
+        const expandedPanel = document.getElementById('queue-bar-expanded');
+        const expandHint = document.getElementById('queue-expand-hint');
+
+        window.toggleQueueBar = function() {
+            isExpanded = !isExpanded;
+            expandedPanel.classList.toggle('hidden', !isExpanded);
+            chevron.style.transform = isExpanded ? 'rotate(180deg)' : '';
+            expandHint.textContent = isExpanded ? 'Click to collapse' : 'Click to expand';
+            if (isExpanded && lastData) {
+                renderExpanded(lastData);
+            }
+        };
+
+        function getPhaseColor(phase) {
+            const colors = {
+                'scanner': 'bg-blue-500', 'analyzer': 'bg-blue-500',
+                'verifier': 'bg-purple-500', 'enricher': 'bg-green-500',
+                'agent': 'bg-orange-500', 'chat': 'bg-cyan-500',
+            };
+            return colors[phase] || 'bg-gray-500';
+        }
+
+        function renderMiniStats(data) {
+            if (!data.models || data.models.length === 0) {
+                miniStats.innerHTML = '<span class="text-gray-500">No models</span>';
+                statusDot.className = 'w-2 h-2 bg-gray-600 rounded-full';
+                return;
+            }
+
+            const activeModels = data.models.filter(m => (m.running_count || 0) > 0 || (m.queued_count || 0) > 0);
+
+            if (activeModels.length === 0) {
+                miniStats.innerHTML = '<span class="text-gray-500">Idle</span>';
+                statusDot.className = 'w-2 h-2 bg-gray-600 rounded-full';
+                return;
+            }
+
+            statusDot.className = 'w-2 h-2 bg-green-500 rounded-full animate-pulse';
+
+            // Show compact per-model stats
+            const html = activeModels.slice(0, 4).map(m => {
+                const running = m.running_count || 0;
+                const queued = m.queued_count || 0;
+                const name = m.name.length > 15 ? m.name.substring(0, 15) + '...' : m.name;
+                return `
+                    <div class="flex items-center gap-1.5 bg-gray-800/50 rounded px-2 py-0.5">
+                        <span class="text-gray-300 truncate" style="max-width: 100px">${name}</span>
+                        <span class="text-green-400">${running}</span>
+                        ${queued > 0 ? `<span class="text-yellow-400">+${queued}</span>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            miniStats.innerHTML = html + (activeModels.length > 4 ? `<span class="text-gray-500">+${activeModels.length - 4}</span>` : '');
+        }
+
+        function renderExpanded(data) {
+            totalQueued.textContent = data.total_queued || 0;
+            totalRunning.textContent = data.total_running || 0;
+
+            if (!data.models || data.models.length === 0) {
+                modelsContainer.innerHTML = '<div class="text-gray-500 text-sm">No models configured</div>';
+                return;
+            }
+
+            const html = data.models.map(m => {
+                const running = m.running_count || 0;
+                const queued = m.queued_count || 0;
+                const max = m.max_concurrent || 2;
+                const util = Math.min(100, (running / max) * 100);
+                const isActive = running > 0 || queued > 0;
+
+                // Running requests list
+                let runningHtml = '';
+                if (m.running && m.running.length > 0) {
+                    runningHtml = m.running.slice(0, 3).map(r => `
+                        <div class="flex items-center gap-1 text-xs">
+                            <div class="w-1.5 h-1.5 ${getPhaseColor(r.phase)} rounded-full animate-pulse"></div>
+                            <span class="text-gray-400 truncate" style="max-width: 80px">${r.file_path || r.phase}</span>
+                        </div>
+                    `).join('');
+                }
+
+                return `
+                    <div class="flex-shrink-0 bg-gray-800/60 rounded-lg p-3 min-w-[180px] ${isActive ? 'ring-1 ring-green-500/30' : ''}">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-medium text-white truncate" style="max-width: 120px" title="${m.name}">${m.name}</span>
+                            <span class="text-xs text-gray-500">${running}/${max}</span>
+                        </div>
+                        <div class="h-1 bg-gray-700 rounded-full overflow-hidden mb-2">
+                            <div class="h-full ${running >= max ? 'bg-yellow-500' : 'bg-green-500'} transition-all" style="width: ${util}%"></div>
+                        </div>
+                        <div class="flex items-center gap-3 text-xs mb-2">
+                            <span class="text-green-400">${running} running</span>
+                            <span class="text-yellow-400">${queued} queued</span>
+                        </div>
+                        ${runningHtml ? `<div class="space-y-1 pt-2 border-t border-gray-700">${runningHtml}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            modelsContainer.innerHTML = html;
+        }
+
+        function connect() {
+            if (eventSource) eventSource.close();
+
+            eventSource = new EventSource('/queue/stream');
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.error) return;
+                    lastData = data;
+                    renderMiniStats(data);
+                    if (isExpanded) renderExpanded(data);
+                } catch (e) {
+                    console.error('Queue parse error:', e);
+                }
+            };
+
+            eventSource.onerror = function() {
+                statusDot.className = 'w-2 h-2 bg-red-500 rounded-full';
+                eventSource.close();
+                setTimeout(connect, 3000);
+            };
+        }
+
+        connect();
+
+        window.addEventListener('beforeunload', () => {
+            if (eventSource) eventSource.close();
+        });
     })();
     </script>
 </body>

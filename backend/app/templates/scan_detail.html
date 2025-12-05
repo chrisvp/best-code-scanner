@@ -123,6 +123,10 @@
             class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-blue-500 text-blue-400">
             Findings ({{ scan.findings|length }})
         </button>
+        <button onclick="switchTab('drafts')" id="tab-drafts"
+            class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300">
+            Drafts ({{ draft_data|length }})
+        </button>
         <button onclick="switchTab('logs')" id="tab-logs"
             class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300">
             Logs ({{ logs|length }})
@@ -275,6 +279,168 @@
             </div>
         </div>
 
+        <!-- Drafts Tab -->
+        <div id="content-drafts" class="h-full flex-col hidden">
+            <!-- Drafts Filter Bar -->
+            <div class="px-6 py-3 border-b border-gray-700 bg-gray-900/30 shrink-0 flex items-center gap-4">
+                <select id="drafts-status-filter" onchange="filterDrafts()"
+                    class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none">
+                    <option value="all">All Status</option>
+                    <option value="verified">Verified</option>
+                    <option value="weakness">Weakness</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="pending">Pending</option>
+                </select>
+                <select id="drafts-severity-filter" onchange="filterDrafts()"
+                    class="bg-gray-800 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-gray-300 focus:outline-none">
+                    <option value="all">All Severity</option>
+                    <option value="Critical">Critical</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                </select>
+                <div class="flex-1"></div>
+                <span class="text-xs text-gray-500">{{ draft_data|length }} draft findings</span>
+            </div>
+
+            <!-- Drafts List -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-6">
+                {% if draft_data %}
+                <div class="space-y-3" id="drafts-list">
+                    {% for item in draft_data %}
+                    <div class="draft-item bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden"
+                         data-status="{{ item.draft.status }}"
+                         data-severity="{{ item.draft.severity }}">
+                        <div class="p-4">
+                            <!-- Header Row -->
+                            <div class="flex items-start justify-between mb-2">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <!-- Status Badge -->
+                                    <span class="text-xs px-2 py-0.5 rounded font-medium uppercase
+                                        {% if item.draft.status == 'verified' %}bg-green-500/20 text-green-400
+                                        {% elif item.draft.status == 'weakness' %}bg-yellow-500/20 text-yellow-400
+                                        {% elif item.draft.status == 'rejected' %}bg-red-500/20 text-red-400
+                                        {% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                                        {{ item.draft.status }}
+                                    </span>
+                                    <!-- Severity Badge -->
+                                    <span class="text-xs px-2 py-0.5 rounded font-medium
+                                        {% if item.draft.severity == 'Critical' %}bg-red-500/20 text-red-400
+                                        {% elif item.draft.severity == 'High' %}bg-orange-500/20 text-orange-400
+                                        {% elif item.draft.severity == 'Medium' %}bg-yellow-500/20 text-yellow-400
+                                        {% else %}bg-blue-500/20 text-blue-400{% endif %}">
+                                        {{ item.draft.severity }}
+                                    </span>
+                                    <!-- Type Badge -->
+                                    <span class="text-xs px-2 py-0.5 rounded bg-purple-900/40 text-purple-300 border border-purple-800/50">
+                                        {{ item.draft.vulnerability_type }}
+                                    </span>
+                                    <!-- Analyzer Badge -->
+                                    {% if item.draft.analyzer_name %}
+                                    <span class="text-xs px-2 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-800/50">
+                                        {{ item.draft.analyzer_name }}
+                                    </span>
+                                    {% endif %}
+                                </div>
+                                <!-- Vote Summary -->
+                                {% if item.total_votes > 0 %}
+                                <div class="flex items-center gap-2 text-xs">
+                                    {% if item.verify_count > 0 %}
+                                    <span class="text-green-400">{{ item.verify_count }} VERIFY</span>
+                                    {% endif %}
+                                    {% if item.weakness_count > 0 %}
+                                    <span class="text-yellow-400">{{ item.weakness_count }} WEAK</span>
+                                    {% endif %}
+                                    {% if item.reject_count > 0 %}
+                                    <span class="text-red-400">{{ item.reject_count }} REJECT</span>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            </div>
+
+                            <!-- Title and Location -->
+                            <h4 class="text-gray-200 text-sm font-medium mb-1">{{ item.draft.title }}</h4>
+                            <div class="text-xs text-gray-500 font-mono mb-2">
+                                {% if item.file_path %}
+                                <span class="text-blue-400">{{ item.file_path.split('/')[-1] }}</span>
+                                {% endif %}
+                                {% if item.draft.line_number %}
+                                <span class="text-gray-600">:</span>
+                                <span class="text-green-400">{{ item.draft.line_number }}</span>
+                                {% endif %}
+                            </div>
+
+                            <!-- Reason -->
+                            {% if item.draft.reason %}
+                            <p class="text-xs text-gray-400 mb-3">{{ item.draft.reason }}</p>
+                            {% endif %}
+
+                            <!-- Expandable Votes Section -->
+                            {% if item.votes %}
+                            <div class="mt-3 pt-3 border-t border-gray-700">
+                                <button onclick="toggleDraftVotes(this)" class="text-xs text-gray-400 hover:text-gray-300 flex items-center gap-1">
+                                    <svg class="w-3 h-3 transition-transform draft-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
+                                    View {{ item.votes|length }} verifier votes
+                                </button>
+                                <div class="draft-votes-detail hidden mt-2 space-y-2">
+                                    {% for vote in item.votes %}
+                                    <div class="bg-gray-900/50 rounded p-2 text-xs">
+                                        <div class="flex items-center justify-between mb-1">
+                                            <span class="text-gray-300 font-medium">{{ vote.model_name }}</span>
+                                            <div class="flex items-center gap-2">
+                                                <span class="px-1.5 py-0.5 rounded
+                                                    {% if vote.decision == 'VERIFY' %}bg-green-500/20 text-green-400
+                                                    {% elif vote.decision == 'WEAKNESS' %}bg-yellow-500/20 text-yellow-400
+                                                    {% elif vote.decision == 'REJECT' %}bg-red-500/20 text-red-400
+                                                    {% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                                                    {{ vote.decision }}
+                                                </span>
+                                                {% if vote.confidence %}
+                                                <span class="text-gray-500">{{ vote.confidence }}%</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        {% if vote.reasoning %}
+                                        <p class="text-gray-400 mt-1">{{ vote.reasoning[:300] }}{% if vote.reasoning|length > 300 %}...{% endif %}</p>
+                                        {% endif %}
+                                        {% if vote.attack_scenario %}
+                                        <p class="text-orange-400/80 mt-1 italic">Attack: {{ vote.attack_scenario[:200] }}{% if vote.attack_scenario|length > 200 %}...{% endif %}</p>
+                                        {% endif %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            <!-- Agent Session Link -->
+                            {% if item.agent_session %}
+                            <div class="mt-3 pt-3 border-t border-gray-700">
+                                <button onclick="showAgentLog({{ scan.id }}, {{ item.draft.id }})"
+                                    class="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1">
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                    </svg>
+                                    View Agent Log ({{ item.agent_session.total_steps }} steps, {{ item.agent_session.verdict or 'in progress' }})
+                                </button>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="flex flex-col items-center justify-center h-full text-gray-500">
+                    <svg class="w-12 h-12 mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    <p class="text-sm">No draft findings yet</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
         <!-- Logs Tab -->
         <div id="content-logs" class="h-full flex-col hidden">
             <!-- Logs Filter Bar -->
@@ -302,84 +468,10 @@
             <div class="flex-1 overflow-y-auto custom-scrollbar p-6"
                  {% if scan.status in ['running', 'paused'] %}
                  hx-get="/scan/{{ scan.id }}/logs-partial"
-                 hx-trigger="every 5s"
+                 hx-trigger="every 2s"
                  hx-swap="innerHTML"
                  {% endif %}>
-                {% if logs %}
-                <div class="space-y-2" id="logs-list">
-                    {% for log in logs %}
-                    <div class="log-item bg-gray-800/50 rounded-lg border border-gray-700 p-3 hover:border-gray-600 transition-colors cursor-pointer"
-                         data-phase="{{ log.phase }}"
-                         data-status="{{ log.status }}"
-                         onclick="toggleLogDetails(this)">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-3">
-                                <!-- Status indicator -->
-                                <div class="w-2 h-2 rounded-full
-                                    {% if log.status == 'completed' %}bg-green-500
-                                    {% elif log.status == 'pending' %}bg-blue-500 animate-pulse
-                                    {% elif log.status == 'failed' %}bg-red-500
-                                    {% else %}bg-gray-500{% endif %}">
-                                </div>
-                                <!-- Phase badge -->
-                                <span class="text-xs px-2 py-0.5 rounded font-medium
-                                    {% if log.phase == 'scanner' %}bg-blue-500/20 text-blue-400
-                                    {% elif log.phase == 'verifier' %}bg-purple-500/20 text-purple-400
-                                    {% elif log.phase == 'enricher' %}bg-green-500/20 text-green-400
-                                    {% else %}bg-gray-500/20 text-gray-400{% endif %}">
-                                    {{ log.phase }}
-                                </span>
-                                <!-- Model name -->
-                                <span class="text-sm text-gray-300">{{ log.model_name }}</span>
-                                {% if log.analyzer_name %}
-                                <span class="text-xs text-gray-500">/ {{ log.analyzer_name }}</span>
-                                {% endif %}
-                            </div>
-                            <div class="flex items-center gap-4 text-xs text-gray-500">
-                                {% if log.file_path %}
-                                <span class="font-mono truncate max-w-xs" title="{{ log.file_path }}">{{ log.file_path.split('/')[-1] }}</span>
-                                {% endif %}
-                                {% if log.findings_count > 0 %}
-                                <span class="text-green-400">{{ log.findings_count }} findings</span>
-                                {% endif %}
-                                {% if log.duration_ms %}
-                                <span>{{ (log.duration_ms / 1000)|round(1) }}s</span>
-                                {% endif %}
-                                {% if log.tokens_in and log.tokens_out %}
-                                <span>{{ log.tokens_in }}+{{ log.tokens_out }} tokens</span>
-                                {% endif %}
-                                <span>{{ log.created_at.strftime('%H:%M:%S') if log.created_at else '' }}</span>
-                                <svg class="w-4 h-4 transition-transform log-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                                </svg>
-                            </div>
-                        </div>
-                        <!-- Expandable details -->
-                        <div class="log-details hidden mt-3 pt-3 border-t border-gray-700">
-                            {% if log.parse_error %}
-                            <div class="mb-2 p-2 bg-red-950/30 border border-red-900/50 rounded text-xs text-red-400">
-                                <strong>Parse Error:</strong> {{ log.parse_error }}
-                            </div>
-                            {% endif %}
-                            {% if log.raw_response %}
-                            <div class="bg-gray-900 rounded p-3 max-h-64 overflow-auto custom-scrollbar">
-                                <pre class="text-xs text-gray-400 whitespace-pre-wrap font-mono">{{ log.raw_response[:2000] }}{% if log.raw_response|length > 2000 %}...{% endif %}</pre>
-                            </div>
-                            {% else %}
-                            <div class="text-xs text-gray-500 italic">No response recorded</div>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="flex flex-col items-center justify-center h-full text-gray-500">
-                    <svg class="w-12 h-12 mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                    </svg>
-                    <p class="text-sm">No LLM requests logged yet</p>
-                </div>
-                {% endif %}
+                {% include "partials/scan_logs.html" %}
             </div>
         </div>
 
@@ -484,6 +576,29 @@
     </div>
 </div>
 
+<!-- Agent Log Modal -->
+<div id="agent-log-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg p-6 w-full max-w-3xl mx-4 shadow-xl border border-gray-700 max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center mb-4 shrink-0">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                </svg>
+                Agent Verification Log
+            </h2>
+            <button onclick="hideAgentLogModal()" class="text-gray-400 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </button>
+        </div>
+
+        <div id="agent-log-content" class="flex-1 overflow-y-auto bg-gray-900 rounded-lg p-4 font-mono text-xs text-gray-300 whitespace-pre-wrap custom-scrollbar">
+            Loading...
+        </div>
+    </div>
+</div>
+
 <style>
     .severity-pill.active {
         ring: 2px;
@@ -496,6 +611,10 @@
     #pill-Low.active { background: rgb(30, 58, 138); border-color: rgb(37, 99, 235); }
 
     .log-item.expanded .log-chevron {
+        transform: rotate(180deg);
+    }
+
+    .draft-item.expanded .draft-chevron {
         transform: rotate(180deg);
     }
 </style>
@@ -569,6 +688,58 @@
         const details = element.querySelector('.log-details');
         element.classList.toggle('expanded');
         details.classList.toggle('hidden');
+    }
+
+    // Draft filtering
+    function filterDrafts() {
+        const status = document.getElementById('drafts-status-filter').value;
+        const severity = document.getElementById('drafts-severity-filter').value;
+
+        document.querySelectorAll('.draft-item').forEach(item => {
+            const itemStatus = item.dataset.status;
+            const itemSeverity = item.dataset.severity;
+
+            const matchesStatus = status === 'all' || itemStatus === status;
+            const matchesSeverity = severity === 'all' || itemSeverity === severity;
+
+            item.style.display = (matchesStatus && matchesSeverity) ? '' : 'none';
+        });
+    }
+
+    // Toggle draft votes detail
+    function toggleDraftVotes(button) {
+        const parent = button.closest('.draft-item');
+        const votesDetail = parent.querySelector('.draft-votes-detail');
+        parent.classList.toggle('expanded');
+        votesDetail.classList.toggle('hidden');
+    }
+
+    // Show agent log modal
+    async function showAgentLog(scanId, draftId) {
+        const modal = document.getElementById('agent-log-modal');
+        const content = document.getElementById('agent-log-content');
+
+        modal.classList.remove('hidden');
+        content.textContent = 'Loading...';
+
+        try {
+            const response = await fetch(`/scan/${scanId}/draft/${draftId}/agent-log`);
+            const data = await response.json();
+
+            if (data.log) {
+                content.textContent = data.log;
+            } else if (data.error) {
+                content.textContent = `Error: ${data.error}`;
+            } else {
+                content.textContent = 'No agent log available';
+            }
+        } catch (err) {
+            content.textContent = `Error loading log: ${err.message}`;
+        }
+    }
+
+    function hideAgentLogModal() {
+        document.getElementById('agent-log-modal').classList.add('hidden');
     }
 
     // Scan actions

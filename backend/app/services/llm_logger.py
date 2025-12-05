@@ -52,6 +52,33 @@ class LLMLogger:
         """Disable logging."""
         self._enabled = False
 
+    def set_running(self, log_id: int) -> bool:
+        """
+        Update a pending log entry to running status.
+
+        Returns True if successful, False otherwise.
+        """
+        if not self._enabled or not log_id:
+            return False
+
+        try:
+            db = SessionLocal()
+            try:
+                log_entry = db.query(LLMRequestLog).filter(LLMRequestLog.id == log_id).first()
+                if not log_entry:
+                    return False
+
+                log_entry.status = "running"
+                db.commit()
+                return True
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            print(f"[LLMLogger] Failed to set running status: {e}")
+            return False
+
     def _truncate(self, text: str, max_len: int = 50000) -> str:
         """Truncate text keeping first and last parts."""
         if not text or len(text) <= max_len:

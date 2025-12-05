@@ -261,6 +261,7 @@ class ProfileAwareScanner:
                         for f in findings:
                             if self._validate_finding(f, chunk):
                                 f['_analyzer'] = analyzer.name
+                                f['_analyzer_id'] = analyzer.id
                                 f['_model'] = pool.config.name
                                 valid_findings.append(f)
 

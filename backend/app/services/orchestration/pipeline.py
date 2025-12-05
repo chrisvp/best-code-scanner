@@ -684,9 +684,12 @@ class ScanPipeline:
                         # Track source - either model list or analyzer name
                         if use_profile_scanning:
                             analyzer_name = f.get('_analyzer', 'unknown')
+                            analyzer_id = f.get('_analyzer_id')
                             model_name = f.get('_model', 'unknown')
                             source_info = [f"{analyzer_name}:{model_name}"]
                         else:
+                            analyzer_name = None
+                            analyzer_id = None
                             source_info = f.get('_models')
 
                         draft = DraftFinding(
@@ -701,6 +704,8 @@ class ScanPipeline:
                             auto_detected=f.get('auto_detected', False),
                             initial_votes=f.get('_votes', f.get('votes', 1)),
                             source_models=source_info,  # Track which models/analyzers detected this
+                            analyzer_id=analyzer_id,  # Link to ProfileAnalyzer
+                            analyzer_name=analyzer_name,  # Denormalized for display
                             dedup_key=dedup_key,
                             status="pending"
                         )
@@ -1072,6 +1077,7 @@ class ScanPipeline:
                     finding = Finding(
                         scan_id=self.scan_id,
                         verified_id=v.id,
+                        draft_id=v.draft_id,  # Direct link to original draft for traceability
                         file_path=scan_file.file_path if scan_file else "unknown",
                         line_number=draft.line_number if draft else 0,
                         severity=normalize_severity(v.adjusted_severity or result.get('severity', 'Medium')),
