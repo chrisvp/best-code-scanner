@@ -5,14 +5,12 @@ Enables agentic verification and interactive code exploration.
 import json
 import re
 import asyncio
-import httpx
 from typing import List, Dict, Optional, Any, Callable, AsyncGenerator, Literal
 from dataclasses import dataclass, field
 from enum import Enum
 
 from app.services.intelligence.codebase_tools import CodebaseTools, ToolResult
 from app.services.orchestration.model_orchestrator import ModelPool
-from app.services.token_utils import calculate_max_tokens, is_max_tokens_error, calculate_retry_max_tokens
 
 
 def get_openai_tools_schema(tools: CodebaseTools) -> List[Dict[str, Any]]:
@@ -251,77 +249,13 @@ Always output ONLY valid JSON with no additional text before or after.
         Returns:
             Dict with 'content' (text response) and 'tool_calls' (list of tool calls if any)
         """
-        config = self.model_pool.config
-        base_url = config.base_url.rstrip('/') if config.base_url else "http://localhost:8000/v1"
-        api_key = config.api_key or "empty"
-
-        # Calculate effective max_tokens
-        total_content = "".join(m.get("content", "") or "" for m in messages)
-        if retry_max_tokens is not None:
-            effective_max_tokens = retry_max_tokens
-        else:
-            max_context = getattr(config, 'max_context_length', 0) or 0
-            effective_max_tokens = calculate_max_tokens(
-                prompt=total_content,
-                requested_max_tokens=config.max_tokens or 4096,
-                max_context_length=max_context
-            )
-
-        # Construct request payload
-        payload = {
-            "model": config.name,
-            "messages": messages,
-            "max_tokens": effective_max_tokens,
-            "temperature": 0.1,
-            "tools": self.openai_tools,
-            "tool_choice": "auto"
-        }
-
-        # Dynamic timeout: base 240s + 2s per 500 chars of conversation, max 1200s (20 min)
-        total_chars = len(total_content)
-        dynamic_timeout = min(1200.0, 240.0 + (total_chars / 250))
-
-        async with httpx.AsyncClient(verify=False, timeout=dynamic_timeout) as client:
-            response = await client.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json=payload
-            )
-
-            # Check for max_tokens error and retry
-            if response.status_code >= 400:
-                try:
-                    error_body = response.json()
-                    error_detail = error_body.get("error", {})
-                    if isinstance(error_detail, dict):
-                        error_message = error_detail.get("message", str(error_body))
-                    else:
-                        error_message = str(error_detail) or str(error_body)
-                except Exception:
-                    error_message = response.text[:500]
-
-                # Check if this is a max_tokens error that we can retry
-                if retry_max_tokens is None and is_max_tokens_error(error_message):
-                    new_max_tokens = calculate_retry_max_tokens(error_message)
-                    if new_max_tokens and new_max_tokens > 100:
-                        print(f"[AGENT RETRY] max_tokens error, retrying with {new_max_tokens}")
-                        return await self._call_llm_with_tools(messages, retry_max_tokens=new_max_tokens)
-
-                response.raise_for_status()
-
-            data = response.json()
-
-        # Extract response
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-
-        return {
-            "content": message.get("content", ""),
-            "tool_calls": message.get("tool_calls", [])
-        }
+        # Use centralized ModelPool.call_with_tools which handles timeouts, retries, and semaphores
+        return await self.model_pool.call_with_tools(
+            messages=messages,
+            tools=self.openai_tools,
+            tool_choice="auto",
+            retry_max_tokens=retry_max_tokens
+        )
 
     async def run(self, task: str, context: str = "") -> AgentResult:
         """

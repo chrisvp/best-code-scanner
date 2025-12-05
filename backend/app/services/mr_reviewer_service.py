@@ -1189,8 +1189,14 @@ class MRReviewerService:
                     self.db.flush()
                     review.scan_id = scan.id
 
-                    from app.services.scan_engine import scan_engine
-                    await scan_engine.start_scan(scan.id, temp_dir, is_git=False)
+                    # Create config and run pipeline
+                    from app.services.orchestration.pipeline import ScanPipeline
+                    from app.models.scanner_models import ScanConfig
+                    config = ScanConfig(scan_id=scan.id, target_path=temp_dir)
+                    self.db.add(config)
+                    self.db.flush()
+                    pipeline = ScanPipeline(scan.id, config, self.db)
+                    await pipeline.run()
                     review.scan_completed_at = datetime.now().astimezone()
                 finally:
                     shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1244,8 +1250,14 @@ class MRReviewerService:
                     review.scan_id = scan.id
 
                     # Run the scan (simplified - would integrate with full scan engine)
-                    from app.services.scan_engine import scan_engine
-                    await scan_engine.start_scan(scan.id, temp_dir, is_git=False)
+                    # Create config and run pipeline
+                    from app.services.orchestration.pipeline import ScanPipeline
+                    from app.models.scanner_models import ScanConfig
+                    config = ScanConfig(scan_id=scan.id, target_path=temp_dir)
+                    self.db.add(config)
+                    self.db.flush()
+                    pipeline = ScanPipeline(scan.id, config, self.db)
+                    await pipeline.run()
                     review.scan_completed_at = datetime.now().astimezone()
 
                 finally:

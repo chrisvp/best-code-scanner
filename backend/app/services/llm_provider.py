@@ -112,4 +112,88 @@ class LLMProvider:
         finally:
             await client.close()
 
+    async def chat_completion_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.1,
+        tool_choice: str = "auto",
+        _retry_max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Make a chat completion request with tool calling support.
+
+        Args:
+            messages: List of message dicts (can include tool results)
+            tools: List of tool definitions in OpenAI format
+            model: Model to use (defaults to settings.LLM_MODEL)
+            max_tokens: Maximum tokens in response
+            temperature: Sampling temperature
+            tool_choice: Tool choice mode ("auto", "none", or specific tool)
+
+        Returns:
+            Dict with 'content' and 'tool_calls' keys
+        """
+        client = self.get_client()
+        model = model or self.default_model
+        effective_max_tokens = _retry_max_tokens if _retry_max_tokens is not None else max_tokens
+
+        try:
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    max_tokens=effective_max_tokens,
+                    temperature=temperature,
+                )
+            except BadRequestError as e:
+                error_message = str(e)
+                if _retry_max_tokens is None and is_max_tokens_error(error_message):
+                    new_max_tokens = calculate_retry_max_tokens(error_message)
+                    if new_max_tokens and new_max_tokens > 100:
+                        print(f"[LLM RETRY] max_tokens error, retrying with {new_max_tokens}")
+                        await client.close()
+                        return await self.chat_completion_with_tools(
+                            messages=messages,
+                            tools=tools,
+                            model=model,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            tool_choice=tool_choice,
+                            _retry_max_tokens=new_max_tokens
+                        )
+                raise
+
+            choice = response.choices[0] if response.choices else None
+            if not choice:
+                return {"content": "", "tool_calls": []}
+
+            message = choice.message
+            tool_calls = []
+            if message.tool_calls:
+                for tc in message.tool_calls:
+                    tool_calls.append({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    })
+
+            return {
+                "content": message.content or "",
+                "tool_calls": tool_calls,
+                "usage": {
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                }
+            }
+        finally:
+            await client.close()
+
 llm_provider = LLMProvider()

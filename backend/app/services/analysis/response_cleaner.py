@@ -152,16 +152,14 @@ class ResponseCleaner:
             return None
 
         try:
-            client = llm_provider.get_client()
-
-            response = await client.chat.completions.create(
-                model=model.name,
+            # Use centralized chat_completion which includes retry logic
+            result = await llm_provider.chat_completion(
                 messages=[{"role": "user", "content": prompt}],
+                model=model.name,
                 max_tokens=model.max_tokens or 2048,
-                temperature=0.1  # Low temperature for consistent formatting
             )
 
-            cleaned = response.choices[0].message.content
+            cleaned = result.get("content", "")
             if cleaned:
                 logger.debug(f"Cleanup model reformatted response ({len(cleaned)} chars)")
                 return cleaned.strip()

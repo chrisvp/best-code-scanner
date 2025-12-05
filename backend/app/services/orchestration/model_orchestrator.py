@@ -72,6 +72,102 @@ class ModelPool:
             self._log_context = log_context
         return await self._send_batch(prompts, output_mode=output_mode, json_schema=json_schema)
 
+    async def call_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        tool_choice: str = "auto",
+        retry_max_tokens: int = None
+    ) -> Dict[str, Any]:
+        """Call the model with native tool calling support.
+
+        Args:
+            messages: OpenAI-format messages list
+            tools: List of tool definitions in OpenAI format
+            tool_choice: Tool choice mode ("auto", "none", or specific tool)
+            retry_max_tokens: Override max_tokens for retry (internal use)
+
+        Returns:
+            Dict with 'content' (text response) and 'tool_calls' (list of tool calls)
+        """
+        base_url = self.config.base_url or settings.LLM_BASE_URL
+        api_key = self.config.api_key or settings.LLM_API_KEY
+
+        if not base_url:
+            return {"content": "", "tool_calls": [], "error": f"Model '{self.config.name}' has no base_url configured"}
+
+        base = base_url.rstrip('/')
+        if base.endswith('/v1'):
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+
+        # Calculate effective max_tokens
+        total_content = "".join(m.get("content", "") or "" for m in messages)
+        if retry_max_tokens is not None:
+            effective_max_tokens = retry_max_tokens
+        else:
+            max_context = getattr(self.config, 'max_context_length', 0) or 0
+            effective_max_tokens = calculate_max_tokens(
+                prompt=total_content,
+                requested_max_tokens=self.config.max_tokens or 4096,
+                max_context_length=max_context
+            )
+
+        payload = {
+            "model": self.config.name,
+            "messages": messages,
+            "max_tokens": effective_max_tokens,
+            "temperature": 0.1,
+            "tools": tools,
+            "tool_choice": tool_choice
+        }
+
+        # Dynamic timeout: base 300s + 1s per 200 chars, max 3600s (1 hour)
+        total_chars = len(total_content)
+        dynamic_timeout = min(3600.0, 300.0 + (total_chars / 200))
+
+        async with self.semaphore:
+            async with httpx.AsyncClient(verify=False, timeout=dynamic_timeout) as client:
+                response = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=payload
+                )
+
+                # Check for max_tokens error and retry
+                if response.status_code >= 400:
+                    try:
+                        error_body = response.json()
+                        error_detail = error_body.get("error", {})
+                        if isinstance(error_detail, dict):
+                            error_message = error_detail.get("message", str(error_body))
+                        else:
+                            error_message = str(error_detail) or str(error_body)
+                    except Exception:
+                        error_message = response.text[:500]
+
+                    if retry_max_tokens is None and is_max_tokens_error(error_message):
+                        new_max_tokens = calculate_retry_max_tokens(error_message)
+                        if new_max_tokens and new_max_tokens > 100:
+                            print(f"[LLM RETRY] {self.config.name} tool call max_tokens error, retrying with {new_max_tokens}")
+                            return await self.call_with_tools(messages, tools, tool_choice, retry_max_tokens=new_max_tokens)
+
+                    response.raise_for_status()
+
+                data = response.json()
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {})
+
+        return {
+            "content": message.get("content", ""),
+            "tool_calls": message.get("tool_calls", [])
+        }
+
     def set_log_context(self, **kwargs):
         """Set logging context for subsequent calls (scan_id, phase, analyzer_name, etc.)"""
         self._log_context.update(kwargs)

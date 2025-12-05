@@ -328,38 +328,18 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
         }
 
     async def _call_with_tools(self, messages: List[Dict], model: Optional[str]) -> Dict[str, Any]:
-        """Call LLM with tool definitions"""
-        client = llm_provider.get_client()
+        """Call LLM with tool definitions using centralized provider"""
         model_name = model or llm_provider.default_model
 
         try:
-            response = await client.chat.completions.create(
-                model=model_name,
+            # Use centralized chat_completion_with_tools which handles retries
+            return await llm_provider.chat_completion_with_tools(
                 messages=messages,
                 tools=self.AGENT_TOOLS,
-                tool_choice="auto",
-                max_tokens=4096
+                model=model_name,
+                max_tokens=4096,
+                tool_choice="auto"
             )
-
-            choice = response.choices[0] if response.choices else None
-            if not choice:
-                return {"content": "", "tool_calls": []}
-
-            message = choice.message
-            return {
-                "content": message.content or "",
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    }
-                    for tc in (message.tool_calls or [])
-                ]
-            }
         except Exception as e:
             # Fall back to non-tool call if tools not supported
             result = await llm_provider.chat_completion(
@@ -368,8 +348,6 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
                 max_tokens=4096
             )
             return {"content": result.get("content", ""), "tool_calls": []}
-        finally:
-            await client.close()
 
     async def _execute_tool(self, tool_name: str, args: Dict) -> str:
         """Execute a tool and return the result"""

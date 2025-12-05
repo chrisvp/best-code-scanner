@@ -1505,7 +1505,6 @@ async def test_prompt(
 
 # Keep existing endpoints
 from fastapi.responses import StreamingResponse
-# from app.services.report_service import report_service  # TODO: install xhtml2pdf
 
 
 @router.get("/finding/{finding_id}/code-context")
