@@ -38,7 +38,97 @@ An LLM-powered security vulnerability scanner that analyzes code repositories us
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Three-Phase Pipeline
+## Pipeline Deep Dive
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           PHASE 1: DRAFT SCANNING                           │
+│                         (Fast Initial Identification)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Code Files → Chunking → Multiple Analyzers (parallel) → Draft Findings   │
+│                                                                             │
+│   • Files split into chunks based on profile analyzer settings              │
+│   • Each analyzer model scans chunks in parallel                            │
+│   • Uses lightweight marker format (*DRAFT:, *TYPE:, *SEVERITY:, etc.)      │
+│   • Findings aggregated by signature (deduplication)                        │
+│   • source_models tracks which models detected each finding                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        PHASE 2: VERIFICATION VOTING                         │
+│                      (Multi-Model Consensus Filtering)                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Draft Finding → Context Retrieval → N Verifier Models → Vote Tally       │
+│                                                                             │
+│   • AST parser (tree-sitter) extracts code context around finding           │
+│   • Each verifier model independently votes: TRUE_POSITIVE / FALSE_POSITIVE │
+│   • Votes include confidence scores (0-100) and reasoning                   │
+│   • Configurable threshold (e.g., 2/3 majority) to pass                     │
+│   • Findings below threshold are rejected as false positives                │
+│                                                                             │
+│   Format: *VOTE: TRUE_POSITIVE                                              │
+│           *CONFIDENCE: 85                                                   │
+│           *REASONING: User input flows to strcpy without bounds check       │
+│           *END_VOTE                                                         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       PHASE 2b: AGENT VERIFICATION                          │
+│                    (Deep Agentic Analysis - Optional)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Verified Finding → Agent Runtime → Tool Calls → Deep Analysis             │
+│                                                                             │
+│   • Agent has access to codebase tools:                                     │
+│     - read_file(path) - Read any file                                       │
+│     - search_code(query) - Search for patterns                              │
+│     - list_files(dir) - Explore directory structure                         │
+│     - get_function_context(name) - Get full function with AST               │
+│                                                                             │
+│   • Agent explores codebase to trace data flow                              │
+│   • Can follow imports, find callers/callees, check sanitization            │
+│   • Returns: verdict, confidence, attack_path, reasoning                    │
+│   • Execution trace logged for transparency                                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          PHASE 3: ENRICHMENT                                │
+│                    (Full Security Report Generation)                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Verified Finding → Enrichment Model → Complete Security Report            │
+│                                                                             │
+│   Output includes:                                                          │
+│   • *FINDING: Descriptive title                                             │
+│   • *CATEGORY: CWE-XXX classification                                       │
+│   • *SEVERITY: Critical/High/Medium/Low                                     │
+│   • *CVSS: Numeric score (e.g., 8.1)                                        │
+│   • *IMPACTED_CODE: The vulnerable code section                             │
+│   • *VULNERABILITY_DETAILS: Deep technical explanation                      │
+│   • *PROOF_OF_CONCEPT: How to exploit it                                    │
+│   • *CORRECTED_CODE: Fixed version of the code                              │
+│   • *REMEDIATION_STEPS: How to fix it                                       │
+│   • *REFERENCES: CVEs, documentation links                                  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Principles
+
+1. **Multi-Model Voting** - No single model decides; consensus reduces false positives
+2. **Streaming LLM Calls** - All calls use SSE streaming (no timeouts)
+3. **Single Source of Truth** - All LLM calls flow through `ModelPool`
+4. **Code Intelligence** - Tree-sitter AST parsing for accurate context retrieval
+5. **Configurable Profiles** - Each scan profile can have different analyzers, verifiers, thresholds
+6. **Per-Model Concurrency** - Global queue manager prevents overloading any single model
 
 ### Phase 1: Draft Scanning
 
@@ -46,30 +136,25 @@ An LLM-powered security vulnerability scanner that analyzes code repositories us
 
 **Process**:
 1. Code is chunked into segments (configurable `chunk_size`, default 3000 tokens)
-2. Each chunk is sent to analyzer models
+2. Each chunk is sent to analyzer models in parallel
 3. Multi-model mode: All analyzers scan each chunk, findings are deduplicated
 4. Single-model mode: Primary analyzer only
 5. Findings are stored as `DraftFinding` with initial vote counts
 
-**Output Format** (lightweight JSON):
-```json
-{
-  "findings": [
-    {
-      "title": "Buffer Overflow",
-      "type": "CWE-120",
-      "severity": "High",
-      "line": 42,
-      "snippet": "strcpy(buffer, input);",
-      "reason": "No bounds checking on input"
-    }
-  ]
-}
+**Output Format** (marker format):
+```
+*DRAFT: Buffer Overflow in parse_input
+*TYPE: CWE-120
+*SEVERITY: High
+*LINE: 42
+*SNIPPET: strcpy(buffer, input);
+*REASON: No bounds checking on input
+*END_DRAFT
 ```
 
 **Deduplication**: Drafts with same `file + line + type` are merged, votes combined
 
-### Phase 2: Verification
+### Phase 2: Verification Voting
 
 **Purpose**: Context-aware validation to filter false positives
 
@@ -79,14 +164,24 @@ An LLM-powered security vulnerability scanner that analyzes code repositories us
    - Function definitions
    - Import statements
    - Call graph relationships
-3. Multiple verifier models vote: `VERIFY`, `WEAKNESS`, or `REJECT`
+3. Multiple verifier models vote independently
 4. Majority vote determines outcome
 5. Verified findings get `VerifiedFinding` record with confidence scores
 
 **Voting Logic**:
-- `VERIFY`: Exploitable vulnerability
-- `WEAKNESS`: Code smell but not exploitable
-- `REJECT`: False positive
+- `TRUE_POSITIVE`: Exploitable vulnerability
+- `FALSE_POSITIVE`: Not actually vulnerable
+
+### Phase 2b: Agent Verification (Optional)
+
+**Purpose**: Deep analysis using agentic tool-calling approach
+
+**Process**:
+1. Agent receives finding context and codebase access
+2. Uses tools to explore: `read_file`, `search_code`, `list_files`, `get_function_context`
+3. Traces data flow, checks for sanitization, follows call chains
+4. Returns verdict with detailed reasoning and attack path
+5. Execution trace logged for transparency
 
 ### Phase 3: Enrichment
 
