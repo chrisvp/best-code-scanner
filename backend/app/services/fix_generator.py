@@ -2,11 +2,12 @@
 Fix generation service with Quick Fix and Agent Fix modes.
 
 Quick Fix: Single-shot LLM call with full file context
-Agent Fix: Multi-turn agentic approach with tool use
+Agent Fix: Multi-turn agentic approach with tool use, saves diffs to files
 """
 import os
 import re
 import json
+import difflib
 from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
 
@@ -17,7 +18,15 @@ from app.services.llm_provider import llm_provider
 class FixGenerator:
     """Generates security vulnerability fixes using LLM"""
 
-    QUICK_FIX_PROMPT = """You are a security expert fixing a vulnerability. Generate the corrected code.
+    def __init__(self, db: Session, step_callback=None, finding_id: int = None, model_name: str = None):
+        self.db = db
+        self.scan_root = None  # Root directory of the scanned code
+        self.step_callback = step_callback  # Optional callback for streaming progress
+        self.finding_id = finding_id  # For naming diff files
+        self.model_name = model_name  # For naming diff files
+        self.diff_file_path = None  # Path to saved diff file (set after save_fix)
+
+    QUICK_FIX_PROMPT = """You are a security expert fixing a vulnerability. Generate a unified diff showing the fix.
 
 === VULNERABILITY ===
 {title}
@@ -36,36 +45,82 @@ Language: {language}
 === VULNERABILITY DETAILS ===
 {vulnerability_details}
 
-=== INSTRUCTIONS ===
-1. Analyze the vulnerable code in context of the full file
-2. Generate ONLY the corrected code that fixes the vulnerability
-3. Maintain the same coding style and conventions
-4. Include necessary imports if adding new dependencies
-5. Output only the fixed code, no explanations
+=== OUTPUT FORMAT ===
+Generate a unified diff showing the fix. Your response must be:
+- Standard unified diff format (like `diff -u` or `git diff` output)
+- Start with --- a/{file_path} and +++ b/{file_path} headers
+- Use @@ -line,count +line,count @@ hunk headers with correct line numbers
+- Lines starting with - are removed, + are added, space are context
+- Include 3 lines of context before and after changes
+- NO explanations, commentary, or markdown - ONLY the raw diff
+- Do NOT wrap in code blocks
 
-Provide the corrected code:"""
+Example format:
+--- a/path/to/file.c
++++ b/path/to/file.c
+@@ -40,7 +40,7 @@
+ context line before
+ context line before
+ context line before
+-vulnerable line to remove
++fixed line to add
+ context line after
+ context line after
+ context line after
 
-    AGENT_SYSTEM_PROMPT = """You are a security expert tasked with fixing a vulnerability. You have tools to explore the codebase.
+Output the unified diff now:"""
 
-Your goal: Generate an accurate, production-ready fix for the security vulnerability.
+    AGENT_SYSTEM_PROMPT = """You are a security expert fixing a vulnerability. You MUST use tools to read files and save your fix as a DIFF.
 
-TOOLS AVAILABLE:
-- read_file(path): Read a file's contents
-- search_code(query): Search for code patterns in the codebase
-- list_files(directory): List files in a directory
+TOOLS:
+- read_file(path): Read file contents
+- search_code(query): Search for patterns
+- list_files(directory): List directory contents
+- save_fix(file_path, diff): Save your fix as a unified diff - REQUIRED to complete
 
-APPROACH:
-1. First understand the vulnerability and its context
-2. Use tools to gather necessary context (imports, related functions, type definitions)
-3. Generate a fix that integrates properly with the codebase
-4. Verify the fix addresses the root cause, not just the symptom
+WORKFLOW:
+1. Call read_file to understand the vulnerable code and surrounding context
+2. Optionally use search_code to understand related code
+3. Call save_fix with a UNIFIED DIFF showing your fix
 
-When you have enough context, output your final fix in this format:
-```fix
-<your corrected code here>
+UNIFIED DIFF FORMAT for save_fix:
+The diff parameter must be a standard unified diff (like git diff output):
+```
+--- a/filename
++++ b/filename
+@@ -LINE,COUNT +LINE,COUNT @@
+ context line (unchanged)
+ context line (unchanged)
+-old vulnerable line (to remove)
++new fixed line (to add)
+ context line (unchanged)
 ```
 
-Start by analyzing what context you need."""
+RULES:
+- Lines starting with space are context (unchanged)
+- Lines starting with - are removed
+- Lines starting with + are added
+- Include 3 lines of context before and after changes
+- Use correct line numbers in the @@ header
+- Only include the changed sections, not the entire file
+
+EXAMPLE: To fix a buffer overflow on line 42:
+```
+--- a/file.c
++++ b/file.c
+@@ -39,7 +39,7 @@
+     char buffer[256];
+     char *input = get_user_input();
+
+-    strcpy(buffer, input);
++    strncpy(buffer, input, sizeof(buffer) - 1);
++    buffer[sizeof(buffer) - 1] = '\\0';
+
+     process(buffer);
+ }
+```
+
+Start by reading the vulnerable file to understand the context."""
 
     AGENT_TOOLS = [
         {
@@ -118,12 +173,30 @@ Start by analyzing what context you need."""
                     "required": ["directory"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "save_fix",
+                "description": "Save your security fix as a unified diff. The diff will be saved to a .diff file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": "Path to the file being fixed (same path you read)"
+                        },
+                        "diff": {
+                            "type": "string",
+                            "description": "Unified diff showing your fix (standard diff format with --- +++ @@ headers)"
+                        }
+                    },
+                    "required": ["file_path", "diff"]
+                }
+            }
         }
     ]
 
-    def __init__(self, db: Session):
-        self.db = db
-        self.scan_root = None  # Root directory of the scanned code
 
     def _get_file_context(self, file_path: str, line_number: int, context_lines: int = 50) -> str:
         """Get file content with context around the vulnerable line"""
@@ -276,6 +349,20 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
         reasoning_steps = []
         final_fix = ""
 
+        def emit_step(iteration: int, step_type: str, tool_name: str = None, tool_args: str = None,
+                      thought: str = None, result_preview: str = None, is_final: bool = False):
+            """Emit a step event for streaming progress"""
+            if self.step_callback:
+                self.step_callback({
+                    'step': iteration + 1,
+                    'type': step_type,
+                    'tool_name': tool_name,
+                    'tool_args': tool_args,
+                    'thought': thought,
+                    'result_preview': result_preview[:200] if result_preview else None,
+                    'is_final': is_final
+                })
+
         for iteration in range(max_iterations):
             # Call LLM with tools
             result = await self._call_with_tools(messages, model)
@@ -283,11 +370,10 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
             content = result.get("content", "")
             tool_calls = result.get("tool_calls", [])
 
-            # Check if we have a final fix
-            fix_match = re.search(r'```fix\s*([\s\S]*?)```', content)
-            if fix_match:
-                final_fix = fix_match.group(1).strip()
-                reasoning_steps.append(f"Iteration {iteration + 1}: Generated final fix")
+            # Check if save_fix was called (diff_file_path will be set)
+            if self.diff_file_path:
+                reasoning_steps.append(f"Iteration {iteration + 1}: Fix saved via save_fix tool")
+                emit_step(iteration, 'final_answer', thought="Fix saved successfully", is_final=True)
                 break
 
             # Process tool calls
@@ -296,35 +382,50 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
 
                 for tool_call in tool_calls:
                     tool_name = tool_call.get("function", {}).get("name", "")
-                    tool_args = json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+                    tool_args_raw = tool_call.get("function", {}).get("arguments", "{}")
+                    tool_args = json.loads(tool_args_raw)
+
+                    # Emit tool call step
+                    emit_step(iteration, 'tool_call', tool_name=tool_name,
+                             tool_args=tool_args_raw, thought=content[:300])
+
                     tool_result = await self._execute_tool(tool_name, tool_args)
 
                     reasoning_steps.append(f"Iteration {iteration + 1}: Called {tool_name}({tool_args})")
+
+                    # Emit tool result step
+                    emit_step(iteration, 'tool_result', tool_name=tool_name,
+                             result_preview=tool_result)
 
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.get("id", ""),
                         "content": tool_result
                     })
+
+                    # Check if save_fix was just called successfully
+                    if tool_name == "save_fix" and "Fix saved successfully" in tool_result:
+                        emit_step(iteration, 'final_answer', thought="Fix saved successfully", is_final=True)
+                        break
             else:
-                # No tools called and no fix - add a nudge
+                # No tools called - nudge to use save_fix
                 messages.append({"role": "assistant", "content": content})
                 messages.append({
                     "role": "user",
-                    "content": "Please either use a tool to gather more context, or output your fix in ```fix``` blocks."
+                    "content": "You must call save_fix with the complete fixed file content to submit your fix. Read the file first if you haven't, then call save_fix with the entire file content including your fix."
                 })
-                reasoning_steps.append(f"Iteration {iteration + 1}: Prompted for action")
+                reasoning_steps.append(f"Iteration {iteration + 1}: Prompted to use save_fix")
+                emit_step(iteration, 'thinking', thought=content[:300])
 
-        # If we didn't get a fix, try to extract any code from the last response
-        if not final_fix and content:
-            code_match = re.search(r'```(?:\w+)?\s*([\s\S]*?)```', content)
-            if code_match:
-                final_fix = code_match.group(1).strip()
+            # Exit if fix was saved
+            if self.diff_file_path:
+                break
 
         return {
-            "fix": self._clean_fix_response(final_fix),
+            "fix": final_fix,  # Will be empty if save_fix was used (which is expected)
             "reasoning": reasoning_steps,
-            "iterations": len(reasoning_steps)
+            "iterations": len(reasoning_steps),
+            "diff_file": self.diff_file_path  # Path to saved diff file (if save_fix was used)
         }
 
     async def _call_with_tools(self, messages: List[Dict], model: Optional[str]) -> Dict[str, Any]:
@@ -358,6 +459,8 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
                 return self._tool_search_code(args.get("query", ""))
             elif tool_name == "list_files":
                 return self._tool_list_files(args.get("directory", ""))
+            elif tool_name == "save_fix":
+                return await self._tool_save_fix(args.get("file_path", ""), args.get("diff", ""))
             else:
                 return f"Unknown tool: {tool_name}"
         except Exception as e:
@@ -454,6 +557,112 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
             return "\n".join(sorted(entries)[:50])
         except Exception as e:
             return f"Error listing directory: {e}"
+
+    async def _tool_save_fix(self, file_path: str, diff_content: str) -> str:
+        """Save a unified diff directly to a .diff file.
+
+        File naming: {original_file}.fix.{findingId}.{model}.diff
+        If diff format is invalid, attempts cleanup using the cleanup model.
+        """
+        # Resolve the file path
+        if self.scan_root and not os.path.isabs(file_path):
+            full_path = os.path.join(self.scan_root, file_path)
+        else:
+            full_path = file_path
+
+        if not os.path.exists(full_path):
+            return f"Error: Original file not found: {file_path}"
+
+        if not diff_content or not diff_content.strip():
+            return "Error: Empty diff provided"
+
+        try:
+            # Basic validation - check for diff markers
+            has_diff_markers = ('---' in diff_content and '+++' in diff_content) or '@@' in diff_content
+
+            if not has_diff_markers:
+                # Try cleanup model to fix the format
+                cleaned = await self._cleanup_diff_format(diff_content, file_path)
+                if cleaned:
+                    diff_content = cleaned
+                    has_diff_markers = ('---' in diff_content and '+++' in diff_content) or '@@' in diff_content
+
+                if not has_diff_markers:
+                    return "Error: Invalid diff format. Must include --- +++ headers or @@ hunk markers."
+
+            # Generate diff file name: {file}.fix.{findingId}.{model}.diff
+            model_safe = re.sub(r'[^a-zA-Z0-9_-]', '_', self.model_name or 'unknown')
+            diff_filename = f"{full_path}.fix.{self.finding_id}.{model_safe}.diff"
+
+            # Write the diff file
+            with open(diff_filename, 'w', encoding='utf-8') as f:
+                f.write(diff_content)
+
+            # Store the path for later reference
+            self.diff_file_path = diff_filename
+
+            # Count changes for summary
+            additions = diff_content.count('\n+') - diff_content.count('\n+++')
+            deletions = diff_content.count('\n-') - diff_content.count('\n---')
+
+            return f"Fix saved successfully!\nDiff file: {diff_filename}\nChanges: +{additions} -{deletions} lines"
+
+        except Exception as e:
+            return f"Error saving fix: {str(e)}"
+
+    async def _cleanup_diff_format(self, content: str, file_path: str) -> Optional[str]:
+        """Use cleanup model to convert malformed diff into proper unified diff format."""
+        try:
+            from app.models.scanner_models import ModelConfig
+
+            # Get cleanup model
+            cleanup_model = self.db.query(ModelConfig).filter(ModelConfig.is_cleanup == True).first()
+            if not cleanup_model:
+                return None
+
+            filename = os.path.basename(file_path)
+            prompt = f"""Convert the following code fix into proper unified diff format.
+
+The fix is for file: {filename}
+
+INPUT (may be malformed or just code):
+{content}
+
+OUTPUT must be valid unified diff format like:
+--- a/{filename}
++++ b/{filename}
+@@ -LINE,COUNT +LINE,COUNT @@
+ context line
+-removed line
++added line
+ context line
+
+Rules:
+- Lines starting with space are unchanged context
+- Lines starting with - are removed
+- Lines starting with + are added
+- Include @@ header with approximate line numbers
+- Output ONLY the diff, no explanation
+
+Unified diff:"""
+
+            result = await llm_provider.chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model=cleanup_model.name,
+                max_tokens=2048
+            )
+
+            cleaned = result.get("content", "").strip()
+            # Remove any markdown code blocks
+            if cleaned.startswith("```"):
+                lines = cleaned.split("\n")
+                cleaned = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+            return cleaned if cleaned else None
+
+        except Exception as e:
+            print(f"Cleanup model failed: {e}")
+            return None
 
     def _clean_fix_response(self, response: str) -> str:
         """Clean the fix response, removing thinking tags and markdown"""

@@ -409,8 +409,21 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
     if not finding:
         return HTMLResponse(content="<h1>Finding not found</h1>", status_code=404)
 
-    # Get available models for chat/fix - only models with is_chat enabled
-    models = db.query(ModelConfig).filter(ModelConfig.is_chat == True).order_by(ModelConfig.name).all()
+    # Get global settings first (needed for chat model selection)
+    global_settings = {row.key: row.value for row in db.query(GlobalSetting).all()}
+
+    # Get available models for chat/fix based on chat_model_ids setting
+    chat_model_ids_str = global_settings.get('chat_model_ids', '')
+    if chat_model_ids_str:
+        # Parse comma-separated IDs and fetch those models
+        chat_model_ids = [int(id.strip()) for id in chat_model_ids_str.split(',') if id.strip().isdigit()]
+        if chat_model_ids:
+            models = db.query(ModelConfig).filter(ModelConfig.id.in_(chat_model_ids)).order_by(ModelConfig.name).all()
+        else:
+            models = []
+    else:
+        # Fallback to is_chat flag for backwards compatibility
+        models = db.query(ModelConfig).filter(ModelConfig.is_chat == True).order_by(ModelConfig.name).all()
 
     # Get scan info if available
     scan = None
@@ -424,9 +437,6 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
 
     # Get scan profiles for rescan dropdown
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
-
-    # Get global settings for default model selection
-    global_settings = {row.key: row.value for row in db.query(GlobalSetting).all()}
 
     return templates.TemplateResponse("finding_details.html", {
         "request": request,
@@ -590,12 +600,11 @@ async def agent_verify_finding_stream(finding_id: int, model_id: int = None, db:
         step_queue = asyncio.Queue()
 
         def step_callback(step):
-            """Called after each agent step"""
-            asyncio.get_event_loop().call_soon_threadsafe(
-                step_queue.put_nowait,
-                step.to_dict()
-            )
+            """Called after each agent step - runs in same event loop, no thread-safety needed"""
+            step_queue.put_nowait(step.to_dict())
 
+        model_pool = None
+        codebase_db = None
         try:
             from app.services.intelligence.codebase_tools import CodebaseTools
             from app.services.intelligence.agent_runtime import AgenticVerifier, AgentRuntime
@@ -609,10 +618,11 @@ async def agent_verify_finding_stream(finding_id: int, model_id: int = None, db:
             model_pool = ModelPool(model_cfg)
             await model_pool.start()
 
+            codebase_db = SessionLocal()
             codebase_tools = CodebaseTools(
                 scan_id=finding.scan_id,
                 root_dir=codebase_path,
-                db=SessionLocal()
+                db=codebase_db
             )
 
             # Get response format from model config
@@ -678,6 +688,16 @@ async def agent_verify_finding_stream(finding_id: int, model_id: int = None, db:
             import traceback
             traceback.print_exc()
             yield f"data: {json_module.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+        finally:
+            # Always cleanup resources
+            if model_pool:
+                try:
+                    await model_pool.stop()
+                except:
+                    pass
+            if codebase_db:
+                codebase_db.close()
 
     return StreamingResponse(generate_events(), media_type="text/event-stream")
 
@@ -1783,6 +1803,344 @@ async def agent_fix(finding_id: int, request: Request, db: Session = Depends(get
         import traceback
         print(f"Agent fix error: {traceback.format_exc()}")
         return {"error": str(e)}
+
+
+@router.get("/finding/{finding_id}/agent-fix/stream")
+async def agent_fix_stream(finding_id: int, model_id: int = None, db: Session = Depends(get_db)):
+    """Generate a fix using agentic approach with SSE streaming of progress.
+
+    This endpoint:
+    1. Shows up in the queue system for slot management
+    2. Streams progress events as the agent works
+    3. Creates an AgentSession record for tracking
+    """
+    from app.models.scanner_models import AgentSession
+    from app.services.orchestration.queue_manager import queue_manager, RequestType
+    from starlette.responses import StreamingResponse
+    import asyncio
+    import json as json_module
+    from datetime import datetime
+
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return JSONResponse({"error": "Finding not found"}, status_code=404)
+
+    # Get model for fix generation
+    if model_id:
+        model_config = db.query(ModelConfig).filter(ModelConfig.id == model_id).first()
+    else:
+        # Get default chat model from global settings
+        default_model_id = db.query(GlobalSetting).filter(
+            GlobalSetting.key == "default_chat_model_id"
+        ).first()
+        if default_model_id and default_model_id.value:
+            model_config = db.query(ModelConfig).filter(
+                ModelConfig.id == int(default_model_id.value)
+            ).first()
+        else:
+            model_config = db.query(ModelConfig).first()
+
+    if not model_config:
+        return JSONResponse({"error": "No model available"}, status_code=400)
+
+    async def generate_events():
+        # Yield immediately to prevent blocking the event loop before first data
+        yield f"data: {json_module.dumps({'type': 'starting', 'finding_id': finding_id, 'model': model_config.name})}\n\n"
+
+        # Small yield to let event loop process other requests
+        await asyncio.sleep(0)
+
+        step_queue = asyncio.Queue()
+        start_time = datetime.now()
+
+        def step_callback(step_data):
+            """Called after each agent step - runs in same event loop, no thread-safety needed"""
+            step_queue.put_nowait(step_data)
+
+        # Create AgentSession and LLMRequestLog records for tracking (run in thread to not block)
+        db_session = SessionLocal()
+        request_log_id = None
+        session_id = None
+        try:
+            agent_session = AgentSession(
+                scan_id=finding.scan_id,
+                finding_id=finding_id,
+                status="running",
+                model_name=model_config.name,
+                task_prompt=f"Generate fix for finding: {finding.description[:200] if finding.description else 'Unknown'}"
+            )
+            db_session.add(agent_session)
+
+            # Also create LLMRequestLog entry so it shows in the queue display
+            request_log = LLMRequestLog(
+                scan_id=finding.scan_id,
+                model_name=model_config.name,
+                phase="agent_fix",
+                analyzer_name=f"Agent Fix (Finding #{finding_id})",
+                file_path=finding.file_path,
+                status="running"
+            )
+            db_session.add(request_log)
+            db_session.commit()
+            session_id = agent_session.id
+            request_log_id = request_log.id
+        except Exception as e:
+            db_session.rollback()
+            yield f"data: {json_module.dumps({'type': 'error', 'error': f'Failed to create session: {str(e)}'})}\n\n"
+            return
+        finally:
+            db_session.close()
+
+        db_local = None
+        fix_task = None
+        try:
+            from app.services.fix_generator import FixGenerator
+
+            # Create generator with step callback and identifiers for diff file naming
+            db_local = SessionLocal()
+            generator = FixGenerator(
+                db_local,
+                step_callback=step_callback,
+                finding_id=finding_id,
+                model_name=model_config.name
+            )
+
+            # Define the fix function for queue
+            async def run_fix():
+                return await generator.agent_fix(finding, model=model_config.name)
+
+            # Run through queue manager for slot tracking
+            # Note: scan_id=None because agent fix is user-initiated and independent of scan state
+            fix_task = asyncio.create_task(
+                queue_manager.enqueue(
+                    model_name=model_config.name,
+                    request_type=RequestType.AGENT,
+                    func=run_fix,
+                    max_concurrent=model_config.max_concurrent or 2,
+                    scan_id=None,
+                    finding_id=finding_id,
+                    description=f"Agent fix for finding #{finding_id}"
+                )
+            )
+
+            # Stream steps as they arrive with overall timeout (30 min max)
+            step_count = 0
+            overall_timeout = 1800  # 30 minutes
+            elapsed = 0
+            while not fix_task.done() and elapsed < overall_timeout:
+                try:
+                    step_data = await asyncio.wait_for(step_queue.get(), timeout=0.5)
+                    step_count += 1
+                    yield f"data: {json_module.dumps({'type': 'step', 'step': step_data})}\n\n"
+                except asyncio.TimeoutError:
+                    # Send keepalive ping
+                    yield f"data: {json_module.dumps({'type': 'ping'})}\n\n"
+                elapsed = (datetime.now() - start_time).total_seconds()
+
+            if elapsed >= overall_timeout:
+                fix_task.cancel()
+                yield f"data: {json_module.dumps({'type': 'error', 'error': 'Agent fix timed out after 30 minutes'})}\n\n"
+                return
+
+            # Drain any remaining steps from queue
+            while not step_queue.empty():
+                step_data = step_queue.get_nowait()
+                step_count += 1
+                yield f"data: {json_module.dumps({'type': 'step', 'step': step_data})}\n\n"
+
+            # Get final result
+            result = await fix_task
+
+            if result is None:
+                # Task was cancelled or skipped
+                yield f"data: {json_module.dumps({'type': 'error', 'error': 'Task was cancelled or skipped'})}\n\n"
+                return
+
+            fix = result.get("fix", "")
+            reasoning = result.get("reasoning", [])
+            iterations = result.get("iterations", 0)
+            diff_file = result.get("diff_file")  # Path to saved diff file
+
+            # Calculate duration
+            end_time = datetime.now()
+            duration_ms = (end_time - start_time).total_seconds() * 1000
+
+            # Determine success - either we have a fix code or a diff file
+            has_fix = bool(fix) or bool(diff_file)
+
+            # Save to GeneratedFix table and update AgentSession
+            db_save = SessionLocal()
+            fix_id = None
+            fix_count = 0
+            try:
+                if fix:
+                    generated_fix = GeneratedFix(
+                        finding_id=finding_id,
+                        fix_type="agent",
+                        model_name=model_config.name,
+                        code=fix,
+                        reasoning=json_module.dumps(reasoning) if reasoning else None
+                    )
+                    db_save.add(generated_fix)
+
+                    # Update finding's corrected_code
+                    finding_to_update = db_save.query(Finding).filter(Finding.id == finding_id).first()
+                    if finding_to_update:
+                        finding_to_update.corrected_code = fix
+
+                    fix_id = generated_fix.id
+
+                # Update AgentSession with results
+                session_to_update = db_save.query(AgentSession).filter(AgentSession.id == session_id).first()
+                if session_to_update:
+                    session_to_update.status = "completed" if has_fix else "failed"
+                    session_to_update.verdict = "FIX_GENERATED" if has_fix else "NO_FIX"
+                    session_to_update.reasoning = json_module.dumps(reasoning) if reasoning else None
+                    session_to_update.total_steps = step_count
+                    session_to_update.duration_ms = duration_ms
+                    session_to_update.completed_at = end_time
+                    # Store diff file path in attack_path field (reusing existing column)
+                    if diff_file:
+                        session_to_update.attack_path = diff_file
+
+                # Update LLMRequestLog to mark as completed
+                if request_log_id:
+                    request_log_update = db_save.query(LLMRequestLog).filter(LLMRequestLog.id == request_log_id).first()
+                    if request_log_update:
+                        request_log_update.status = "completed" if has_fix else "failed"
+                        request_log_update.duration_ms = duration_ms
+
+                db_save.commit()
+                fix_count = db_save.query(GeneratedFix).filter(GeneratedFix.finding_id == finding_id).count()
+            except Exception as e:
+                db_save.rollback()
+                print(f"Error saving fix: {e}")
+            finally:
+                db_save.close()
+
+            # Send final result
+            yield f"data: {json_module.dumps({'type': 'result', 'success': has_fix, 'corrected_code': fix, 'diff_file': diff_file, 'reasoning': reasoning, 'iterations': iterations, 'fix_id': fix_id, 'fix_count': fix_count, 'session_id': session_id, 'duration_ms': duration_ms})}\n\n"
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+            # Update session and request log as failed
+            db_err = SessionLocal()
+            try:
+                if session_id:
+                    session_err = db_err.query(AgentSession).filter(AgentSession.id == session_id).first()
+                    if session_err:
+                        session_err.status = "failed"
+                        session_err.error_message = str(e)
+                        session_err.completed_at = datetime.now()
+
+                # Also update LLMRequestLog
+                if request_log_id:
+                    request_log_err = db_err.query(LLMRequestLog).filter(LLMRequestLog.id == request_log_id).first()
+                    if request_log_err:
+                        request_log_err.status = "failed"
+                        request_log_err.parse_error = str(e)
+
+                db_err.commit()
+            except:
+                db_err.rollback()
+            finally:
+                db_err.close()
+
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+        finally:
+            # Always close db_local if it was opened
+            if db_local:
+                db_local.close()
+            # Cancel task if still running
+            if fix_task and not fix_task.done():
+                fix_task.cancel()
+
+    return StreamingResponse(generate_events(), media_type="text/event-stream")
+
+
+@router.get("/finding/{finding_id}/diff-files")
+async def get_finding_diff_files(finding_id: int, db: Session = Depends(get_db)):
+    """Get list of available diff files for a finding.
+
+    Diff files are stored next to the original source file with naming:
+    {original_file}.fix.{findingId}.{model}.diff
+    """
+    import glob
+
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return {"error": "Finding not found", "diff_files": []}
+
+    if not finding.file_path or not os.path.exists(finding.file_path):
+        return {"error": "Source file not found", "diff_files": []}
+
+    # Look for diff files matching pattern: {file}.fix.{findingId}.*.diff
+    pattern = f"{finding.file_path}.fix.{finding_id}.*.diff"
+    diff_files = glob.glob(pattern)
+
+    results = []
+    for diff_path in diff_files:
+        try:
+            # Extract model name from filename
+            # Pattern: file.c.fix.123.model_name.diff
+            basename = os.path.basename(diff_path)
+            parts = basename.split(f'.fix.{finding_id}.')
+            if len(parts) == 2:
+                model_part = parts[1].replace('.diff', '')
+            else:
+                model_part = 'unknown'
+
+            # Get file stats
+            stat = os.stat(diff_path)
+
+            results.append({
+                "path": diff_path,
+                "filename": basename,
+                "model": model_part,
+                "size": stat.st_size,
+                "created": stat.st_mtime
+            })
+        except Exception as e:
+            continue
+
+    # Sort by creation time, newest first
+    results.sort(key=lambda x: x['created'], reverse=True)
+
+    return {"diff_files": results}
+
+
+@router.get("/finding/{finding_id}/diff-file/{model}")
+async def get_diff_file_content(finding_id: int, model: str, db: Session = Depends(get_db)):
+    """Get the content of a specific diff file."""
+    finding = db.query(Finding).filter(Finding.id == finding_id).first()
+    if not finding:
+        return {"error": "Finding not found"}
+
+    if not finding.file_path:
+        return {"error": "Source file not found"}
+
+    # Build the expected diff file path
+    import re
+    model_safe = re.sub(r'[^a-zA-Z0-9_-]', '_', model)
+    diff_path = f"{finding.file_path}.fix.{finding_id}.{model_safe}.diff"
+
+    if not os.path.exists(diff_path):
+        return {"error": f"Diff file not found: {diff_path}"}
+
+    try:
+        with open(diff_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        return {
+            "path": diff_path,
+            "model": model,
+            "content": content
+        }
+    except Exception as e:
+        return {"error": f"Error reading diff file: {str(e)}"}
 
 
 @router.post("/finding/{finding_id}/reparse")
@@ -5051,6 +5409,18 @@ async def stream_queue_updates(request: Request, db: Session = Depends(get_db)):
                 # Get current state (use a fresh session for each query)
                 db_local = SessionLocal()
                 try:
+                    # Auto-expire stale running tasks (older than 20 minutes)
+                    expire_cutoff = datetime.now() - timedelta(minutes=20)
+                    stale_running = db_local.query(LLMRequestLog).filter(
+                        LLMRequestLog.status == "running",
+                        LLMRequestLog.created_at < expire_cutoff
+                    ).all()
+                    for stale in stale_running:
+                        stale.status = "failed"
+                        stale.parse_error = "Auto-expired after 20 minutes"
+                    if stale_running:
+                        db_local.commit()
+
                     models = db_local.query(ModelConfig).all()
                     pending = db_local.query(LLMRequestLog).filter(LLMRequestLog.status == "pending").all()
                     running = db_local.query(LLMRequestLog).filter(LLMRequestLog.status == "running").all()
