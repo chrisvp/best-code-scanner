@@ -14,6 +14,8 @@ from app.models.scanner_models import (
     ScanProfile, ProfileAnalyzer, ProfileVerifier, WebhookConfig, WebhookDeliveryLog,
     RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote, AgentSession
 )
+from app.models.auth_models import User, UserSession, FindingComment
+from app.api.deps import get_current_user_optional
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -122,7 +124,7 @@ async def run_revalidation_pipeline(scan_id: int, profile_id: int):
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, db: Session = Depends(get_db)):
+async def dashboard(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
     scans = db.query(Scan).order_by(Scan.created_at.desc()).all()
 
     # Get MR reviews with their findings
@@ -141,7 +143,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         "scans": scans,
         "mr_reviews": mr_reviews,
         "all_findings": all_findings,
-        "profiles": profiles
+        "profiles": profiles,
+        "current_user": current_user
     })
 
 
@@ -239,7 +242,7 @@ async def start_scan(
 
 
 @router.get("/scan/{scan_id}")
-async def get_scan_details(request: Request, scan_id: int, db: Session = Depends(get_db)):
+async def get_scan_details(request: Request, scan_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
     from app.models.scanner_models import ScanErrorLog, LLMRequestLog, ScanProfile, AgentSession
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not scan:
@@ -304,7 +307,8 @@ async def get_scan_details(request: Request, scan_id: int, db: Session = Depends
         "errors": errors,
         "logs": logs,
         "profiles": profiles,
-        "draft_data": draft_data
+        "draft_data": draft_data,
+        "current_user": current_user
     })
 
 
@@ -403,7 +407,7 @@ async def get_draft_agent_log(scan_id: int, draft_id: int, db: Session = Depends
 # ============ Finding Details & Chat ============
 
 @router.get("/finding/{finding_id}", response_class=HTMLResponse)
-async def get_finding_details(request: Request, finding_id: int, db: Session = Depends(get_db)):
+async def get_finding_details(request: Request, finding_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
     """Get the finding details page with AI chat"""
     finding = db.query(Finding).filter(Finding.id == finding_id).first()
     if not finding:
@@ -468,7 +472,8 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
         "mr_review": mr_review,
         "profiles": profiles,
         "global_settings": global_settings,
-        "provenance": provenance
+        "provenance": provenance,
+        "current_user": current_user
     })
 
 
@@ -2377,7 +2382,7 @@ async def analyze_findings(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/config", response_class=HTMLResponse)
-async def get_config(request: Request, db: Session = Depends(get_db)):
+async def get_config(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
     from app.core.config import settings
     from app.services.analysis.static_detector import StaticPatternDetector
     from app.models.scanner_models import GitLabRepo
@@ -2401,7 +2406,8 @@ async def get_config(request: Request, db: Session = Depends(get_db)):
         "profiles": profiles,
         "rules": rules,
         "gitlab_repos": gitlab_repos,
-        "global_settings": global_settings
+        "global_settings": global_settings,
+        "current_user": current_user
     })
 
 

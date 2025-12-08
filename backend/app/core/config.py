@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     
     # Security
     SECRET_KEY: str = "supersecretkey"
+    SESSION_TIMEOUT_HOURS: int = 24
+    SESSION_REMEMBER_DAYS: int = 30
+    MIN_PASSWORD_LENGTH: int = 8
     
     # LLM Configuration
     LLM_BASE_URL: str = "https://192.168.33.158:5000/v1"

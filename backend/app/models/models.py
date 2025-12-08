@@ -55,7 +55,7 @@ class Finding(Base):
     file_path = Column(String, nullable=False)
     line_number = Column(Integer, nullable=True)
     severity = Column(String, default="Medium")  # Low, Medium, High, Critical
-    status = Column(String, default="VERIFIED", index=True)  # VERIFIED, FALSE_POSITIVE, FIXED, IGNORED
+    status = Column(String, default="VERIFIED", index=True)  # VERIFIED, FP, FIXED, IGNORED
     description = Column(Text, nullable=False)
     snippet = Column(Text, nullable=True)
     remediation = Column(Text, nullable=True)
@@ -74,7 +74,13 @@ class Finding(Base):
     detected_at = Column(DateTime(timezone=True), nullable=True)  # When the finding was detected
     confidence_score = Column(Float, nullable=True)  # Model's confidence in the finding
 
+    # Status change tracking
+    status_changed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    status_changed_at = Column(DateTime(timezone=True), nullable=True)
+
     scan = relationship("Scan", back_populates="findings")
+    status_changed_by = relationship("User", foreign_keys="Finding.status_changed_by_id")
+    comments = relationship("FindingComment", back_populates="finding", order_by="FindingComment.created_at.desc()")
     # MRReview is defined in scanner_models.py
     mr_review = relationship("MRReview", back_populates="findings")
     generated_fixes = relationship("GeneratedFix", back_populates="finding", order_by="GeneratedFix.created_at.desc()")

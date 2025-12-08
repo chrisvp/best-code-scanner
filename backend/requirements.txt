@@ -13,3 +13,5 @@ tree-sitter>=0.20.0
 tree-sitter-c
 tree-sitter-cpp
 tree-sitter-python
+argon2-cffi>=23.1.0
+itsdangerous>=2.1.0

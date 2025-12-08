@@ -1,7 +1,13 @@
 from fastapi import FastAPI
+from starlette.middleware.sessions import SessionMiddleware
 from contextlib import asynccontextmanager
 from typing import Optional
+import logging
+
 from app.core.config import settings
+from app.middleware.auth import AuthMiddleware
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -11,12 +17,29 @@ async def lifespan(app: FastAPI):
     from app.core.database import SessionLocal
     from app.models.models import Scan
     from app.models.scanner_models import GlobalSetting
+    from app.models.auth_models import User, UserRole, UserStatus
+    from app.core.security import hash_password
 
     # Load persisted settings from database
     db = SessionLocal()
     try:
         # Ensure default settings exist
         GlobalSetting.ensure_defaults(db)
+
+        # Create default admin user if no users exist
+        user_count = db.query(User).count()
+        if user_count == 0:
+            logger.info("No users found. Creating default admin user...")
+            admin = User(
+                email="admin",
+                display_name="Administrator",
+                hashed_password=hash_password("davy"),
+                role=UserRole.ADMIN.value,
+                status=UserStatus.ACTIVE.value
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("Default admin created: email='admin', password='davy'")
 
         saved_base_url = GlobalSetting.get(db, "llm_base_url")
         saved_api_key = GlobalSetting.get(db, "llm_api_key")
@@ -54,11 +77,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add session middleware for cookie-based sessions
+app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+
+# Add auth middleware to inject current user into all requests
+app.add_middleware(AuthMiddleware)
+
 from app.api.endpoints import router
 from app.api.tuning import router as tuning_router
+from app.api.auth import router as auth_router
 
 app.include_router(router)
 app.include_router(tuning_router, prefix="/api/v1/tuning", tags=["tuning"])
+app.include_router(auth_router, tags=["auth"])
 
 @app.get("/health")
 def health():
