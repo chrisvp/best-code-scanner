@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Optional
 
 class IngestionService:
-    def __init__(self, sandbox_root: str = "sandbox"):
-        self.sandbox_root = Path(sandbox_root)
-        self.sandbox_root.mkdir(exist_ok=True)
+    def __init__(self, sandbox_root: str = None):
+        if sandbox_root:
+            self.sandbox_root = Path(sandbox_root)
+        else:
+            # Default to backend/sandbox relative to this file
+            base_dir = Path(__file__).resolve().parent.parent.parent
+            self.sandbox_root = base_dir / "sandbox"
+        self.sandbox_root.mkdir(parents=True, exist_ok=True)
 
     def _remove_readonly(self, func, path, _):
         import os, stat
@@ -119,6 +124,10 @@ class IngestionService:
         # Use the final traced scan's sandbox
         final_scan_id = visited[-1] if visited else source_scan_id
         source_dir = self.sandbox_root / str(final_scan_id)
+        
+        with open("/tmp/ingestion_debug.log", "a") as f:
+            f.write(f"Checking sandbox path: {source_dir} (exists: {source_dir.exists()})\n")
+            f.write(f"Sandbox root: {self.sandbox_root} (exists: {self.sandbox_root.exists()})\n")
 
         if source_dir.exists():
             if final_scan_id != source_scan_id:

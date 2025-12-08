@@ -429,12 +429,14 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
         }
 
     async def _call_with_tools(self, messages: List[Dict], model: Optional[str]) -> Dict[str, Any]:
-        """Call LLM with tool definitions using centralized provider"""
+        """Call LLM with tool definitions using centralized ModelPool with streaming"""
+        from app.services.orchestration.model_orchestrator import ModelPool
+        
         model_name = model or llm_provider.default_model
 
         try:
-            # Use centralized chat_completion_with_tools which handles retries
-            return await llm_provider.chat_completion_with_tools(
+            # Use ModelPool's streaming method which handles timeouts/retries better
+            return await ModelPool.simple_chat_with_tools(
                 messages=messages,
                 tools=self.AGENT_TOOLS,
                 model=model_name,
@@ -443,9 +445,9 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
             )
         except Exception as e:
             # Fall back to non-tool call if tools not supported
-            result = await llm_provider.chat_completion(
+            result = await ModelPool.simple_chat_completion(
                 messages=messages,
-                model=model,
+                model=model_name,
                 max_tokens=4096
             )
             return {"content": result.get("content", ""), "tool_calls": []}

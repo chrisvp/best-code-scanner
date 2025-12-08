@@ -12,12 +12,101 @@
 {% endblock %}
 
 {% block content %}
-<!-- Custom diff highlighting for split view -->
+<!-- GitHub/GitLab-style diff viewer -->
 <style>
-    /* Diff syntax highlighting enhancement */
-    .language-diff .hljs-addition { background: rgba(34, 197, 94, 0.2); color: #86efac; display: block; margin: 0 -0.75rem; padding: 0 0.75rem; }
-    .language-diff .hljs-deletion { background: rgba(239, 68, 68, 0.2); color: #fca5a5; display: block; margin: 0 -0.75rem; padding: 0 0.75rem; }
-    .language-diff .hljs-meta { color: #67e8f9; background: rgba(103, 232, 249, 0.1); display: block; margin: 0 -0.75rem; padding: 0 0.75rem; }
+    /* Diff table structure */
+    .diff-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+    .diff-table td { padding: 0; vertical-align: top; }
+    .diff-table pre { margin: 0; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
+
+    /* Line numbers */
+    .diff-line-num {
+        width: 50px; min-width: 50px; padding: 0 8px; text-align: right;
+        color: rgba(139, 148, 158, 0.6); background: rgba(22, 27, 34, 0.8);
+        user-select: none; vertical-align: top; border-right: 1px solid #30363d;
+    }
+    .diff-line-num:hover { color: #c9d1d9; cursor: pointer; }
+
+    /* Line content */
+    .diff-line-content { padding: 0 8px; white-space: pre; overflow-x: auto; }
+
+    /* Hunk header */
+    .diff-hunk-header {
+        background: rgba(56, 139, 253, 0.15); color: #8b949e;
+        padding: 8px 12px; font-style: italic; border-top: 1px solid #30363d;
+    }
+    .diff-hunk-header td { padding: 4px 8px; }
+
+    /* Addition (green) */
+    .diff-add { background: rgba(46, 160, 67, 0.15); }
+    .diff-add .diff-line-num { background: rgba(46, 160, 67, 0.25); color: #7ee787; }
+    .diff-add .diff-line-content { color: #aff5b4; }
+    .diff-add-word { background: rgba(46, 160, 67, 0.4); border-radius: 2px; }
+
+    /* Deletion (red) */
+    .diff-del { background: rgba(248, 81, 73, 0.15); }
+    .diff-del .diff-line-num { background: rgba(248, 81, 73, 0.25); color: #f85149; }
+    .diff-del .diff-line-content { color: #ffa198; }
+    .diff-del-word { background: rgba(248, 81, 73, 0.4); border-radius: 2px; }
+
+    /* Context lines */
+    .diff-context { background: transparent; }
+    .diff-context .diff-line-content { color: #c9d1d9; }
+
+    /* Split view specific */
+    .diff-split-view { display: flex; }
+    .diff-split-pane { flex: 1; overflow: auto; border-right: 1px solid #30363d; }
+    .diff-split-pane:last-child { border-right: none; }
+    .diff-split-pane .diff-table { table-layout: fixed; }
+    .diff-split-pane .diff-line-num { width: 45px; min-width: 45px; }
+
+    /* Empty placeholder for alignment */
+    .diff-empty { background: rgba(110, 118, 129, 0.1); }
+    .diff-empty .diff-line-num { background: rgba(110, 118, 129, 0.15); }
+
+    /* File header */
+    .diff-file-header {
+        background: #161b22; padding: 8px 12px; border-bottom: 1px solid #30363d;
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .diff-file-path { font-family: ui-monospace, monospace; font-size: 12px; color: #c9d1d9; }
+    .diff-stats { font-size: 12px; }
+    .diff-stats-add { color: #3fb950; }
+    .diff-stats-del { color: #f85149; }
+
+    /* Expand context button */
+    .diff-expand-btn {
+        background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+        color: #8b949e; padding: 2px 8px; font-size: 11px; cursor: pointer;
+        display: inline-flex; align-items: center; gap: 4px;
+    }
+    .diff-expand-btn:hover { background: #30363d; color: #c9d1d9; }
+    .diff-expand-btn svg { width: 12px; height: 12px; }
+
+    /* Expand row styling */
+    .diff-expand-row { background: #161b22; }
+    .diff-expand-row td { padding: 4px 8px; text-align: center; }
+    .diff-expand-row .diff-line-num { background: #161b22; }
+
+    /* Full file toggle */
+    .diff-toolbar {
+        background: #161b22; padding: 6px 12px; border-bottom: 1px solid #30363d;
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .diff-toolbar-btn {
+        background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+        color: #8b949e; padding: 4px 10px; font-size: 12px; cursor: pointer;
+        display: inline-flex; align-items: center; gap: 6px;
+    }
+    .diff-toolbar-btn:hover { background: #30363d; color: #c9d1d9; }
+    .diff-toolbar-btn.active { background: #388bfd33; border-color: #388bfd; color: #58a6ff; }
+    .diff-toolbar-btn svg { width: 14px; height: 14px; }
+
+    /* Context amount selector */
+    .diff-context-select {
+        background: #21262d; border: 1px solid #30363d; border-radius: 4px;
+        color: #c9d1d9; padding: 4px 8px; font-size: 12px;
+    }
 </style>
 <!-- Markdown content styles -->
 <style>
@@ -608,6 +697,10 @@ let lastUserMessage = null;
 let syncScrollEnabled = true;
 let currentDiffView = 'split';
 let originalFileLines = [];  // Store original file lines for diff generation
+let originalFileContent = []; // Store {number, content} for each line of the original file
+let diffContextLines = 3;  // Number of context lines to show (GitHub default is 3)
+let showFullFile = false;  // Whether to show entire file with diff
+let currentParsedDiff = null;  // Cache parsed diff data
 
 // ============ Diff View Functions ============
 
@@ -624,13 +717,24 @@ function setDiffView(view) {
         unifiedView.classList.add('hidden');
         splitBtn.className = 'px-2 py-1 text-xs rounded-md transition-colors bg-gray-600 text-white';
         unifiedBtn.className = 'px-2 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-white';
+        // Re-render split view for diff files when switching back
+        const currentFix = allFixes[currentFixIndex];
+        if (currentFix && currentFix.fix_type === 'diff' && currentFix.code) {
+            displayDiffInSplitView(currentFix.code);
+        }
     } else {
         splitView.classList.add('hidden');
         unifiedView.classList.remove('hidden');
         splitBtn.className = 'px-2 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-white';
         unifiedBtn.className = 'px-2 py-1 text-xs rounded-md transition-colors bg-gray-600 text-white';
         // Generate unified diff when switching to that view
-        generateUnifiedDiff();
+        // For diff files, use the raw diff content; for regular fixes, compute diff
+        const currentFix = allFixes[currentFixIndex];
+        if (currentFix && currentFix.fix_type === 'diff' && currentFix.code) {
+            displayDiffInUnifiedView(currentFix.code);
+        } else {
+            generateUnifiedDiff();
+        }
     }
 
     // Save preference
@@ -1208,7 +1312,7 @@ function renderMarkdownContent() {
 }
 
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     hljs.highlightAll();
     // Render markdown content
     renderMarkdownContent();
@@ -1217,17 +1321,23 @@ document.addEventListener('DOMContentLoaded', function() {
     if (floatingChat) {
         floatingChat.style.display = 'none';
     }
-    // Load code context with line numbers
-    loadCodeContext();
-    // Load existing fixes
-    loadFixes();
-    // Load saved chat history for this finding
-    loadChatHistory();
 
-    // Initialize diff view preferences
+    // Initialize diff view preference BEFORE loading fixes
+    // This ensures displayCurrentFix() uses the correct view from the start
     const savedDiffView = localStorage.getItem('diffViewPreference');
     if (savedDiffView) {
-        setDiffView(savedDiffView);
+        currentDiffView = savedDiffView;
+        // Update button styles without re-rendering (fixes not loaded yet)
+        const splitView = document.getElementById('split-diff-view');
+        const unifiedView = document.getElementById('unified-diff-view');
+        const splitBtn = document.getElementById('view-split-btn');
+        const unifiedBtn = document.getElementById('view-unified-btn');
+        if (savedDiffView === 'unified') {
+            splitView.classList.add('hidden');
+            unifiedView.classList.remove('hidden');
+            splitBtn.className = 'px-2 py-1 text-xs rounded-md transition-colors text-gray-400 hover:text-white';
+            unifiedBtn.className = 'px-2 py-1 text-xs rounded-md transition-colors bg-gray-600 text-white';
+        }
     }
 
     // Initialize sync scroll preference
@@ -1239,6 +1349,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Setup synchronized scrolling
     setupSyncScroll();
+
+    // Load code context with line numbers
+    loadCodeContext();
+    // Load existing fixes (this will display with the correct view)
+    await loadFixes();
+    // Load saved chat history for this finding
+    loadChatHistory();
 });
 
 // Load full file with syntax highlighting and vulnerable line marked
@@ -1257,6 +1374,13 @@ async function loadCodeContext() {
             hljs.highlightAll();
             return;
         }
+
+        // Store original file content globally for diff expansion
+        originalFileContent = data.lines.map(line => ({
+            number: line.number,
+            content: line.content,
+            isVulnerable: line.is_vulnerable
+        }));
 
         // Determine language for syntax highlighting
         const ext = filePath.split('.').pop().toLowerCase();
@@ -1351,7 +1475,8 @@ async function loadFixes() {
             currentFixIndex = 0;
             updateFixNav();
             // Display the first fix immediately
-            displayCurrentFix();
+            // Note: Must await to ensure diff content is loaded before rendering
+            await displayCurrentFix();
         }
     } catch (err) {
         console.error('Failed to load fixes:', err);
@@ -1429,37 +1554,28 @@ async function displayCurrentFix() {
 
     if (placeholder) placeholder.remove();
 
-    // Handle diff file type - display the diff content directly
+    // Handle diff file type - parse and display properly
     if (fix.fix_type === 'diff') {
         // Load diff content if not already loaded
         if (!fix.code) {
             fix.code = await loadDiffContent(fix.model_name);
         }
 
-        // Display diff with special formatting
-        let diffContainer = document.getElementById('fixed-code');
-        if (!diffContainer) {
-            const pre = document.createElement('pre');
-            pre.className = 'p-3 text-xs overflow-x-auto bg-gray-900 h-full';
-            const code = document.createElement('code');
-            code.id = 'fixed-code';
-            code.className = 'language-diff';
-            pre.appendChild(code);
-            container.insertBefore(pre, loading);
-            diffContainer = code;
-        } else {
-            diffContainer.className = 'language-diff';
+        if (!fix.code) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'p-4 text-center text-gray-500';
+            errorDiv.textContent = 'Error loading diff content';
+            container.textContent = '';
+            container.appendChild(errorDiv);
+            return;
         }
 
-        diffContainer.textContent = fix.code || 'Error loading diff content';
-        hljs.highlightElement(diffContainer);
-
-        // Also update unified view if visible
-        if (currentDiffView === 'unified') {
-            const unifiedContainer = document.getElementById('unified-diff-container');
-            if (unifiedContainer && fix.code) {
-                displayDiffInUnifiedView(fix.code);
-            }
+        // For split view: parse diff and show before/after side by side
+        if (currentDiffView === 'split') {
+            displayDiffInSplitView(fix.code);
+        } else {
+            // For unified view: show the raw diff with colors
+            displayDiffInUnifiedView(fix.code);
         }
         return;
     }
@@ -1489,33 +1605,572 @@ async function displayCurrentFix() {
     }
 }
 
-// Display raw diff content in the unified view with proper coloring
+// Parse unified diff into structured hunks
+function parseDiff(diffContent) {
+    const lines = diffContent.split('\n');
+    const hunks = [];
+    let currentHunk = null;
+    let oldFile = '', newFile = '';
+    let addCount = 0, delCount = 0;
+
+    for (const line of lines) {
+        if (line.startsWith('---')) {
+            oldFile = line.substring(4).trim();
+        } else if (line.startsWith('+++')) {
+            newFile = line.substring(4).trim();
+        } else if (line.startsWith('@@')) {
+            // Parse hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+            const match = line.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)?/);
+            if (match) {
+                currentHunk = {
+                    oldStart: parseInt(match[1]),
+                    oldCount: parseInt(match[2] || 1),
+                    newStart: parseInt(match[3]),
+                    newCount: parseInt(match[4] || 1),
+                    context: match[5] || '',
+                    lines: []
+                };
+                hunks.push(currentHunk);
+            }
+        } else if (currentHunk) {
+            if (line.startsWith('+')) {
+                currentHunk.lines.push({ type: 'add', content: line.substring(1) });
+                addCount++;
+            } else if (line.startsWith('-')) {
+                currentHunk.lines.push({ type: 'del', content: line.substring(1) });
+                delCount++;
+            } else if (line.startsWith(' ') || line === '') {
+                currentHunk.lines.push({ type: 'context', content: line.substring(1) || '' });
+            }
+        }
+    }
+
+    return { oldFile, newFile, hunks, addCount, delCount };
+}
+
+// Display GitHub/GitLab-style unified diff view
 function displayDiffInUnifiedView(diffContent) {
     const container = document.getElementById('unified-diff-container');
     if (!container) return;
 
-    container.textContent = '';  // Clear
+    container.innerHTML = '';  // Clear
+    const parsed = parseDiff(diffContent);
+    currentParsedDiff = parsed;
 
-    const lines = diffContent.split('\n');
-    for (const line of lines) {
-        const lineDiv = document.createElement('div');
-        lineDiv.className = 'whitespace-pre font-mono';
+    // Toolbar with controls
+    const toolbar = document.createElement('div');
+    toolbar.className = 'diff-toolbar';
+    toolbar.innerHTML = `
+        <div class="flex items-center gap-3">
+            <span class="diff-file-path">${escapeHtml(parsed.newFile || filePath)}</span>
+            <span class="diff-stats">
+                <span class="diff-stats-add">+${parsed.addCount}</span>
+                <span class="diff-stats-del ml-2">-${parsed.delCount}</span>
+            </span>
+        </div>
+        <div class="flex items-center gap-2">
+            <label class="flex items-center gap-1 text-xs text-gray-400">
+                Context:
+                <select class="diff-context-select" onchange="setDiffContextLines(this.value)">
+                    <option value="3" ${diffContextLines === 3 ? 'selected' : ''}>3 lines</option>
+                    <option value="5" ${diffContextLines === 5 ? 'selected' : ''}>5 lines</option>
+                    <option value="10" ${diffContextLines === 10 ? 'selected' : ''}>10 lines</option>
+                    <option value="25" ${diffContextLines === 25 ? 'selected' : ''}>25 lines</option>
+                </select>
+            </label>
+            <button class="diff-toolbar-btn ${showFullFile ? 'active' : ''}" onclick="toggleFullFile()">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+                </svg>
+                ${showFullFile ? 'Show changes only' : 'Load entire file'}
+            </button>
+        </div>
+    `;
+    container.appendChild(toolbar);
 
-        if (line.startsWith('+++') || line.startsWith('---')) {
-            lineDiv.className += ' text-gray-500';
-        } else if (line.startsWith('@@')) {
-            lineDiv.className += ' text-cyan-400 bg-cyan-900/20';
-        } else if (line.startsWith('+')) {
-            lineDiv.className += ' bg-green-900/30 text-green-300';
-        } else if (line.startsWith('-')) {
-            lineDiv.className += ' bg-red-900/30 text-red-300';
-        } else {
-            lineDiv.className += ' text-gray-400';
+    // Create table for diff
+    const table = document.createElement('table');
+    table.className = 'diff-table';
+    const tbody = document.createElement('tbody');
+
+    if (showFullFile && originalFileContent.length > 0) {
+        // Full file mode - show entire file with changes highlighted
+        renderFullFileUnified(tbody, parsed);
+    } else {
+        // Normal mode - show only hunks with expand buttons
+        renderHunksUnified(tbody, parsed);
+    }
+
+    table.appendChild(tbody);
+    container.appendChild(table);
+}
+
+// Render hunks with expand buttons for unified view
+function renderHunksUnified(tbody, parsed) {
+    let lastEndLine = 0;
+
+    for (let hunkIdx = 0; hunkIdx < parsed.hunks.length; hunkIdx++) {
+        const hunk = parsed.hunks[hunkIdx];
+        const hunkStartLine = hunk.oldStart;
+
+        // Add expand button if there's a gap
+        if (hunkStartLine > lastEndLine + 1 && originalFileContent.length > 0) {
+            const gapStart = lastEndLine + 1;
+            const gapEnd = hunkStartLine - 1;
+            addExpandRowUnified(tbody, gapStart, gapEnd, hunkIdx);
         }
 
-        lineDiv.textContent = line;
-        container.appendChild(lineDiv);
+        // Hunk header row
+        const hunkRow = document.createElement('tr');
+        hunkRow.className = 'diff-hunk-header';
+        hunkRow.innerHTML = `
+            <td class="diff-line-num"></td>
+            <td class="diff-line-num"></td>
+            <td>@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@${hunk.context ? ' ' + escapeHtml(hunk.context) : ''}</td>
+        `;
+        tbody.appendChild(hunkRow);
+
+        let oldLine = hunk.oldStart;
+        let newLine = hunk.newStart;
+
+        for (const line of hunk.lines) {
+            const row = document.createElement('tr');
+            let oldNum = '', newNum = '', rowClass = 'diff-context';
+
+            if (line.type === 'del') {
+                oldNum = oldLine++;
+                rowClass = 'diff-del';
+            } else if (line.type === 'add') {
+                newNum = newLine++;
+                rowClass = 'diff-add';
+            } else {
+                oldNum = oldLine++;
+                newNum = newLine++;
+            }
+
+            row.className = rowClass;
+            row.innerHTML = `
+                <td class="diff-line-num">${oldNum}</td>
+                <td class="diff-line-num">${newNum}</td>
+                <td class="diff-line-content"><pre>${escapeHtml(line.content)}</pre></td>
+            `;
+            tbody.appendChild(row);
+        }
+
+        lastEndLine = hunk.oldStart + hunk.oldCount - 1;
     }
+
+    // Add expand button for remaining lines after last hunk
+    if (originalFileContent.length > lastEndLine) {
+        addExpandRowUnified(tbody, lastEndLine + 1, originalFileContent.length, -1);
+    }
+}
+
+// Add expandable row between hunks
+function addExpandRowUnified(tbody, startLine, endLine, hunkIdx) {
+    const lineCount = endLine - startLine + 1;
+    if (lineCount <= 0) return;
+
+    const row = document.createElement('tr');
+    row.className = 'diff-expand-row';
+    row.innerHTML = `
+        <td class="diff-line-num" colspan="2"></td>
+        <td>
+            <button class="diff-expand-btn" onclick="expandContext(${startLine}, ${endLine}, 'up', ${hunkIdx})">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                Expand up
+            </button>
+            <button class="diff-expand-btn ml-2" onclick="expandContext(${startLine}, ${endLine}, 'all', ${hunkIdx})">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+                Show ${lineCount} hidden lines
+            </button>
+            <button class="diff-expand-btn ml-2" onclick="expandContext(${startLine}, ${endLine}, 'down', ${hunkIdx})">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                Expand down
+            </button>
+        </td>
+    `;
+    tbody.appendChild(row);
+}
+
+// Render full file with changes highlighted for unified view
+function renderFullFileUnified(tbody, parsed) {
+    // Build a map of line changes from the diff
+    const lineChanges = new Map(); // lineNum -> {type: 'del'|'add'|'context', newLineNum?}
+
+    let newLineOffset = 0;
+    for (const hunk of parsed.hunks) {
+        let oldLine = hunk.oldStart;
+        let newLine = hunk.newStart;
+
+        for (const line of hunk.lines) {
+            if (line.type === 'del') {
+                lineChanges.set(oldLine, { type: 'del', content: line.content });
+                oldLine++;
+            } else if (line.type === 'add') {
+                // Track additions to insert after deletions
+                if (!lineChanges.has(`add_${newLine}`)) {
+                    lineChanges.set(`add_${newLine}`, { type: 'add', content: line.content, newLineNum: newLine });
+                }
+                newLine++;
+                newLineOffset++;
+            } else {
+                oldLine++;
+                newLine++;
+            }
+        }
+    }
+
+    // Render all lines from original file, interleaving additions
+    let newLineNum = 1;
+    for (let i = 0; i < originalFileContent.length; i++) {
+        const fileLine = originalFileContent[i];
+        const lineNum = fileLine.number;
+        const change = lineChanges.get(lineNum);
+
+        if (change && change.type === 'del') {
+            // This line is deleted
+            const row = document.createElement('tr');
+            row.className = 'diff-del';
+            row.innerHTML = `
+                <td class="diff-line-num">${lineNum}</td>
+                <td class="diff-line-num"></td>
+                <td class="diff-line-content"><pre>${escapeHtml(change.content)}</pre></td>
+            `;
+            tbody.appendChild(row);
+
+            // Check for additions that follow this deletion
+            const addKey = `add_${newLineNum}`;
+            while (lineChanges.has(addKey)) {
+                const addChange = lineChanges.get(addKey);
+                const addRow = document.createElement('tr');
+                addRow.className = 'diff-add';
+                addRow.innerHTML = `
+                    <td class="diff-line-num"></td>
+                    <td class="diff-line-num">${addChange.newLineNum}</td>
+                    <td class="diff-line-content"><pre>${escapeHtml(addChange.content)}</pre></td>
+                `;
+                tbody.appendChild(addRow);
+                lineChanges.delete(addKey);
+                newLineNum++;
+            }
+        } else {
+            // Context line (unchanged)
+            const row = document.createElement('tr');
+            row.className = 'diff-context';
+            row.innerHTML = `
+                <td class="diff-line-num">${lineNum}</td>
+                <td class="diff-line-num">${newLineNum}</td>
+                <td class="diff-line-content"><pre>${escapeHtml(fileLine.content)}</pre></td>
+            `;
+            tbody.appendChild(row);
+            newLineNum++;
+        }
+    }
+}
+
+// Toggle showing full file vs just changes
+function toggleFullFile() {
+    showFullFile = !showFullFile;
+    refreshDiffDisplay();
+}
+
+// Set number of context lines
+function setDiffContextLines(value) {
+    diffContextLines = parseInt(value);
+    refreshDiffDisplay();
+}
+
+// Expand context lines
+function expandContext(startLine, endLine, direction, hunkIdx) {
+    // For now, toggle to full file mode (simpler implementation)
+    showFullFile = true;
+    refreshDiffDisplay();
+}
+
+// Refresh the current diff display
+function refreshDiffDisplay() {
+    const currentFix = allFixes[currentFixIndex];
+    if (currentFix && currentFix.fix_type === 'diff' && currentFix.code) {
+        if (currentDiffView === 'unified') {
+            displayDiffInUnifiedView(currentFix.code);
+        } else {
+            displayDiffInSplitView(currentFix.code);
+        }
+    }
+}
+
+// Display GitHub/GitLab-style split diff view
+function displayDiffInSplitView(diffContent) {
+    const fixedContainer = document.getElementById('fixed-code-container');
+    const vulnContainer = document.getElementById('vulnerable-code-container');
+    if (!fixedContainer) return;
+
+    const parsed = parseDiff(diffContent);
+    currentParsedDiff = parsed;
+
+    // Clear both containers
+    vulnContainer.innerHTML = '';
+    fixedContainer.innerHTML = '';
+
+    // Add toolbar to left pane header area (we'll add a shared toolbar above both)
+    const splitView = document.getElementById('split-diff-view');
+    let toolbar = splitView.querySelector('.diff-toolbar');
+    if (!toolbar) {
+        toolbar = document.createElement('div');
+        toolbar.className = 'diff-toolbar col-span-2';
+        toolbar.innerHTML = `
+            <div class="flex items-center gap-3">
+                <span class="diff-file-path">${escapeHtml(parsed.newFile || filePath)}</span>
+                <span class="diff-stats">
+                    <span class="diff-stats-add">+${parsed.addCount}</span>
+                    <span class="diff-stats-del ml-2">-${parsed.delCount}</span>
+                </span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="diff-toolbar-btn ${showFullFile ? 'active' : ''}" onclick="toggleFullFile()">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+                    </svg>
+                    ${showFullFile ? 'Show changes only' : 'Load entire file'}
+                </button>
+            </div>
+        `;
+        splitView.insertBefore(toolbar, splitView.firstChild);
+    } else {
+        // Update existing toolbar
+        toolbar.innerHTML = `
+            <div class="flex items-center gap-3">
+                <span class="diff-file-path">${escapeHtml(parsed.newFile || filePath)}</span>
+                <span class="diff-stats">
+                    <span class="diff-stats-add">+${parsed.addCount}</span>
+                    <span class="diff-stats-del ml-2">-${parsed.delCount}</span>
+                </span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button class="diff-toolbar-btn ${showFullFile ? 'active' : ''}" onclick="toggleFullFile()">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+                    </svg>
+                    ${showFullFile ? 'Show changes only' : 'Load entire file'}
+                </button>
+            </div>
+        `;
+    }
+
+    // Build aligned left/right data
+    let leftLines, rightLines;
+
+    if (showFullFile && originalFileContent.length > 0) {
+        // Full file mode
+        const result = buildFullFileSplitData(parsed);
+        leftLines = result.leftLines;
+        rightLines = result.rightLines;
+    } else {
+        // Hunks only mode
+        const result = buildHunksSplitData(parsed);
+        leftLines = result.leftLines;
+        rightLines = result.rightLines;
+    }
+
+    // Render left pane
+    const leftWrapper = document.createElement('div');
+    leftWrapper.className = 'overflow-auto';
+    leftWrapper.style.maxHeight = '500px';
+    const leftTable = createDiffTable(leftLines, 'left');
+    leftWrapper.appendChild(leftTable);
+    vulnContainer.appendChild(leftWrapper);
+
+    // Render right pane
+    const rightWrapper = document.createElement('div');
+    rightWrapper.className = 'overflow-auto';
+    rightWrapper.style.maxHeight = '500px';
+    const rightTable = createDiffTable(rightLines, 'right');
+    rightWrapper.appendChild(rightTable);
+    fixedContainer.appendChild(rightWrapper);
+
+    // Add loading div back (hidden)
+    const loadingDiv = document.createElement('div');
+    loadingDiv.id = 'fix-loading';
+    loadingDiv.className = 'hidden absolute inset-0 bg-gray-900/80 flex items-center justify-center';
+    fixedContainer.appendChild(loadingDiv);
+
+    // Setup synchronized scrolling for split view
+    setupSplitDiffScroll(leftWrapper, rightWrapper);
+}
+
+// Build split view data from hunks only
+function buildHunksSplitData(parsed) {
+    const leftLines = [];
+    const rightLines = [];
+
+    for (const hunk of parsed.hunks) {
+        leftLines.push({ type: 'hunk', text: `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@${hunk.context || ''}` });
+        rightLines.push({ type: 'hunk', text: `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@${hunk.context || ''}` });
+
+        let oldLineNum = hunk.oldStart;
+        let newLineNum = hunk.newStart;
+        let i = 0;
+
+        while (i < hunk.lines.length) {
+            const line = hunk.lines[i];
+
+            if (line.type === 'context') {
+                leftLines.push({ type: 'context', num: oldLineNum++, content: line.content });
+                rightLines.push({ type: 'context', num: newLineNum++, content: line.content });
+                i++;
+            } else if (line.type === 'del') {
+                const dels = [], adds = [];
+                while (i < hunk.lines.length && hunk.lines[i].type === 'del') {
+                    dels.push({ num: oldLineNum++, content: hunk.lines[i].content });
+                    i++;
+                }
+                while (i < hunk.lines.length && hunk.lines[i].type === 'add') {
+                    adds.push({ num: newLineNum++, content: hunk.lines[i].content });
+                    i++;
+                }
+                const maxLen = Math.max(dels.length, adds.length);
+                for (let j = 0; j < maxLen; j++) {
+                    leftLines.push(j < dels.length ? { type: 'del', num: dels[j].num, content: dels[j].content } : { type: 'empty' });
+                    rightLines.push(j < adds.length ? { type: 'add', num: adds[j].num, content: adds[j].content } : { type: 'empty' });
+                }
+            } else if (line.type === 'add') {
+                leftLines.push({ type: 'empty' });
+                rightLines.push({ type: 'add', num: newLineNum++, content: line.content });
+                i++;
+            }
+        }
+    }
+
+    return { leftLines, rightLines };
+}
+
+// Build split view data for full file
+function buildFullFileSplitData(parsed) {
+    const leftLines = [];
+    const rightLines = [];
+
+    // Build maps of changes
+    const deletions = new Map(); // oldLineNum -> content
+    const additions = []; // {afterOldLine, newLineNum, content}
+
+    for (const hunk of parsed.hunks) {
+        let oldLine = hunk.oldStart;
+        let newLine = hunk.newStart;
+        let lastOldLine = hunk.oldStart - 1;
+
+        for (const line of hunk.lines) {
+            if (line.type === 'del') {
+                deletions.set(oldLine, line.content);
+                lastOldLine = oldLine;
+                oldLine++;
+            } else if (line.type === 'add') {
+                additions.push({ afterOldLine: lastOldLine, newLineNum: newLine, content: line.content });
+                newLine++;
+            } else {
+                lastOldLine = oldLine;
+                oldLine++;
+                newLine++;
+            }
+        }
+    }
+
+    // Render full file with interleaved additions
+    let newLineNum = 1;
+    let addIdx = 0;
+
+    for (let i = 0; i < originalFileContent.length; i++) {
+        const fileLine = originalFileContent[i];
+        const lineNum = fileLine.number;
+
+        // Check for additions that should appear before this line
+        while (addIdx < additions.length && additions[addIdx].afterOldLine < lineNum) {
+            leftLines.push({ type: 'empty' });
+            rightLines.push({ type: 'add', num: additions[addIdx].newLineNum, content: additions[addIdx].content });
+            addIdx++;
+        }
+
+        if (deletions.has(lineNum)) {
+            // This line is deleted
+            leftLines.push({ type: 'del', num: lineNum, content: deletions.get(lineNum) });
+            rightLines.push({ type: 'empty' });
+
+            // Check for additions immediately after this deletion
+            while (addIdx < additions.length && additions[addIdx].afterOldLine === lineNum) {
+                leftLines.push({ type: 'empty' });
+                rightLines.push({ type: 'add', num: additions[addIdx].newLineNum, content: additions[addIdx].content });
+                addIdx++;
+            }
+        } else {
+            // Context line (unchanged)
+            leftLines.push({ type: 'context', num: lineNum, content: fileLine.content });
+            rightLines.push({ type: 'context', num: newLineNum, content: fileLine.content });
+            newLineNum++;
+
+            // Check for additions after this context line
+            while (addIdx < additions.length && additions[addIdx].afterOldLine === lineNum) {
+                leftLines.push({ type: 'empty' });
+                rightLines.push({ type: 'add', num: additions[addIdx].newLineNum, content: additions[addIdx].content });
+                addIdx++;
+            }
+        }
+    }
+
+    // Any remaining additions
+    while (addIdx < additions.length) {
+        leftLines.push({ type: 'empty' });
+        rightLines.push({ type: 'add', num: additions[addIdx].newLineNum, content: additions[addIdx].content });
+        addIdx++;
+    }
+
+    return { leftLines, rightLines };
+}
+
+// Create diff table from line data
+function createDiffTable(lines, side) {
+    const table = document.createElement('table');
+    table.className = 'diff-table';
+    const tbody = document.createElement('tbody');
+
+    for (const line of lines) {
+        const row = document.createElement('tr');
+        if (line.type === 'hunk') {
+            row.className = 'diff-hunk-header';
+            row.innerHTML = `<td class="diff-line-num"></td><td class="diff-line-content">${escapeHtml(line.text)}</td>`;
+        } else if (line.type === 'empty') {
+            row.className = 'diff-empty';
+            row.innerHTML = `<td class="diff-line-num"></td><td class="diff-line-content"><pre> </pre></td>`;
+        } else if (line.type === 'del') {
+            row.className = 'diff-del';
+            row.innerHTML = `<td class="diff-line-num">${line.num}</td><td class="diff-line-content"><pre>${escapeHtml(line.content)}</pre></td>`;
+        } else if (line.type === 'add') {
+            row.className = 'diff-add';
+            row.innerHTML = `<td class="diff-line-num">${line.num}</td><td class="diff-line-content"><pre>${escapeHtml(line.content)}</pre></td>`;
+        } else {
+            row.className = 'diff-context';
+            row.innerHTML = `<td class="diff-line-num">${line.num}</td><td class="diff-line-content"><pre>${escapeHtml(line.content)}</pre></td>`;
+        }
+        tbody.appendChild(row);
+    }
+
+    table.appendChild(tbody);
+    return table;
+}
+
+// Sync scroll between split diff panes
+function setupSplitDiffScroll(leftPane, rightPane) {
+    let isSyncing = false;
+
+    function sync(source, target) {
+        if (!syncScrollEnabled || isSyncing) return;
+        isSyncing = true;
+        target.scrollTop = source.scrollTop;
+        target.scrollLeft = source.scrollLeft;
+        setTimeout(() => { isSyncing = false; }, 10);
+    }
+
+    leftPane.addEventListener('scroll', () => sync(leftPane, rightPane));
+    rightPane.addEventListener('scroll', () => sync(rightPane, leftPane));
 }
 
 // Quick Fix function (single-shot with file context)

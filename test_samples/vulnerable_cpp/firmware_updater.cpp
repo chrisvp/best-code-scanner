@@ -1,5 +1,9 @@
 // Firmware Update Manager - OTA Update Handler
 // Manages firmware downloads, verification, and installation
+//
+// @benchmark_finding: Command Injection
+// @benchmark_severity: Critical
+// @benchmark_line: 328
 
 #include <cstdlib>
 #include <cstring>

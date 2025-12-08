@@ -1,5 +1,9 @@
 // Memory Pool Manager - Custom Allocator for Embedded Systems
 // Provides efficient memory management with minimal fragmentation
+//
+// @benchmark_finding: Use After Free
+// @benchmark_severity: High
+// @benchmark_line: 370
 
 #include <cstdlib>
 #include <cstring>

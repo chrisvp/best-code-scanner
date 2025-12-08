@@ -35,7 +35,74 @@
                     class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
                     LLM Logs
                 </button>
+                <button onclick="switchTab('benchmark')" id="tab-benchmark"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    Benchmark
+                </button>
             </nav>
+        </div>
+
+        <!-- Tab: Benchmark -->
+        <div id="panel-benchmark" class="tab-panel hidden">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Run Benchmark -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                            Run Benchmark
+                        </h2>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Dataset</label>
+                            <select id="benchmark-dataset" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="">Loading...</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
+                            <select id="benchmark-model" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
+                                <option value="">Loading...</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template (Optional Override)</label>
+                            <textarea id="benchmark-prompt" rows="4" placeholder="Leave empty to use model default..."
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+                        </div>
+
+                        <button onclick="runBenchmark()" id="run-benchmark-btn"
+                            class="w-full px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            Start Benchmark
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Recent Runs -->
+                <div class="lg:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col h-[600px]">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                            </svg>
+                            Recent Runs
+                        </h2>
+                        <button onclick="loadBenchmarkRuns()" class="text-xs text-gray-400 hover:text-white">Refresh</button>
+                    </div>
+                    <div class="flex-1 overflow-auto p-4" id="benchmark-runs-container">
+                        <div class="text-center text-gray-500 py-12">Loading runs...</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Tab: Output Format Tester -->
@@ -755,9 +822,153 @@ async function clearOldLogs() {
 document.addEventListener('DOMContentLoaded', function() {
     loadModels();
     // Only load stats if on logs tab
-    if (localStorage.getItem('tuning_active_tab') === 'llm-logs') {
+    const activeTab = localStorage.getItem('tuning_active_tab');
+    if (activeTab === 'llm-logs') {
         loadStats();
+    } else if (activeTab === 'benchmark') {
+        initBenchmarkTab();
     }
 });
+
+// Update switchTab to load benchmark data
+const originalSwitchTab = switchTab;
+switchTab = function(tabId) {
+    originalSwitchTab(tabId);
+    if (tabId === 'benchmark') {
+        initBenchmarkTab();
+    }
+};
+
+function initBenchmarkTab() {
+    loadBenchmarkDatasets();
+    loadBenchmarkModels();
+    loadBenchmarkRuns();
+}
+
+async function loadBenchmarkDatasets() {
+    try {
+        const response = await fetch('/api/v1/tuning/datasets');
+        const datasets = await response.json();
+        const select = document.getElementById('benchmark-dataset');
+        
+        if (datasets.length === 0) {
+            select.innerHTML = '<option value="">No datasets found</option>';
+            return;
+        }
+        
+        select.innerHTML = datasets.map(d => 
+            `<option value="${d.id}">${escapeHtml(d.name)} (${d.description || 'No desc'})</option>`
+        ).join('');
+    } catch (e) {
+        console.error('Failed to load datasets:', e);
+    }
+}
+
+async function loadBenchmarkModels() {
+    try {
+        const response = await fetch('/models');
+        const models = await response.json();
+        const select = document.getElementById('benchmark-model');
+        
+        select.innerHTML = models.map(m => 
+            `<option value="${m.id}">${escapeHtml(m.name)}</option>`
+        ).join('');
+    } catch (e) {
+        console.error('Failed to load models:', e);
+    }
+}
+
+async function runBenchmark() {
+    const datasetId = document.getElementById('benchmark-dataset').value;
+    const modelId = document.getElementById('benchmark-model').value;
+    const prompt = document.getElementById('benchmark-prompt').value;
+    
+    if (!datasetId || !modelId) {
+        alert('Please select a dataset and a model');
+        return;
+    }
+    
+    const btn = document.getElementById('run-benchmark-btn');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="animate-spin">⏳</span> Starting...';
+    
+    try {
+        const response = await fetch('/api/v1/tuning/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                dataset_id: parseInt(datasetId),
+                model_id: parseInt(modelId),
+                prompt_template: prompt || null
+            })
+        });
+        
+        if (response.ok) {
+            loadBenchmarkRuns(); // Refresh list
+            // alert('Benchmark started in background');
+        } else {
+            const err = await response.json();
+            alert('Error: ' + (err.detail || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
+async function loadBenchmarkRuns() {
+    try {
+        const response = await fetch('/api/v1/tuning/runs');
+        const runs = await response.json();
+        const container = document.getElementById('benchmark-runs-container');
+        
+        if (runs.length === 0) {
+            container.innerHTML = '<div class="text-center text-gray-500 py-12">No benchmarks run yet</div>';
+            return;
+        }
+        
+        container.innerHTML = runs.map(run => {
+            const passRate = run.total_cases > 0 ? Math.round((run.passed_cases / run.total_cases) * 100) : 0;
+            const color = passRate >= 80 ? 'text-green-400' : passRate >= 50 ? 'text-yellow-400' : 'text-red-400';
+            
+            return `
+            <div class="mb-3 bg-gray-900/50 border border-gray-700 rounded-lg p-3 cursor-pointer hover:bg-gray-700/30 transition-colors"
+                 onclick="showRunDetails(${run.id})">
+                <div class="flex justify-between items-start mb-2">
+                    <div>
+                        <div class="font-medium text-gray-200">Run #${run.id}</div>
+                        <div class="text-xs text-gray-500">${new Date(run.created_at).toLocaleString()}</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xs uppercase font-bold tracking-wider ${run.status === 'completed' ? 'text-green-500' : 'text-blue-400'}">
+                            ${run.status}
+                        </div>
+                        ${run.status === 'completed' ? `
+                            <div class="text-lg font-bold ${color}">${passRate}%</div>
+                        ` : ''}
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-xs text-gray-400">
+                    <div>Total: <span class="text-gray-300">${run.total_cases}</span></div>
+                    <div>Passed: <span class="text-gray-300">${run.passed_cases}</span></div>
+                    <div>Failed: <span class="text-gray-300">${run.failed_cases}</span></div>
+                </div>
+            </div>
+            `;
+        }).join('');
+        
+    } catch (e) {
+        console.error('Failed to load runs:', e);
+    }
+}
+
+function showRunDetails(runId) {
+    // Ideally open a modal, but for now simple alert or redirect
+    // Implementation for detailed view pending
+    alert('Detailed view implementation pending for run ' + runId);
+}
 </script>
 {% endblock %}

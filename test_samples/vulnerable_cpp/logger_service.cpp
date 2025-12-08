@@ -1,5 +1,9 @@
 // Logger Service - System Logging and Diagnostics
 // Handles log collection, filtering, and output management
+//
+// @benchmark_finding: Format String Vulnerability
+// @benchmark_severity: High
+// @benchmark_line: 268
 
 #include <cstdlib>
 #include <cstring>

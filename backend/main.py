@@ -55,8 +55,10 @@ app = FastAPI(
 )
 
 from app.api.endpoints import router
+from app.api.tuning import router as tuning_router
 
 app.include_router(router)
+app.include_router(tuning_router, prefix="/api/v1/tuning", tags=["tuning"])
 
 @app.get("/health")
 def health():

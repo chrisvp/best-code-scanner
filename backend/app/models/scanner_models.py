@@ -652,7 +652,7 @@ class AgentSession(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    draft_finding = relationship("DraftFinding", back_populates="agent_sessions", foreign_keys=[draft_finding_id])
+    draft_finding = relationship("DraftFinding", back_populates="agent_sessions")
 
 
 class MRReview(Base):
@@ -778,6 +778,96 @@ class VerificationVote(Base):
     # Relationships
     draft_finding = relationship("DraftFinding")
     verifier = relationship("ProfileVerifier")
+
+
+class BenchmarkDataset(Base):
+    """Collection of test cases for benchmarking"""
+    __tablename__ = "benchmark_datasets"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=local_now)
+
+    cases = relationship("BenchmarkCase", back_populates="dataset")
+    runs = relationship("BenchmarkRun", back_populates="dataset")
+
+
+class BenchmarkCase(Base):
+    """Individual test case within a benchmark dataset"""
+    __tablename__ = "benchmark_cases"
+
+    id = Column(Integer, primary_key=True)
+    dataset_id = Column(Integer, ForeignKey("benchmark_datasets.id"), nullable=False, index=True)
+    
+    file_path = Column(String, nullable=False)
+    content = Column(Text, nullable=True)  # Store code content if not on disk
+    language = Column(String, nullable=True)
+    
+    # Expected outcome
+    is_vulnerable = Column(Boolean, default=True)
+    expected_finding_type = Column(String, nullable=True)  # e.g. "Buffer Overflow"
+    expected_severity = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    line_number = Column(Integer, nullable=True)
+
+    dataset = relationship("BenchmarkDataset", back_populates="cases")
+    results = relationship("BenchmarkResult", back_populates="case")
+
+
+class BenchmarkRun(Base):
+    """Execution of a model against a benchmark dataset"""
+    __tablename__ = "benchmark_runs"
+
+    id = Column(Integer, primary_key=True)
+    dataset_id = Column(Integer, ForeignKey("benchmark_datasets.id"), nullable=False, index=True)
+    model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=False, index=True)
+    
+    # Configuration used
+    prompt_template = Column(Text, nullable=True)
+    
+    # Status and Results
+    status = Column(String, default="pending")  # pending, running, completed, failed
+    total_cases = Column(Integer, default=0)
+    passed_cases = Column(Integer, default=0)
+    failed_cases = Column(Integer, default=0)
+    
+    # Performance metrics
+    total_time_ms = Column(Float, default=0)
+    avg_latency_ms = Column(Float, default=0)
+    
+    created_at = Column(DateTime(timezone=True), default=local_now)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    dataset = relationship("BenchmarkDataset", back_populates="runs")
+    model = relationship("ModelConfig")
+    results = relationship("BenchmarkResult", back_populates="run")
+
+
+class BenchmarkResult(Base):
+    """Result of a single test case in a benchmark run"""
+    __tablename__ = "benchmark_results"
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Integer, ForeignKey("benchmark_runs.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("benchmark_cases.id"), nullable=False, index=True)
+    
+    # Outcome
+    # TP (True Positive): Vulnerable and Found
+    # TN (True Negative): Safe and Not Found
+    # FP (False Positive): Safe but Found
+    # FN (False Negative): Vulnerable but Not Found
+    verdict = Column(String, nullable=False)
+    
+    model_response = Column(Text, nullable=True)
+    latency_ms = Column(Float, default=0)
+    
+    # If finding was found
+    found_severity = Column(String, nullable=True)
+    found_line = Column(Integer, nullable=True)
+
+    run = relationship("BenchmarkRun", back_populates="results")
+    case = relationship("BenchmarkCase", back_populates="results")
 
 
 class GlobalSetting(Base):

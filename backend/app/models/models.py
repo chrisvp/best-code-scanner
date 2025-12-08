@@ -55,6 +55,7 @@ class Finding(Base):
     file_path = Column(String, nullable=False)
     line_number = Column(Integer, nullable=True)
     severity = Column(String, default="Medium")  # Low, Medium, High, Critical
+    status = Column(String, default="VERIFIED", index=True)  # VERIFIED, FALSE_POSITIVE, FIXED, IGNORED
     description = Column(Text, nullable=False)
     snippet = Column(Text, nullable=True)
     remediation = Column(Text, nullable=True)

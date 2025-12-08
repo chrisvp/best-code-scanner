@@ -229,15 +229,24 @@ Always output ONLY valid JSON with no additional text before or after.
             # Use call_batch for JSON modes to pass output_mode
             output_mode = "json" if self.response_format == "json" else "guided_json"
             json_schema = json.dumps(AGENT_JSON_SCHEMA) if self.response_format == "json_schema" else None
-            results = await self.model_pool.call_batch(
-                [prompt],
+            
+            # Use static simple_call for streaming support
+            return await ModelPool.simple_call(
+                prompt=prompt,
+                model=self.model_pool.config.name,
+                base_url=self.model_pool.config.base_url,
+                api_key=self.model_pool.config.api_key,
                 output_mode=output_mode,
                 json_schema=json_schema
             )
-            return results[0] if results else ""
         else:
             # Use regular call for text-based markers format
-            return await self.model_pool.call(prompt)
+            return await ModelPool.simple_call(
+                prompt=prompt,
+                model=self.model_pool.config.name,
+                base_url=self.model_pool.config.base_url,
+                api_key=self.model_pool.config.api_key
+            )
 
     async def _call_llm_with_tools(self, messages: List[Dict[str, Any]], retry_max_tokens: int = None) -> Dict[str, Any]:
         """Make LLM call with native tool calling support.
@@ -249,12 +258,15 @@ Always output ONLY valid JSON with no additional text before or after.
         Returns:
             Dict with 'content' (text response) and 'tool_calls' (list of tool calls if any)
         """
-        # Use centralized ModelPool.call_with_tools which handles timeouts, retries, and semaphores
-        return await self.model_pool.call_with_tools(
+        # Use static ModelPool.simple_chat_with_tools for better timeout handling via streaming
+        return await ModelPool.simple_chat_with_tools(
             messages=messages,
             tools=self.openai_tools,
+            model=self.model_pool.config.name,
+            base_url=self.model_pool.config.base_url,
+            api_key=self.model_pool.config.api_key,
             tool_choice="auto",
-            retry_max_tokens=retry_max_tokens
+            _retry_max_tokens=retry_max_tokens
         )
 
     async def run(self, task: str, context: str = "") -> AgentResult:

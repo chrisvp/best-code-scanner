@@ -1,5 +1,9 @@
 // Network Client Library - Firmware Network Communication Module
 // Handles TCP/UDP connections for device telemetry and remote configuration
+//
+// @benchmark_finding: Buffer Overflow
+// @benchmark_severity: High
+// @benchmark_line: 330
 
 #include <cstdlib>
 #include <cstring>
