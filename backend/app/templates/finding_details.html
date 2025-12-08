@@ -8,9 +8,17 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/c.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/cpp.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/diff.min.js"></script>
 {% endblock %}
 
 {% block content %}
+<!-- Custom diff highlighting for split view -->
+<style>
+    /* Diff syntax highlighting enhancement */
+    .language-diff .hljs-addition { background: rgba(34, 197, 94, 0.2); color: #86efac; display: block; margin: 0 -0.75rem; padding: 0 0.75rem; }
+    .language-diff .hljs-deletion { background: rgba(239, 68, 68, 0.2); color: #fca5a5; display: block; margin: 0 -0.75rem; padding: 0 0.75rem; }
+    .language-diff .hljs-meta { color: #67e8f9; background: rgba(103, 232, 249, 0.1); display: block; margin: 0 -0.75rem; padding: 0 0.75rem; }
+</style>
 <!-- Markdown content styles -->
 <style>
     .markdown-content h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1rem; margin-bottom: 0.5rem; color: #f3f4f6; }
@@ -159,6 +167,95 @@
                     {% endif %}
                 </div>
             </div>
+
+            <!-- Provenance & Verification History -->
+            {% if provenance and (provenance.votes or provenance.agent_sessions or provenance.draft) %}
+            <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                <h3 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Provenance & Verification
+                </h3>
+                
+                <div class="space-y-4">
+                    <!-- Discovery Phase -->
+                    {% if provenance.draft and provenance.draft.source_models %}
+                    <div>
+                        <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">1. Discovery</h4>
+                        <div class="flex flex-wrap gap-2">
+                            {% for model in provenance.draft.source_models %}
+                            <span class="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                </svg>
+                                {{ model }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Verification Phase -->
+                    {% if provenance.votes %}
+                    <div>
+                        <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">2. Consensus Verification</h4>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {% for vote in provenance.votes %}
+                            <div class="flex items-center justify-between p-2 rounded bg-gray-800 border border-gray-700 text-xs">
+                                <span class="text-gray-300">{{ vote.model_name }}</span>
+                                <div class="flex items-center gap-2">
+                                    <span class="font-medium 
+                                        {% if vote.decision == 'VERIFY' %}text-green-400
+                                        {% elif vote.decision == 'REJECT' %}text-red-400
+                                        {% else %}text-yellow-400{% endif %}">
+                                        {{ vote.decision }}
+                                    </span>
+                                    <span class="text-gray-500">{{ vote.confidence }}%</span>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Agent Verification Phase -->
+                    {% if provenance.agent_sessions %}
+                    <div>
+                        <h4 class="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">3. Agent Verification</h4>
+                        <div class="space-y-2">
+                            {% for session in provenance.agent_sessions %}
+                            <div class="p-2 rounded bg-gray-800 border border-gray-700 text-xs">
+                                <div class="flex items-center justify-between mb-1">
+                                    <span class="text-purple-300 font-medium">{{ session.model_name }}</span>
+                                    <span class="text-gray-500">{{ session.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span class="
+                                        {% if session.verdict == 'VERIFIED' or session.verdict == 'TRUE POSITIVE' %}text-green-400
+                                        {% elif session.verdict == 'REJECTED' or session.verdict == 'FALSE POSITIVE' %}text-red-400
+                                        {% else %}text-gray-400{% endif %} font-bold">
+                                        {{ session.verdict or 'IN PROGRESS' }}
+                                    </span>
+                                    <span class="text-gray-400">{{ session.total_steps }} steps</span>
+                                    {% if session.confidence %}
+                                    <span class="text-gray-400">Conf: {{ session.confidence }}%</span>
+                                    {% endif %}
+                                </div>
+                                {% if session.reasoning %}
+                                <div class="mt-1.5 pt-1.5 border-t border-gray-700/50 text-gray-400 line-clamp-2" title="{{ session.reasoning }}">
+                                    {{ session.reasoning }}
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
 
             <!-- Location -->
             <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
@@ -1253,6 +1350,8 @@ async function loadFixes() {
         if (allFixes.length > 0) {
             currentFixIndex = 0;
             updateFixNav();
+            // Display the first fix immediately
+            displayCurrentFix();
         }
     } catch (err) {
         console.error('Failed to load fixes:', err);
@@ -1523,7 +1622,7 @@ async function generateAgentFix() {
                 const pulsingIcon = document.querySelector('#fix-progress-panel svg');
                 if (pulsingIcon) pulsingIcon.classList.remove('animate-pulse');
 
-                if (data.success && data.corrected_code) {
+                if (data.success) {
                     // Reload fixes to include the new one
                     loadFixes().then(() => {
                         currentFixIndex = 0;

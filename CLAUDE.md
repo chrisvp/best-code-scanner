@@ -145,6 +145,10 @@ MAX_CONCURRENT_REQUESTS=5
 | `/profiles/{id}/analyzers` | POST | Add analyzer to profile |
 | `/rules` | GET/POST | Manage static rules |
 | `/chat` | POST | Chat with AI about findings |
+| `/finding/{id}` | GET | Finding details page with fix viewer |
+| `/finding/{id}/diff-files` | GET | List available diff files for a finding |
+| `/finding/{id}/diff-file/{model}` | GET | Get diff file content by model name |
+| `/finding/{id}/agent-fix/stream` | GET | SSE stream for agent fix generation |
 
 ## LLM Response Formats
 
@@ -191,6 +195,16 @@ MAX_CONCURRENT_REQUESTS=5
 - **Code intelligence**: Tree-sitter AST parsing for context retrieval
 - **Static rules**: Regex patterns for instant detection of common vulnerabilities
 - **Tab persistence**: Config page remembers active tab via localStorage
+- **Agent Fix**: Multi-turn agentic fix generation with tool use, saves unified diffs to files
+
+### Agent Fix System
+
+The Agent Fix feature generates security fixes using an agentic approach:
+- Uses tools: `read_file`, `search_code`, `list_files`, `save_fix`
+- Saves fixes as unified diff files: `{file_path}.fix.{findingId}.{model}.diff`
+- Diff files are stored alongside the original source file
+- Finding details page (`/finding/{id}`) auto-loads and displays existing diffs
+- Supports both split view (side-by-side) and unified diff view
 
 ## Test Samples
 

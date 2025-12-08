@@ -12,7 +12,7 @@ from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
     ScanProfile, ProfileAnalyzer, ProfileVerifier, WebhookConfig, WebhookDeliveryLog,
-    RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote
+    RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote, AgentSession
 )
 
 # Create tables
@@ -438,6 +438,28 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
     # Get scan profiles for rescan dropdown
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
 
+    # Get provenance data
+    provenance = {
+        "draft": None,
+        "votes": [],
+        "agent_sessions": []
+    }
+
+    if finding.draft_id:
+        draft = db.query(DraftFinding).filter(DraftFinding.id == finding.draft_id).first()
+        if draft:
+            provenance["draft"] = draft
+            provenance["votes"] = db.query(VerificationVote).filter(VerificationVote.draft_finding_id == draft.id).all()
+            
+    # Get agent sessions related to this finding or its draft
+    agent_query_filter = AgentSession.finding_id == finding.id
+    if finding.draft_id:
+        agent_query_filter = (AgentSession.finding_id == finding.id) | (AgentSession.draft_finding_id == finding.draft_id)
+        
+    provenance["agent_sessions"] = db.query(AgentSession).filter(
+        agent_query_filter
+    ).order_by(AgentSession.created_at.desc()).all()
+
     return templates.TemplateResponse("finding_details.html", {
         "request": request,
         "finding": finding,
@@ -445,7 +467,8 @@ async def get_finding_details(request: Request, finding_id: int, db: Session = D
         "scan": scan,
         "mr_review": mr_review,
         "profiles": profiles,
-        "global_settings": global_settings
+        "global_settings": global_settings,
+        "provenance": provenance
     })
 
 
@@ -537,20 +560,16 @@ async def agent_verify_finding(finding_id: int, model_id: int = Form(None), db: 
             snippet=finding.snippet or "",
             reason=finding.vulnerability_details or ""
         )
+        
+        # Update finding status based on verification
+        if not result['verified']:
+            finding.status = "FALSE_POSITIVE"
+        else:
+            finding.status = "VERIFIED"
+        db.commit()
 
-        # Stop model pool
         await model_pool.stop()
-
-        return JSONResponse({
-            "success": True,
-            "verified": result['verified'],
-            "confidence": result['confidence'],
-            "reasoning": result.get('reasoning', ''),
-            "attack_path": result.get('attack_path', ''),
-            "session_id": result.get('session_id'),
-            "state": result.get('state'),
-            "trace": result.get('trace', '')[:5000]  # Truncate trace
-        })
+        return JSONResponse(result)
 
     except ImportError as e:
         return JSONResponse({"error": f"Agent verification not available: {e}"}, status_code=500)
@@ -682,6 +701,22 @@ async def agent_verify_finding_stream(finding_id: int, model_id: int = None, db:
 
             # Get final result
             result = await verification_task
+            
+            # Update finding status based on verification
+            db_update = SessionLocal()
+            try:
+                f_update = db_update.query(Finding).filter(Finding.id == finding_id).first()
+                if f_update:
+                    if not result['verified']:
+                        f_update.status = "FALSE_POSITIVE"
+                    else:
+                        f_update.status = "VERIFIED"
+                    db_update.commit()
+            except Exception as e:
+                print(f"Failed to update finding status: {e}")
+            finally:
+                db_update.close()
+
             yield f"data: {json_module.dumps({'type': 'result', 'success': True, 'verified': result['verified'], 'confidence': result['confidence'], 'reasoning': result.get('reasoning', ''), 'attack_path': result.get('attack_path', ''), 'session_id': result.get('session_id')})}\n\n"
 
         except Exception as e:
@@ -1594,18 +1629,19 @@ async def get_code_context(finding_id: int, context_lines: int = 10, full_file: 
     line_number = finding.line_number or 1
 
     # Try to find the actual file with fuzzy matching
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     possible_paths = [
         file_path,
-        os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend", file_path),
-        os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox", file_path),
+        os.path.join(base_dir, file_path),
+        os.path.join(base_dir, "sandbox", file_path),
     ]
 
     # Also try with scan_id prefix for sandbox files
     if finding.scan_id:
-        possible_paths.append(os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox", str(finding.scan_id), file_path.split('/')[-1]))
+        possible_paths.append(os.path.join(base_dir, "sandbox", str(finding.scan_id), os.path.basename(file_path)))
         # Try stripping sandbox prefix if already included
         if file_path.startswith("sandbox/"):
-            possible_paths.append(os.path.join("/mnt/c/Users/acrvp/code/code-scanner/backend", file_path))
+            possible_paths.append(os.path.join(base_dir, file_path))
 
     actual_path = None
     for p in possible_paths:
@@ -1965,20 +2001,18 @@ async def agent_fix_stream(finding_id: int, model_id: int = None, db: Session = 
             end_time = datetime.now()
             duration_ms = (end_time - start_time).total_seconds() * 1000
 
-            # Determine success - either we have a fix code or a diff file
-            has_fix = bool(fix) or bool(diff_file)
-
-            # Save to GeneratedFix table and update AgentSession
             db_save = SessionLocal()
-            fix_id = None
-            fix_count = 0
             try:
-                if fix:
+                has_fix = bool(fix) or bool(diff_file)
+                fix_id = None
+                fix_count = 0
+
+                # Save GeneratedFix if successful
+                if has_fix:
                     generated_fix = GeneratedFix(
                         finding_id=finding_id,
-                        fix_type="agent",
                         model_name=model_config.name,
-                        code=fix,
+                        code=fix if fix else f"Diff saved to: {diff_file}",
                         reasoning=json_module.dumps(reasoning) if reasoning else None
                     )
                     db_save.add(generated_fix)
@@ -1986,7 +2020,7 @@ async def agent_fix_stream(finding_id: int, model_id: int = None, db: Session = 
                     # Update finding's corrected_code
                     finding_to_update = db_save.query(Finding).filter(Finding.id == finding_id).first()
                     if finding_to_update:
-                        finding_to_update.corrected_code = fix
+                        finding_to_update.corrected_code = fix if fix else f"Diff saved to: {diff_file}"
 
                     fix_id = generated_fix.id
 
