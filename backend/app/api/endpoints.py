@@ -125,6 +125,11 @@ async def run_revalidation_pipeline(scan_id: int, profile_id: int):
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
+    # Redirect to login if not authenticated
+    if not current_user:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/login", status_code=302)
+
     scans = db.query(Scan).order_by(Scan.created_at.desc()).all()
 
     # Get MR reviews with their findings
