@@ -122,6 +122,60 @@
                     </form>
                 </div>
             </div>
+
+            <!-- Joern CPG Scanner Settings -->
+            <div class="mt-6 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                    <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                        </svg>
+                        Joern CPG Scanner
+                        <span class="ml-2 px-2 py-0.5 text-xs bg-green-600/20 text-green-400 rounded">Static Analysis</span>
+                    </h2>
+                </div>
+                <form method="POST" class="p-4">
+                    <input type="hidden" name="form_type" value="joern">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1.5">Docker Image</label>
+                            <input type="text" name="joern_docker_image" value="{{ settings.JOERN_DOCKER_IMAGE }}"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500"
+                                placeholder="ghcr.io/joernio/joern:nightly">
+                            <p class="text-xs text-gray-500 mt-1">Docker image for Joern CPG analysis</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-gray-400 mb-1.5">Timeout (seconds)</label>
+                            <input type="number" name="joern_timeout" value="{{ settings.JOERN_TIMEOUT }}" min="60" max="3600"
+                                class="w-full bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-green-500/50 focus:border-green-500">
+                            <p class="text-xs text-gray-500 mt-1">Max time for Joern operations</p>
+                        </div>
+
+                        <div class="flex items-end">
+                            <button type="button" onclick="testJoernConnection()"
+                                class="w-full bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" id="joern-test-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                                </svg>
+                                <span id="joern-test-text">Test Connection</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 flex items-center justify-between">
+                        <div class="text-xs text-gray-500">
+                            <span id="joern-status" class="inline-flex items-center gap-1">
+                                <span class="w-2 h-2 rounded-full bg-gray-500"></span>
+                                Status unknown - click Test Connection
+                            </span>
+                        </div>
+                        <button type="submit" class="bg-green-600 hover:bg-green-500 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                            Save Joern Settings
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
 
         <!-- Tab: Models -->
@@ -286,9 +340,26 @@
                             <p class="text-xs text-gray-500 mt-0.5">{{ profile.description or 'No description' }}</p>
                         </div>
                         <div class="flex items-center gap-3">
-                            <span class="text-xs text-gray-500">
-                                Chunk: {{ profile.chunk_size }} | {{ profile.chunk_strategy }}
-                            </span>
+                            <div class="flex items-center gap-3">
+                                <span class="text-xs text-gray-500">
+                                    Chunk: {{ profile.chunk_size }} | {{ profile.chunk_strategy }}
+                                </span>
+                                <select onchange="updateProfilePhaseMethod({{ profile.id }}, this.value)"
+                                    class="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                    <option value="hybrid" {% if profile.first_phase_method == 'hybrid' or not profile.first_phase_method %}selected{% endif %}>Hybrid</option>
+                                    <option value="joern" {% if profile.first_phase_method == 'joern' %}selected{% endif %}>Joern Only</option>
+                                    <option value="llm" {% if profile.first_phase_method == 'llm' %}selected{% endif %}>LLM Only</option>
+                                </select>
+                                <select onchange="updateProfileJoernQuerySet({{ profile.id }}, this.value)"
+                                    class="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    title="Joern Query Set">
+                                    <option value="default" {% if profile.joern_query_set == 'default' or not profile.joern_query_set %}selected{% endif %}>default</option>
+                                    <option value="uefi" {% if profile.joern_query_set == 'uefi' %}selected{% endif %}>uefi</option>
+                                    <option value="memory" {% if profile.joern_query_set == 'memory' %}selected{% endif %}>memory</option>
+                                    <option value="injection" {% if profile.joern_query_set == 'injection' %}selected{% endif %}>injection</option>
+                                    <option value="all" {% if profile.joern_query_set == 'all' %}selected{% endif %}>all</option>
+                                </select>
+                            </div>
                             <div class="flex gap-1">
                                 <button onclick="duplicateProfile({{ profile.id }}, '{{ profile.name }}')"
                                     class="p-1.5 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded transition-colors"
@@ -1291,6 +1362,51 @@
                         </select>
                     </div>
                 </div>
+
+                <!-- First Phase Method -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-1">First Phase Method</label>
+                    <select name="first_phase_method" id="new-profile-first-phase" onchange="toggleJoernSettings('new-profile')" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="hybrid" selected>Hybrid (default) - Joern scan → LLM verify → LLM enrich</option>
+                        <option value="joern">Joern Only - Joern scan → skip verify → LLM enrich</option>
+                        <option value="llm">LLM Only - LLM scan → LLM verify → LLM enrich</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">Joern uses CPG static analysis for C/C++. Hybrid mode verifies Joern findings with LLMs. Joern-only mode auto-verifies with a "joern" vote.</p>
+                </div>
+
+                <!-- Joern Settings (visible by default since hybrid is default) -->
+                <div id="new-profile-joern-settings" class="space-y-4 p-4 bg-gray-900/50 rounded-lg border border-gray-700">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
+                        </svg>
+                        <span class="text-sm font-medium text-green-400">Joern Settings</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Query Set</label>
+                            <select name="joern_query_set" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="default">Default (common vulns)</option>
+                                <option value="memory">Memory Safety (buffer, UAF)</option>
+                                <option value="injection">Injection (cmd, format)</option>
+                                <option value="uefi">UEFI/EDK2 (firmware)</option>
+                                <option value="all">All Queries</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Chunk Strategy</label>
+                            <select name="joern_chunk_strategy" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="directory">By Directory (recommended)</option>
+                                <option value="file">By File (slower, more granular)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Max Files per CPG</label>
+                        <input type="number" name="joern_max_files_per_cpg" value="100" min="10" max="1000" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <p class="text-xs text-gray-500 mt-1">Larger values use more memory. For huge repos (OpenBMC, EDK2), use smaller values.</p>
+                    </div>
+                </div>
             </div>
             <div class="flex justify-end gap-3 mt-6">
                 <button type="button" onclick="document.getElementById('add-profile-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors">Cancel</button>
@@ -1426,7 +1542,7 @@ File: {file_path}
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
         </div>
-        <form id="add-verifier-form" hx-swap="none" hx-on::after-request="if(event.detail.successful) location.reload()">
+        <form id="add-verifier-form" onsubmit="submitAddVerifierForm(event)">
             <input type="hidden" name="profile_id" id="verifier-profile-id">
             <div class="space-y-4">
                 <div>
@@ -1615,6 +1731,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// Toggle Joern settings visibility based on first phase method selection
+function toggleJoernSettings(prefix) {
+    const select = document.getElementById(prefix + '-first-phase');
+    const settings = document.getElementById(prefix + '-joern-settings');
+    if (!select || !settings) return;
+
+    const method = select.value;
+    if (method === 'joern' || method === 'hybrid') {
+        settings.classList.remove('hidden');
+    } else {
+        settings.classList.add('hidden');
+    }
+}
+
 async function submitModelForm(event) {
     event.preventDefault();
     const form = event.target;
@@ -1651,6 +1781,64 @@ async function submitEditModelForm(event) {
 async function deleteModel(id, name) { if (!confirm(`Delete "${name}"?`)) return; if ((await fetch(`/models/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function deleteProfile(id, name) { if (!confirm(`Delete profile "${name}"?`)) return; if ((await fetch(`/profiles/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 async function duplicateProfile(id, name) { if ((await fetch(`/profiles/${id}/duplicate`, { method: 'POST' })).ok) location.reload(); else alert('Failed to duplicate profile'); }
+async function updateProfilePhaseMethod(id, method) {
+    const response = await fetch(`/profiles/${id}/phase-method`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ first_phase_method: method })
+    });
+    if (!response.ok) alert('Failed to update phase method');
+}
+
+async function updateProfileJoernQuerySet(id, querySet) {
+    const response = await fetch(`/profiles/${id}/joern-query-set`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ joern_query_set: querySet })
+    });
+    if (!response.ok) alert('Failed to update Joern query set');
+}
+
+// Joern Test
+function updateJoernStatus(color, message) {
+    const status = document.getElementById('joern-status');
+    status.textContent = '';
+    const dot = document.createElement('span');
+    dot.className = `w-2 h-2 rounded-full bg-${color}-500`;
+    const text = document.createElement('span');
+    text.className = `text-${color}-400`;
+    text.textContent = message;
+    status.appendChild(dot);
+    status.appendChild(text);
+}
+
+async function testJoernConnection() {
+    const btn = document.querySelector('[onclick="testJoernConnection()"]');
+    const text = document.getElementById('joern-test-text');
+
+    btn.disabled = true;
+    text.textContent = 'Testing...';
+
+    try {
+        const response = await fetch('/joern/test');
+        const data = await response.json();
+
+        if (data.joern_working) {
+            updateJoernStatus('green', 'Connected - ' + (data.version || 'Joern ready'));
+        } else if (data.docker_available && !data.image_available) {
+            updateJoernStatus('yellow', 'Image not found. Run: docker pull ' + data.image);
+        } else if (!data.docker_available) {
+            updateJoernStatus('red', 'Docker not available');
+        } else {
+            updateJoernStatus('red', data.error || 'Connection failed');
+        }
+    } catch (error) {
+        updateJoernStatus('red', 'Error: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        text.textContent = 'Test Connection';
+    }
+}
 
 // Model Discovery
 let discoveredModelsData = [];
@@ -1940,7 +2128,20 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 async function deleteAnalyzer(pid, aid, name) { if (!confirm(`Delete analyzer "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/analyzers/${aid}`, { method: 'DELETE' })).ok) location.reload(); }
-async function deleteVerifier(pid, vid, name) { if (!confirm(`Delete verifier "${name}"?`)) return; if ((await fetch(`/profiles/${pid}/verifiers/${vid}`, { method: 'DELETE' })).ok) location.reload(); }
+async function deleteVerifier(pid, vid, name) {
+    if (!confirm(`Delete verifier "${name}"?`)) return;
+    try {
+        const response = await fetch(`/profiles/${pid}/verifiers/${vid}`, { method: 'DELETE' });
+        if (response.ok) {
+            location.reload();
+        } else {
+            const data = await response.json();
+            alert('Error: ' + (data.error || 'Failed to delete verifier'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
 async function deleteRule(id, name) { if (!confirm(`Delete rule "${name}"?`)) return; if ((await fetch(`/rules/${id}`, { method: 'DELETE' })).ok) location.reload(); }
 
 function addAnalyzer(profileId) {
@@ -2015,9 +2216,29 @@ async function submitEditAnalyzerForm(event) {
 // Verifier functions
 function addVerifier(profileId) {
     document.getElementById('verifier-profile-id').value = profileId;
-    document.getElementById('add-verifier-form').setAttribute('hx-post', `/profiles/${profileId}/verifiers`);
-    htmx.process(document.getElementById('add-verifier-form'));
     document.getElementById('add-verifier-modal').classList.remove('hidden');
+}
+
+async function submitAddVerifierForm(event) {
+    event.preventDefault();
+    const form = event.target;
+    const formData = new FormData(form);
+    const profileId = formData.get('profile_id');
+
+    try {
+        const response = await fetch(`/profiles/${profileId}/verifiers`, {
+            method: 'POST',
+            body: formData
+        });
+        if (response.ok) {
+            location.reload();
+        } else {
+            const data = await response.json();
+            alert('Error: ' + (data.error || 'Failed to add verifier'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
 }
 
 async function editVerifier(profileId, verifierId) {

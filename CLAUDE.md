@@ -311,6 +311,49 @@ CREATE INDEX IF NOT EXISTS idx_as_status ON agent_sessions(status);
 -- ALTER TABLE agent_verification_sessions RENAME TO agent_sessions;
 ```
 
+For Joern CPG scanner support (December 2025), run:
+```sql
+-- Add Joern scanning options to scan_profiles
+ALTER TABLE scan_profiles ADD COLUMN first_phase_method VARCHAR DEFAULT 'hybrid';
+ALTER TABLE scan_profiles ADD COLUMN joern_chunk_strategy VARCHAR DEFAULT 'directory';
+ALTER TABLE scan_profiles ADD COLUMN joern_max_files_per_cpg INTEGER DEFAULT 100;
+ALTER TABLE scan_profiles ADD COLUMN joern_query_set VARCHAR DEFAULT 'default';
+```
+
+## Joern Integration
+
+Joern is the default first-phase scanner using Code Property Graphs (CPG) for deterministic vulnerability detection in C/C++ code.
+
+### Setup
+```bash
+# Pull Joern Docker image
+docker pull ghcr.io/joernio/joern:nightly
+```
+
+### Scan Modes
+
+In scan profiles, set `first_phase_method` to control the pipeline:
+
+| Mode | Pipeline | Description |
+|------|----------|-------------|
+| `hybrid` (default) | Joern scan → LLM verify → LLM enrich | Best accuracy. Joern finds candidates, LLMs filter false positives |
+| `joern` | Joern scan → (auto-verify) → LLM enrich | Fastest. Joern findings skip LLM verification, go directly to enrichment |
+| `llm` | LLM scan → LLM verify → LLM enrich | Original behavior. Pure LLM-based scanning |
+
+In `joern` mode, findings are auto-verified with a "joern-cpg" vote marker (visible in verification_votes table) to indicate they bypassed LLM verification.
+
+### Query Sets
+- `default`: Common vulnerabilities (CWE-78, CWE-120, CWE-134, CWE-416)
+- `memory`: Memory safety focused (buffer overflow, UAF, double-free)
+- `injection`: Injection vulnerabilities (command, format string, path traversal)
+- `uefi`: UEFI/EDK2 firmware APIs (CopyMem, AllocateZeroPool, FreePool, SMM handlers)
+- `all`: All available queries
+
+### Large Repos
+For huge repositories (OpenBMC, EDK2), Joern processes in chunks:
+- `joern_chunk_strategy`: `directory` (default) or `file`
+- `joern_max_files_per_cpg`: Max files per CPG (default 100)
+
 ## Future Features
 
 See `backend/docs/FEATURE_ROADMAP.md` for planned features:

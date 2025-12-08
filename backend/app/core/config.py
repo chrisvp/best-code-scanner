@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_ON_DEMAND_SCANS: int = 3  # Max on-demand (manual) scans running simultaneously
     MAX_CONCURRENT_WATCHER_SCANS: int = 2     # Max watcher-triggered scans running simultaneously
 
+    # Joern Configuration
+    JOERN_DOCKER_IMAGE: str = "ghcr.io/joernio/joern:nightly"
+    JOERN_TIMEOUT: int = 600  # Seconds to wait for Joern operations
+
     # Scanner URL (for links in MR comments)
     SCANNER_URL_PREFIX: str = "http://localhost:8000"
 

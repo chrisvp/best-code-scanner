@@ -1,11 +1,29 @@
 import re
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 
-from app.models.scanner_models import VerifiedFinding, VulnerabilityCategory, DraftFinding, ScanFileChunk, ScanFile
+from app.models.scanner_models import VerifiedFinding, VulnerabilityCategory, DraftFinding, ScanFileChunk, ScanFile, GlobalSetting, ModelConfig
 from app.services.analysis.parsers import EnrichmentParser
 from app.services.orchestration.model_orchestrator import ModelPool
+
+# Required fields for a complete enrichment - all findings should have these filled
+REQUIRED_ENRICHMENT_FIELDS = [
+    'finding',
+    'category',
+    'severity',
+    'vulnerability_details',
+    'proof_of_concept',
+    'remediation_steps',
+]
+
+# Fields that are good to have but not strictly required
+OPTIONAL_ENRICHMENT_FIELDS = [
+    'cvss',
+    'impacted_code',
+    'corrected_code',
+    'references',
+]
 
 
 class CategoryMatcher:
@@ -191,17 +209,23 @@ The fix should address the security issue while maintaining the original functio
                     vuln_type = draft.vulnerability_type or ""
                     line_number = draft.line_number or 0
 
+                    # Get file_path from draft directly (Joern findings) or from chunk's ScanFile
+                    file_path_full = draft.file_path if draft.file_path else None
+
                     # Get chunk and file info for pre-fetched context
                     chunk = self.db.query(ScanFileChunk).filter(
                         ScanFileChunk.id == draft.chunk_id
                     ).first()
 
+                    scan_file = None
                     if chunk:
                         scan_file = self.db.query(ScanFile).filter(
                             ScanFile.id == chunk.scan_file_id
                         ).first()
 
                         if scan_file:
+                            if not file_path_full:
+                                file_path_full = scan_file.file_path
                             file_name = os.path.basename(scan_file.file_path)
 
                             # Pre-fetch full file content
@@ -212,6 +236,12 @@ The fix should address the security issue while maintaining the original functio
 
                             # Pre-fetch callers (search for function calls)
                             callers = self._get_function_callers(scan_file.scan_id, file_name, line_number)
+
+                    # Fallback: if we have draft.file_path but no chunk/scan_file (Joern finding)
+                    if not scan_file and file_path_full and os.path.exists(file_path_full):
+                        file_name = os.path.basename(file_path_full)
+                        # Read file directly for Joern findings without chunks
+                        full_file = self._get_full_file_content_by_path(file_path_full, line_number)
 
             prompt = self.ENRICH_PROMPT.format(
                 title=v.title,
@@ -236,10 +266,56 @@ The fix should address the security issue while maintaining the original functio
             phase='enricher',
         )
 
-        # Batch call for enrichment
+        # Batch call for enrichment with validation, retry, and cleanup fallback
         try:
             responses = await self.model_pool.call_batch(prompts)
             results = [self.parser.parse(r) for r in responses]
+
+            # Check for incomplete results and collect indices for retry
+            incomplete_indices = []
+            for i, (result, verified, prompt) in enumerate(zip(results, verified_list, prompts)):
+                missing = self._get_missing_fields(result)
+                if missing:
+                    print(f"[Enricher] Finding '{verified.title}' missing fields: {missing}")
+                    incomplete_indices.append((i, verified, prompt, result))
+
+            # Retry incomplete results once with enhanced prompt
+            if incomplete_indices:
+                print(f"[Enricher] Retrying {len(incomplete_indices)} incomplete enrichments...")
+                retry_prompts = []
+                for i, verified, original_prompt, partial_result in incomplete_indices:
+                    missing = self._get_missing_fields(partial_result)
+                    retry_prompt = self._build_retry_prompt(original_prompt, partial_result, missing)
+                    retry_prompts.append(retry_prompt)
+
+                try:
+                    retry_responses = await self.model_pool.call_batch(retry_prompts)
+                    for (i, verified, _, partial_result), retry_response in zip(incomplete_indices, retry_responses):
+                        retry_result = self.parser.parse(retry_response)
+                        # Merge retry result with original (retry takes precedence for filled fields)
+                        merged = self._merge_results(partial_result, retry_result)
+                        results[i] = merged
+
+                        # Check if still incomplete after retry
+                        still_missing = self._get_missing_fields(merged)
+                        if still_missing:
+                            print(f"[Enricher] Finding '{verified.title}' still missing after retry: {still_missing}")
+                except Exception as e:
+                    print(f"[Enricher] Retry batch failed: {e}")
+
+            # Try cleanup model for any still-incomplete results
+            still_incomplete = []
+            for i, (result, verified) in enumerate(zip(results, verified_list)):
+                missing = self._get_missing_fields(result)
+                if missing:
+                    still_incomplete.append((i, verified, result))
+
+            if still_incomplete and self.db:
+                print(f"[Enricher] Attempting cleanup model for {len(still_incomplete)} incomplete results...")
+                for i, verified, partial_result in still_incomplete:
+                    cleaned = await self._try_cleanup_model(partial_result, verified)
+                    if cleaned:
+                        results[i] = cleaned
 
             # Normalize categories if db available
             if self.category_matcher:
@@ -247,12 +323,126 @@ The fix should address the security issue while maintaining the original functio
                     raw_cat = result.get('category', '')
                     result['category'] = self.category_matcher.match_or_create(raw_cat)
 
-            # Don't auto-generate fixes - user can request on-demand
             return results
         except Exception as e:
             print(f"Enrichment batch failed: {e}")
             # Return minimal findings
             return [self._minimal_finding(v) for v in verified_list]
+
+    def _get_missing_fields(self, result: dict) -> List[str]:
+        """Check which required fields are missing or empty"""
+        missing = []
+        for field in REQUIRED_ENRICHMENT_FIELDS:
+            value = result.get(field, '')
+            if not value or (isinstance(value, str) and not value.strip()):
+                missing.append(field)
+        return missing
+
+    def _build_retry_prompt(self, original_prompt: str, partial_result: dict, missing_fields: List[str]) -> str:
+        """Build a retry prompt that emphasizes the missing fields"""
+        existing_content = []
+        for field in ['finding', 'category', 'severity', 'cvss', 'impacted_code',
+                      'vulnerability_details', 'proof_of_concept', 'remediation_steps', 'references']:
+            value = partial_result.get(field, '')
+            if value and isinstance(value, str) and value.strip():
+                existing_content.append(f"*{field.upper()}: {value}")
+
+        existing_text = "\n".join(existing_content) if existing_content else "(No content extracted)"
+
+        return f"""{original_prompt}
+
+=== IMPORTANT: RETRY REQUEST ===
+Your previous response was incomplete. The following sections were missing or empty:
+{', '.join(f.upper() for f in missing_fields)}
+
+Previously extracted content:
+{existing_text}
+
+Please provide a COMPLETE response with ALL sections filled out, especially:
+{', '.join(f'*{f.upper()}' for f in missing_fields)}
+
+Remember: Every finding MUST have proof_of_concept, remediation_steps, and references filled out."""
+
+    def _merge_results(self, original: dict, retry: dict) -> dict:
+        """Merge retry results with original, preferring non-empty values"""
+        merged = dict(original)
+        for key, value in retry.items():
+            if value and isinstance(value, str) and value.strip():
+                # Only overwrite if original was empty or retry is non-empty
+                if not merged.get(key) or (isinstance(merged.get(key), str) and not merged[key].strip()):
+                    merged[key] = value
+        return merged
+
+    async def _try_cleanup_model(self, partial_result: dict, verified: VerifiedFinding) -> Optional[dict]:
+        """Try to use the cleanup model to fill in missing sections"""
+        try:
+            # Get cleanup model from global settings
+            cleanup_model_setting = self.db.query(GlobalSetting).filter(
+                GlobalSetting.key == "cleanup_model_id"
+            ).first()
+
+            if not cleanup_model_setting or not cleanup_model_setting.value:
+                return None
+
+            cleanup_model = self.db.query(ModelConfig).filter(
+                ModelConfig.id == int(cleanup_model_setting.value)
+            ).first()
+            if not cleanup_model:
+                return None
+
+            # Build context from what we have
+            existing_content = []
+            for field in ['finding', 'category', 'severity', 'cvss', 'impacted_code',
+                          'vulnerability_details', 'proof_of_concept', 'remediation_steps', 'references']:
+                value = partial_result.get(field, '')
+                if value and isinstance(value, str) and value.strip():
+                    existing_content.append(f"*{field.upper()}: {value}")
+
+            missing = self._get_missing_fields(partial_result)
+
+            cleanup_prompt = f"""Complete this security vulnerability report. Some sections are missing.
+
+=== EXISTING CONTENT ===
+{chr(10).join(existing_content)}
+
+=== MISSING SECTIONS (you MUST fill these in) ===
+{', '.join(f'*{f.upper()}' for f in missing)}
+
+=== CONTEXT ===
+Title: {verified.title}
+Type: {verified.confidence}% confidence
+Attack Vector: {verified.attack_vector or 'Unknown'}
+
+=== INSTRUCTIONS ===
+Generate ONLY the missing sections in the marker format. For example:
+*PROOF_OF_CONCEPT:
+[actual exploit example or curl command]
+*REMEDIATION_STEPS:
+1. [step one]
+2. [step two]
+*REFERENCES:
+- https://cwe.mitre.org/...
+
+Be specific and practical. Do not leave any section empty."""
+
+            from app.services.llm_provider import llm_provider
+
+            result = await llm_provider.chat_completion(
+                messages=[{"role": "user", "content": cleanup_prompt}],
+                model=cleanup_model.name
+            )
+            response = result.get("content", "")
+
+            if response:
+                cleanup_result = self.parser.parse(response)
+                # Merge with original
+                merged = self._merge_results(partial_result, cleanup_result)
+                return merged
+
+        except Exception as e:
+            print(f"[Enricher] Cleanup model failed: {e}")
+
+        return None
 
     async def _generate_fixes_batch(self, enriched_results: List[dict]) -> List[dict]:
         """
@@ -365,6 +555,38 @@ The fix should address the security issue while maintaining the original functio
                 for i, line in enumerate(lines):
                     line_num = i + 1
                     # Highlight vulnerable line region
+                    marker = ">>>" if abs(line_num - focus_line) <= 3 else "   "
+                    result.append(f"{marker} {line_num:4d} | {line.rstrip()}")
+                return "\n".join(result)
+
+            # For larger files, show 50 lines before and after focus line
+            start = max(0, focus_line - 50)
+            end = min(total_lines, focus_line + 50)
+
+            result = [f"(Showing lines {start+1}-{end} of {total_lines} total)"]
+            for i in range(start, end):
+                line_num = i + 1
+                marker = ">>>" if abs(line_num - focus_line) <= 3 else "   "
+                result.append(f"{marker} {line_num:4d} | {lines[i].rstrip()}")
+
+            return "\n".join(result)
+
+        except Exception as e:
+            return f"(Error reading file: {e})"
+
+    def _get_full_file_content_by_path(self, file_path: str, focus_line: int) -> str:
+        """Get full file content by path (for Joern findings without ScanFile)"""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+
+            total_lines = len(lines)
+
+            # For smaller files, show everything
+            if total_lines <= 200:
+                result = []
+                for i, line in enumerate(lines):
+                    line_num = i + 1
                     marker = ">>>" if abs(line_num - focus_line) <= 3 else "   "
                     result.append(f"{marker} {line_num:4d} | {line.rstrip()}")
                 return "\n".join(result)

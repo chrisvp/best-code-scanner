@@ -187,6 +187,7 @@ class DraftFinding(Base):
     vulnerability_type = Column(String)
     severity = Column(String)
     line_number = Column(Integer)
+    file_path = Column(String, nullable=True)  # Direct file path (esp. for Joern findings without chunks)
     snippet = Column(Text)
     reason = Column(Text)
 
@@ -289,6 +290,17 @@ class ScanProfile(Base):
     # Default scan settings
     chunk_size = Column(Integer, default=6000)
     chunk_strategy = Column(String, default="smart")
+
+    # First phase method: how to identify initial vulnerabilities
+    # - "hybrid": Joern CPG scan → LLM verification → LLM enrichment (default)
+    # - "joern": Joern CPG scan → skip verification (auto-verify with "joern" vote) → LLM enrichment
+    # - "llm": LLM scan → LLM verification → LLM enrichment (original behavior)
+    first_phase_method = Column(String, default="hybrid")
+
+    # Joern-specific settings (only used when first_phase_method includes joern)
+    joern_chunk_strategy = Column(String, default="directory")  # "directory", "module", "file"
+    joern_max_files_per_cpg = Column(Integer, default=100)  # Max files to include in single CPG
+    joern_query_set = Column(String, default="default")  # Query set to use: "default", "memory", "injection", "all"
 
     # Enricher configuration (single model per profile)
     enricher_model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)

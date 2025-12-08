@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFile, File, HTTPException, Body
 from typing import Optional
 import os
 import tempfile
@@ -15,7 +15,7 @@ from app.models.scanner_models import (
     RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote, AgentSession
 )
 from app.models.auth_models import User, UserSession, FindingComment
-from app.api.deps import get_current_user_optional
+from app.api.deps import get_current_user_optional, get_current_user
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -124,7 +124,7 @@ async def run_revalidation_pipeline(scan_id: int, profile_id: int):
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
+async def dashboard(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Redirect to login if not authenticated
     if not current_user:
         from fastapi.responses import RedirectResponse
@@ -2387,7 +2387,7 @@ async def analyze_findings(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/config", response_class=HTMLResponse)
-async def get_config(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_optional)):
+async def get_config(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from app.core.config import settings
     from app.services.analysis.static_detector import StaticPatternDetector
     from app.models.scanner_models import GitLabRepo
@@ -2420,17 +2420,29 @@ async def get_config(request: Request, db: Session = Depends(get_db), current_us
 async def update_config(
     request: Request,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     form_type: str = Form(None),
     llm_base_url: str = Form(None),
     llm_api_key: str = Form(None),
     llm_verify_ssl: bool = Form(False),
     max_concurrent: int = Form(None),
-    scanner_url_prefix: str = Form(None)
+    scanner_url_prefix: str = Form(None),
+    joern_docker_image: str = Form(None),
+    joern_timeout: int = Form(None)
 ):
     from app.core.config import settings
     message = "Configuration saved!"
 
-    if form_type == "connection":
+    if form_type == "joern":
+        if joern_docker_image:
+            settings.JOERN_DOCKER_IMAGE = joern_docker_image
+            GlobalSetting.set(db, "joern_docker_image", joern_docker_image, description="Joern Docker image")
+        if joern_timeout:
+            settings.JOERN_TIMEOUT = joern_timeout
+            GlobalSetting.set(db, "joern_timeout", joern_timeout, "int", "Joern operation timeout (seconds)")
+        message = "Joern settings saved!"
+
+    elif form_type == "connection":
         if llm_base_url:
             settings.LLM_BASE_URL = llm_base_url
             GlobalSetting.set(db, "llm_base_url", llm_base_url, description="LLM API base URL")
@@ -2476,10 +2488,81 @@ async def update_config(
     })
 
 
+# ============== Joern Test ==============
+
+@router.get("/joern/test")
+async def test_joern_connection(current_user: User = Depends(get_current_user)):
+    """Test if Joern Docker is available and working.
+
+    Security: Uses asyncio.create_subprocess_exec with argument lists (not shell).
+    The docker image name comes from server config, not user input.
+    Requires authentication.
+    """
+    import asyncio
+    from app.core.config import settings
+
+    result = {
+        "docker_available": False,
+        "image_available": False,
+        "joern_working": False,
+        "version": None,
+        "error": None,
+        "image": settings.JOERN_DOCKER_IMAGE
+    }
+
+    try:
+        # Check if docker is available (safe: no user input, exec not shell)
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode == 0:
+            result["docker_available"] = True
+            result["docker_version"] = stdout.decode().strip()
+        else:
+            result["error"] = "Docker not available"
+            return result
+
+        # Check if image exists locally (safe: image from config, exec not shell)
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "images", "-q", settings.JOERN_DOCKER_IMAGE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if stdout.decode().strip():
+            result["image_available"] = True
+        else:
+            result["error"] = f"Image not found: {settings.JOERN_DOCKER_IMAGE}. Run: docker pull {settings.JOERN_DOCKER_IMAGE}"
+            return result
+
+        # Test Joern works (safe: image from config, exec not shell)
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "run", "--rm", settings.JOERN_DOCKER_IMAGE, "joern", "--version",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        if proc.returncode == 0:
+            result["joern_working"] = True
+            result["version"] = stdout.decode().strip().split('\n')[0]
+        else:
+            result["error"] = f"Joern failed: {stderr.decode()}"
+
+    except asyncio.TimeoutError:
+        result["error"] = "Timeout waiting for Docker/Joern"
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result
+
+
 # ============== Static Rules Management ==============
 
 @router.get("/rules", response_class=HTMLResponse)
-async def rules_page(request: Request, db: Session = Depends(get_db)):
+async def rules_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Static detection rules management page"""
     from app.services.analysis.static_detector import StaticPatternDetector
 
@@ -2750,7 +2833,7 @@ def seed_default_profiles(db: Session):
 
 
 @router.get("/profiles", response_class=HTMLResponse)
-async def profiles_page(request: Request, db: Session = Depends(get_db)):
+async def profiles_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Scan profiles management page"""
     # Ensure default profiles exist
     seed_default_profiles(db)
@@ -2860,11 +2943,15 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/profiles")
-async def create_profile(
+def create_profile(
     name: str = Form(...),
     description: str = Form(None),
     chunk_size: int = Form(6000),
     chunk_strategy: str = Form("smart"),
+    first_phase_method: str = Form("hybrid"),
+    joern_query_set: str = Form("default"),
+    joern_chunk_strategy: str = Form("directory"),
+    joern_max_files_per_cpg: int = Form(100),
     db: Session = Depends(get_db)
 ):
     """Create a new scan profile"""
@@ -2878,6 +2965,10 @@ async def create_profile(
         description=description,
         chunk_size=chunk_size,
         chunk_strategy=chunk_strategy,
+        first_phase_method=first_phase_method,
+        joern_query_set=joern_query_set,
+        joern_chunk_strategy=joern_chunk_strategy,
+        joern_max_files_per_cpg=joern_max_files_per_cpg,
         enabled=True
     )
     db.add(profile)
@@ -2888,7 +2979,7 @@ async def create_profile(
 
 
 @router.put("/profiles/{profile_id}")
-async def update_profile(
+def update_profile(
     profile_id: int,
     name: str = Form(None),
     description: str = Form(None),
@@ -2924,7 +3015,7 @@ async def update_profile(
 
 
 @router.delete("/profiles/{profile_id}")
-async def delete_profile(profile_id: int, db: Session = Depends(get_db)):
+def delete_profile(profile_id: int, db: Session = Depends(get_db)):
     """Delete a scan profile and its analyzers"""
     profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
     if not profile:
@@ -2938,8 +3029,53 @@ async def delete_profile(profile_id: int, db: Session = Depends(get_db)):
     return {"status": "deleted", "id": profile_id}
 
 
+@router.put("/profiles/{profile_id}/phase-method")
+def update_profile_phase_method(
+    profile_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a profile's first phase method (llm, joern, hybrid)"""
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    method = data.get("first_phase_method")
+    if method not in ("llm", "joern", "hybrid"):
+        return {"error": "Invalid phase method. Must be: llm, joern, or hybrid"}
+
+    profile.first_phase_method = method
+    db.commit()
+
+    return {"status": "updated", "id": profile_id, "first_phase_method": method}
+
+
+@router.put("/profiles/{profile_id}/joern-query-set")
+def update_profile_joern_query_set(
+    profile_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a profile's Joern query set"""
+    profile = db.query(ScanProfile).filter(ScanProfile.id == profile_id).first()
+    if not profile:
+        return {"error": "Profile not found"}
+
+    query_set = data.get("joern_query_set")
+    valid_sets = ("default", "uefi", "memory", "injection", "all")
+    if query_set not in valid_sets:
+        return {"error": f"Invalid query set. Must be one of: {', '.join(valid_sets)}"}
+
+    profile.joern_query_set = query_set
+    db.commit()
+
+    return {"status": "updated", "id": profile_id, "joern_query_set": query_set}
+
+
 @router.post("/profiles/{profile_id}/duplicate")
-async def duplicate_profile(profile_id: int, db: Session = Depends(get_db)):
+def duplicate_profile(profile_id: int, db: Session = Depends(get_db)):
     """Duplicate a scan profile with all its analyzers and verifiers"""
     from app.models.scanner_models import ProfileVerifier
 
@@ -3022,7 +3158,7 @@ async def duplicate_profile(profile_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/profiles/{profile_id}/analyzers")
-async def add_analyzer(
+def add_analyzer(
     profile_id: int,
     name: str = Form(...),
     prompt_template: str = Form(...),
@@ -3074,7 +3210,7 @@ async def add_analyzer(
 
 
 @router.put("/profiles/{profile_id}/analyzers/{analyzer_id}")
-async def update_analyzer(
+def update_analyzer(
     profile_id: int,
     analyzer_id: int,
     name: str = Form(None),
@@ -3138,7 +3274,7 @@ async def update_analyzer(
 
 
 @router.delete("/profiles/{profile_id}/analyzers/{analyzer_id}")
-async def delete_analyzer(profile_id: int, analyzer_id: int, db: Session = Depends(get_db)):
+def delete_analyzer(profile_id: int, analyzer_id: int, db: Session = Depends(get_db)):
     """Delete an analyzer from a profile"""
     analyzer = db.query(ProfileAnalyzer).filter(
         ProfileAnalyzer.id == analyzer_id,
@@ -3154,7 +3290,7 @@ async def delete_analyzer(profile_id: int, analyzer_id: int, db: Session = Depen
 
 
 @router.post("/profiles/{profile_id}/analyzers/{analyzer_id}/toggle")
-async def toggle_analyzer(profile_id: int, analyzer_id: int, db: Session = Depends(get_db)):
+def toggle_analyzer(profile_id: int, analyzer_id: int, db: Session = Depends(get_db)):
     """Toggle an analyzer's enabled status"""
     analyzer = db.query(ProfileAnalyzer).filter(
         ProfileAnalyzer.id == analyzer_id,
@@ -3172,7 +3308,7 @@ async def toggle_analyzer(profile_id: int, analyzer_id: int, db: Session = Depen
 # ============== Profile Verifiers ==============
 
 @router.post("/profiles/{profile_id}/verifiers")
-async def add_verifier(
+def add_verifier(
     profile_id: int,
     request: Request,
     name: str = Form(...),
@@ -3211,7 +3347,7 @@ async def add_verifier(
 
 
 @router.put("/profiles/{profile_id}/verifiers/{verifier_id}")
-async def update_verifier(
+def update_verifier(
     profile_id: int,
     verifier_id: int,
     name: str = Form(None),
@@ -3260,7 +3396,7 @@ async def update_verifier(
 
 
 @router.delete("/profiles/{profile_id}/verifiers/{verifier_id}")
-async def delete_verifier(profile_id: int, verifier_id: int, db: Session = Depends(get_db)):
+def delete_verifier(profile_id: int, verifier_id: int, db: Session = Depends(get_db)):
     """Delete a verifier from a profile"""
     verifier = db.query(ProfileVerifier).filter(
         ProfileVerifier.id == verifier_id,
@@ -3276,7 +3412,7 @@ async def delete_verifier(profile_id: int, verifier_id: int, db: Session = Depen
 
 
 @router.post("/profiles/{profile_id}/verifiers/{verifier_id}/toggle")
-async def toggle_verifier(profile_id: int, verifier_id: int, db: Session = Depends(get_db)):
+def toggle_verifier(profile_id: int, verifier_id: int, db: Session = Depends(get_db)):
     """Toggle a verifier's enabled status"""
     verifier = db.query(ProfileVerifier).filter(
         ProfileVerifier.id == verifier_id,
@@ -3294,7 +3430,7 @@ async def toggle_verifier(profile_id: int, verifier_id: int, db: Session = Depen
 # ============== Profile Enricher ==============
 
 @router.put("/profiles/{profile_id}/enricher")
-async def update_profile_enricher(
+def update_profile_enricher(
     profile_id: int,
     enricher_model_id: int = Form(None),
     enricher_prompt_template: str = Form(None),
@@ -3317,7 +3453,7 @@ async def update_profile_enricher(
 # ============== Profile Agentic Verifier ==============
 
 @router.put("/profiles/{profile_id}/agentic-verifier")
-async def update_profile_agentic_verifier(
+def update_profile_agentic_verifier(
     profile_id: int,
     agentic_verifier_mode: str = Form("skip"),
     agentic_verifier_model_id: int = Form(None),
@@ -3347,9 +3483,9 @@ async def update_profile_agentic_verifier(
 
 
 @router.put("/profiles/{profile_id}/agent-models")
-async def update_profile_agent_models(
+def update_profile_agent_models(
     profile_id: int,
-    request: Request,
+    data: dict = Body(...),
     db: Session = Depends(get_db)
 ):
     """Update a profile's agent models (multiple models for agent verification)"""
@@ -3359,7 +3495,6 @@ async def update_profile_agent_models(
     if not profile:
         return JSONResponse({"error": "Profile not found"}, status_code=404)
 
-    data = await request.json()
     model_ids = data.get("model_ids", [])
 
     # Convert to integers
@@ -3851,7 +3986,7 @@ async def send_scan_completion_alert(scan_id: int, db: Session = Depends(get_db)
 # ============== Manual MR Review ==============
 
 @router.get("/mr-review", response_class=HTMLResponse)
-async def mr_review_page(request: Request, db: Session = Depends(get_db)):
+async def mr_review_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Manual MR review page"""
     from app.models.scanner_models import GitLabRepo
     profiles = db.query(ScanProfile).filter(ScanProfile.enabled == True).order_by(ScanProfile.name).all()
@@ -4073,7 +4208,7 @@ async def analyze_mr(
 # ============== MR Reviews List ==============
 
 @router.get("/mr-reviews", response_class=HTMLResponse)
-async def mr_reviews_list_page(request: Request, db: Session = Depends(get_db)):
+async def mr_reviews_list_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """List all MR reviews with their findings from database"""
     # Get all MR reviews - findings are loaded via relationship
     reviews = db.query(MRReview).order_by(MRReview.created_at.desc()).all()
@@ -4418,7 +4553,7 @@ async def get_github_repo(repo_id: int, db: Session = Depends(get_db)):
 # ============== Repository Watchers ==============
 
 @router.get("/watchers/page", response_class=HTMLResponse)
-async def watchers_page(request: Request, db: Session = Depends(get_db)):
+async def watchers_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Repo watchers management page"""
     from app.models.scanner_models import GitLabRepo, GitHubRepo
     watchers = db.query(RepoWatcher).order_by(RepoWatcher.created_at.desc()).all()
@@ -4934,7 +5069,7 @@ async def retry_review(
 # ============================================================================
 
 @router.get("/agent-sessions", response_class=HTMLResponse)
-async def agent_sessions_page(request: Request, db: Session = Depends(get_db)):
+async def agent_sessions_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Page to view all agent sessions"""
     from app.models.scanner_models import AgentSession
 
@@ -5012,7 +5147,7 @@ async def cleanup_agent_sessions(older_than_days: int = 7, db: Session = Depends
 # ============================================================================
 
 @router.get("/tuning", response_class=HTMLResponse)
-async def tuning_page(request: Request, db: Session = Depends(get_db)):
+async def tuning_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Tuning page for testing output formats and viewing LLM logs"""
     return templates.TemplateResponse("tuning.html", {
         "request": request,

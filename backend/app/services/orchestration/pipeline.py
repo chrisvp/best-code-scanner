@@ -254,8 +254,9 @@ class ScanPipeline:
 
         total_start = time.time()
 
-        # Initialize model orchestrator
-        self.model_orchestrator = ModelOrchestrator(self.db, scan_id=self.scan_id)
+        # Initialize model orchestrator with profile_id for profile-specific verifiers
+        profile_id = self.config.profile_id if self.config else None
+        self.model_orchestrator = ModelOrchestrator(self.db, profile_id=profile_id, scan_id=self.scan_id)
         await self.model_orchestrator.initialize()
 
         try:
@@ -377,7 +378,7 @@ class ScanPipeline:
 
         try:
             scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
-            scan_dir = f"sandbox/{self.scan_id}"
+            scan_dir = self._resolve_scan_directory()
 
             # Rebuild code index for context retrieval
             if os.path.exists(scan_dir):
@@ -570,6 +571,183 @@ class ScanPipeline:
             return "high"
         return "normal"
 
+    def _resolve_scan_directory(self) -> str:
+        """Resolve the actual scan directory, tracing back through rescan chains.
+
+        For rescans, the sandbox/{scan_id} directory doesn't exist because rescans
+        reuse the original scan's sandbox. This method traces the source_scan_id
+        chain to find the original sandbox with the actual code.
+        """
+        # Start with the default path for this scan
+        scan_dir = f"sandbox/{self.scan_id}"
+        if os.path.exists(scan_dir):
+            return scan_dir
+
+        # If no direct sandbox, trace back through source_scan_id chain
+        if not self.config or not self.config.source_scan_id:
+            return scan_dir  # No rescan chain, return default (will fail exists check)
+
+        current_scan_id = str(self.config.source_scan_id)
+        visited = []
+
+        while current_scan_id:
+            if current_scan_id in visited:
+                break  # Cycle detection
+            visited.append(current_scan_id)
+
+            # Check if this scan's sandbox exists
+            candidate_dir = f"sandbox/{current_scan_id}"
+            if os.path.exists(candidate_dir):
+                print(f"[Scan {self.scan_id}] Using sandbox from scan {current_scan_id}")
+                return candidate_dir
+
+            # Try to find the parent scan's source_scan_id
+            config = self.db.query(ScanConfig).filter(
+                ScanConfig.scan_id == int(current_scan_id)
+            ).first()
+            if config and config.source_scan_id:
+                current_scan_id = str(config.source_scan_id)
+            else:
+                break
+
+        # Nothing found, return original path (will fail exists check)
+        return scan_dir
+
+    async def _run_joern_scanner(self, profile: ScanProfile, mode: str):
+        """Run Joern CPG-based vulnerability scanning
+
+        Modes:
+        - hybrid: Create DraftFindings, let verification phase handle them
+        - joern: Create DraftFindings, auto-promote to VerifiedFindings with "joern" vote
+        """
+        from app.services.analysis.joern_scanner import JoernScanner
+        from app.models.scanner_models import VerificationVote
+
+        scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+        scan_dir = self._resolve_scan_directory()
+
+        if not scan_dir or not os.path.exists(scan_dir):
+            print(f"[Scan {self.scan_id}] Joern: Scan directory not found: {scan_dir}")
+            return
+
+        # Get Joern settings from profile
+        query_set = getattr(profile, 'joern_query_set', 'default') or 'default'
+        chunk_strategy = getattr(profile, 'joern_chunk_strategy', 'directory') or 'directory'
+        max_files_per_cpg = getattr(profile, 'joern_max_files_per_cpg', 100) or 100
+
+        print(f"[Scan {self.scan_id}] Starting Joern scan (mode={mode}, queries={query_set})")
+
+        try:
+            joern_scanner = JoernScanner(
+                scan_id=self.scan_id,
+                source_path=scan_dir,
+                query_set=query_set,
+                chunk_strategy=chunk_strategy,
+                max_files_per_cpg=max_files_per_cpg,
+                db=self.db
+            )
+
+            findings = await joern_scanner.scan()
+            print(f"[Scan {self.scan_id}] Joern found {len(findings)} potential issues")
+
+            # Convert Joern findings to DraftFindings
+            created_drafts = []
+            for f in findings:
+                # Get or create ScanFile for this finding
+                file_path = os.path.join(scan_dir, f.get('file_path', ''))
+                scan_file = self.db.query(ScanFile).filter(
+                    ScanFile.scan_id == self.scan_id,
+                    ScanFile.file_path == file_path
+                ).first()
+
+                chunk_id = None
+                if scan_file:
+                    # Find the chunk containing this line
+                    line_num = f.get('line_number', 0)
+                    chunk = self.db.query(ScanFileChunk).filter(
+                        ScanFileChunk.scan_file_id == scan_file.id,
+                        ScanFileChunk.start_line <= line_num,
+                        ScanFileChunk.end_line >= line_num
+                    ).first()
+                    if chunk:
+                        chunk_id = chunk.id
+
+                vuln_type = f.get('type', f.get('vulnerability_type', 'Unknown'))
+                line_num = f.get('line', f.get('line_number', 0))
+
+                # Create dedup key
+                dedup_key = hashlib.md5(
+                    f"{file_path}:{line_num}:{vuln_type}".encode()
+                ).hexdigest()
+
+                draft = DraftFinding(
+                    scan_id=self.scan_id,
+                    chunk_id=chunk_id,
+                    title=f.get('title', 'Unknown'),
+                    vulnerability_type=vuln_type,
+                    severity=normalize_severity(f.get('severity', 'Medium')),
+                    line_number=line_num,
+                    file_path=file_path,  # Store file path directly for Joern findings
+                    snippet=f.get('snippet', ''),
+                    reason=f.get('reason', ''),
+                    auto_detected=True,  # Joern findings are deterministic
+                    initial_votes=1,
+                    source_models=['joern-cpg'],
+                    analyzer_id=None,
+                    analyzer_name='joern',
+                    dedup_key=dedup_key,
+                    status="pending" if mode == "hybrid" else "verified"
+                )
+                self.db.add(draft)
+                created_drafts.append(draft)
+
+            self.db.commit()
+            print(f"[Scan {self.scan_id}] Created {len(findings)} draft findings from Joern")
+
+            # In joern-only mode, auto-promote drafts to verified findings
+            # This skips the LLM verification phase entirely
+            if mode == 'joern' and created_drafts:
+                print(f"[Scan {self.scan_id}] Auto-promoting {len(created_drafts)} Joern findings (skipping verification)")
+
+                for draft in created_drafts:
+                    # Create a "joern" verification vote to track that verification was skipped
+                    vote = VerificationVote(
+                        scan_id=self.scan_id,
+                        draft_finding_id=draft.id,
+                        model_name='joern-cpg',
+                        verifier_id=None,
+                        decision='VERIFY',
+                        confidence=100,  # Joern pattern matching is deterministic
+                        reasoning='Auto-verified by Joern CPG analysis (verification phase skipped)',
+                        vote_weight=1.0
+                    )
+                    self.db.add(vote)
+
+                    # Create VerifiedFinding for enrichment phase
+                    verified = VerifiedFinding(
+                        draft_id=draft.id,
+                        scan_id=self.scan_id,
+                        title=draft.title,
+                        confidence=100,
+                        attack_vector=f"Joern CPG pattern match: {draft.vulnerability_type}",
+                        data_flow='',
+                        adjusted_severity=draft.severity,
+                        status="pending"  # Ready for enrichment
+                    )
+                    self.db.add(verified)
+
+                    draft.status = "verified"
+                    draft.verification_votes = 1
+                    draft.verification_notes = "Auto-verified by Joern (joern-only mode)"
+
+                self.db.commit()
+                print(f"[Scan {self.scan_id}] Created {len(created_drafts)} verified findings for enrichment")
+
+        except Exception as e:
+            print(f"[Scan {self.scan_id}] Joern scanner error: {e}")
+            import traceback
+            traceback.print_exc()
+
     async def _run_scanner_phase(self):
         """Phase 1: Scan chunks for draft findings"""
         from app.services.analysis.draft_scanner import DraftScanner, ProfileAwareScanner
@@ -586,6 +764,21 @@ class ScanPipeline:
                 ScanProfile.id == self.config.profile_id,
                 ScanProfile.enabled == True
             ).first()
+
+        # Check if Joern scanning is enabled
+        # Modes:
+        #   - llm: LLM scan → verify → enrich (default)
+        #   - joern: Joern scan → enrich (skip verify - deterministic findings)
+        #   - hybrid: Joern + LLM scan → verify → enrich
+        first_phase_method = getattr(profile, 'first_phase_method', 'llm') if profile else 'llm'
+        if first_phase_method in ('joern', 'hybrid'):
+            await self._run_joern_scanner(profile, first_phase_method)
+            if first_phase_method == 'joern':
+                # Joern-only mode - skip LLM scanning, findings go straight to enrichment
+                self._scanner_complete = True
+                self._verifier_complete = True  # Skip verification for deterministic findings
+                return
+            # Hybrid mode continues to LLM scanning below
 
         # Use profile-aware scanner if profile is configured
         if profile:
@@ -1094,11 +1287,18 @@ class ScanPipeline:
                         ScanFile.id == chunk.scan_file_id
                     ).first() if chunk else None
 
+                    # Get file_path: prefer draft.file_path (Joern), then scan_file, then "unknown"
+                    file_path = "unknown"
+                    if draft and draft.file_path:
+                        file_path = draft.file_path
+                    elif scan_file:
+                        file_path = scan_file.file_path
+
                     finding = Finding(
                         scan_id=self.scan_id,
                         verified_id=v.id,
                         draft_id=v.draft_id,  # Direct link to original draft for traceability
-                        file_path=scan_file.file_path if scan_file else "unknown",
+                        file_path=file_path,
                         line_number=draft.line_number if draft else 0,
                         severity=normalize_severity(v.adjusted_severity or result.get('severity', 'Medium')),
                         description=result.get('finding', v.title),

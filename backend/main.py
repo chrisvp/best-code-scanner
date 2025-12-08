@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import RedirectResponse, JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
             db.commit()
             logger.info("Default admin created: email='admin', password='davy'")
 
+        # Load LLM settings from database
         saved_base_url = GlobalSetting.get(db, "llm_base_url")
         saved_api_key = GlobalSetting.get(db, "llm_api_key")
         saved_verify_ssl = GlobalSetting.get(db, "llm_verify_ssl")
@@ -51,6 +53,15 @@ async def lifespan(app: FastAPI):
             settings.LLM_API_KEY = saved_api_key
         if saved_verify_ssl is not None:
             settings.LLM_VERIFY_SSL = saved_verify_ssl
+
+        # Load Joern settings from database
+        saved_joern_image = GlobalSetting.get(db, "joern_docker_image")
+        saved_joern_timeout = GlobalSetting.get(db, "joern_timeout")
+
+        if saved_joern_image:
+            settings.JOERN_DOCKER_IMAGE = saved_joern_image
+        if saved_joern_timeout:
+            settings.JOERN_TIMEOUT = int(saved_joern_timeout)
     finally:
         db.close()
 
@@ -82,6 +93,21 @@ app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
 # Add auth middleware to inject current user into all requests
 app.add_middleware(AuthMiddleware)
+
+# Exception handler for 401 Unauthorized -> Redirect to login for HTML requests
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 401:
+        # Check if request expects HTML
+        accept = request.headers.get("Accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(url="/login", status_code=302)
+    
+    # Default JSON response for API or other errors
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
 
 from app.api.endpoints import router
 from app.api.tuning import router as tuning_router

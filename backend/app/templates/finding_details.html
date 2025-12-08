@@ -439,7 +439,13 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
                             </svg>
                             <span class="text-xs font-medium text-red-400">Vulnerable Code</span>
-                            <span class="text-xs text-gray-500 ml-auto">Line {{ finding.line_number or '?' }}</span>
+                            <span id="code-context-info" class="text-xs text-gray-500 ml-auto">Line {{ finding.line_number or '?' }}</span>
+                            <button id="toggle-full-file-btn" onclick="toggleFullFile()" class="diff-expand-btn ml-2" title="Load full file">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+                                </svg>
+                                <span id="toggle-full-file-text">Full file</span>
+                            </button>
                         </div>
                         <div id="vulnerable-code-container" class="overflow-auto bg-gray-900 flex-1 font-mono text-xs" style="max-height: 500px;">
                             <!-- Will be populated by JS with line numbers, syntax highlighting, and vulnerable line marked -->
@@ -1358,90 +1364,186 @@ document.addEventListener('DOMContentLoaded', async function() {
     loadChatHistory();
 });
 
-// Load full file with syntax highlighting and vulnerable line marked
-// Note: innerHTML usage is safe here - content is from server filesystem files, not user input,
-// and is processed through highlight.js which generates sanitized HTML for syntax highlighting
+// Default context lines to show (like GitHub's diff view)
+const DEFAULT_CONTEXT_LINES = 30;
+let isShowingFullFile = false;
+let fullFileData = null;  // Cache full file data
+let contextData = null;   // Cache context data
+
+// Load code context with syntax highlighting and vulnerable line marked
+// Security note: innerHTML usage below is safe - content is from server filesystem files (not user input),
+// line numbers are integers, and code is processed through highlight.js which generates sanitized HTML
 async function loadCodeContext() {
     try {
-        // Request full file contents
-        const response = await fetch(`/finding/${findingId}/code-context?full_file=true`);
-        const data = await response.json();
+        // First load context view (30 lines around vulnerable line)
+        const contextResponse = await fetch(`/finding/${findingId}/code-context?context_lines=${DEFAULT_CONTEXT_LINES}`);
+        contextData = await contextResponse.json();
 
-        const container = document.getElementById('vulnerable-code-container');
-        if (data.error || !data.lines || data.lines.length === 0) {
-            // Fallback to snippet (safe: server-side escaped via Jinja)
-            container.innerHTML = `<pre class="p-3"><code class="language-{{ 'python' if finding.file_path.endswith('.py') else 'cpp' if finding.file_path.endswith('.cpp') else 'c' }}">{{ finding.snippet | strip_code | e }}</code></pre>`;
-            hljs.highlightAll();
-            return;
-        }
+        // Also prefetch full file in background for quick toggling
+        fetch(`/finding/${findingId}/code-context?full_file=true`)
+            .then(r => r.json())
+            .then(data => {
+                fullFileData = data;
+                // Store original file content globally for diff expansion
+                if (data.lines) {
+                    originalFileContent = data.lines.map(line => ({
+                        number: line.number,
+                        content: line.content,
+                        isVulnerable: line.is_vulnerable
+                    }));
+                }
+            })
+            .catch(e => console.warn('Failed to prefetch full file:', e));
 
-        // Store original file content globally for diff expansion
-        originalFileContent = data.lines.map(line => ({
-            number: line.number,
-            content: line.content,
-            isVulnerable: line.is_vulnerable
-        }));
-
-        // Determine language for syntax highlighting
-        const ext = filePath.split('.').pop().toLowerCase();
-        const langMap = {
-            'py': 'python', 'c': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'h': 'c', 'hpp': 'cpp',
-            'js': 'javascript', 'ts': 'typescript', 'java': 'java', 'rs': 'rust', 'go': 'go'
-        };
-        const language = langMap[ext] || 'plaintext';
-
-        // Build the full code content for highlighting
-        const codeContent = data.lines.map(line => line.content).join('\n');
-
-        // Create highlighted code using highlight.js (generates safe HTML)
-        let highlightedCode;
-        try {
-            highlightedCode = hljs.highlight(codeContent, { language: language, ignoreIllegals: true }).value;
-        } catch (e) {
-            highlightedCode = escapeHtml(codeContent);
-        }
-
-        // Split highlighted code back into lines
-        const highlightedLines = highlightedCode.split('\n');
-
-        // Build table with line numbers and syntax highlighting
-        let html = '<table class="w-full border-collapse"><tbody>';
-        for (let i = 0; i < data.lines.length; i++) {
-            const line = data.lines[i];
-            const highlightedLine = highlightedLines[i] || '';
-
-            // Vulnerable line styling
-            const isVuln = line.is_vulnerable;
-            const rowId = isVuln ? 'vulnerable-line' : '';
-            const bgClass = isVuln ? 'bg-red-900/50 border-l-4 border-red-500' : 'hover:bg-gray-800/30';
-            const lineNumClass = isVuln ? 'text-red-400 font-bold bg-red-900/30' : 'text-gray-600';
-
-            html += `<tr id="${rowId}" class="${bgClass}">
-                <td class="px-2 py-0 text-right select-none ${lineNumClass} border-r border-gray-700 sticky left-0 bg-gray-900" style="min-width: 50px;">${line.number}</td>
-                <td class="px-3 py-0 whitespace-pre">${highlightedLine}</td>
-            </tr>`;
-        }
-        html += '</tbody></table>';
-        container.innerHTML = html;
-
-        // Show file info in header
-        const headerSpan = container.parentElement.querySelector('.text-xs.text-gray-500.ml-auto');
-        if (headerSpan && data.total_lines) {
-            headerSpan.textContent = `${data.total_lines} lines | Line ${data.vulnerable_line}`;
-        }
-
-        // Scroll to vulnerable line after a short delay
-        setTimeout(() => {
-            const vulnRow = document.getElementById('vulnerable-line');
-            if (vulnRow) {
-                vulnRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-        }, 100);
+        renderCodeView(contextData, false);
     } catch (err) {
         console.error('Failed to load code context:', err);
         const container = document.getElementById('vulnerable-code-container');
         container.textContent = `Error loading file: ${err.message}`;
     }
+}
+
+// Toggle between context view and full file view
+function toggleFullFile() {
+    isShowingFullFile = !isShowingFullFile;
+
+    const btnText = document.getElementById('toggle-full-file-text');
+    if (isShowingFullFile) {
+        if (fullFileData) {
+            renderCodeView(fullFileData, true);
+            btnText.textContent = 'Context only';
+        } else {
+            // Full file not loaded yet, fetch it
+            fetch(`/finding/${findingId}/code-context?full_file=true`)
+                .then(r => r.json())
+                .then(data => {
+                    fullFileData = data;
+                    renderCodeView(fullFileData, true);
+                    btnText.textContent = 'Context only';
+                });
+        }
+    } else {
+        renderCodeView(contextData, false);
+        btnText.textContent = 'Full file';
+    }
+}
+
+// Render code view (shared by context and full file modes)
+// Security note: innerHTML is safe here - data.lines comes from server filesystem,
+// line.number is an integer, and highlightedLine is sanitized by highlight.js
+function renderCodeView(data, isFullFile) {
+    const container = document.getElementById('vulnerable-code-container');
+
+    if (!data || data.error || !data.lines || data.lines.length === 0) {
+        // Fallback to snippet (safe: server-side escaped via Jinja |e filter)
+        container.innerHTML = `<pre class="p-3"><code class="language-{{ 'python' if finding.file_path.endswith('.py') else 'cpp' if finding.file_path.endswith('.cpp') else 'c' }}">{{ finding.snippet | strip_code | e }}</code></pre>`;
+        hljs.highlightAll();
+        return;
+    }
+
+    // Determine language for syntax highlighting
+    const ext = filePath.split('.').pop().toLowerCase();
+    const langMap = {
+        'py': 'python', 'c': 'c', 'cpp': 'cpp', 'cc': 'cpp', 'h': 'c', 'hpp': 'cpp',
+        'js': 'javascript', 'ts': 'typescript', 'java': 'java', 'rs': 'rust', 'go': 'go'
+    };
+    const language = langMap[ext] || 'plaintext';
+
+    // Build the code content for highlighting
+    const codeContent = data.lines.map(line => line.content).join('\n');
+
+    // Create highlighted code using highlight.js (generates sanitized HTML)
+    let highlightedCode;
+    try {
+        highlightedCode = hljs.highlight(codeContent, { language: language, ignoreIllegals: true }).value;
+    } catch (e) {
+        highlightedCode = escapeHtml(codeContent);
+    }
+
+    // Split highlighted code back into lines
+    const highlightedLines = highlightedCode.split('\n');
+
+    // Build table with line numbers and syntax highlighting
+    let html = '<table class="w-full border-collapse"><tbody>';
+
+    // Add expand-up indicator if showing context and there's more above
+    if (!isFullFile && data.lines.length > 0 && data.lines[0].number > 1) {
+        const linesAbove = data.lines[0].number - 1;
+        html += `<tr class="diff-expand-row">
+            <td colspan="2" class="text-center py-1">
+                <button onclick="toggleFullFile()" class="diff-expand-btn">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path>
+                    </svg>
+                    Expand up (${linesAbove} more lines)
+                </button>
+            </td>
+        </tr>`;
+    }
+
+    for (let i = 0; i < data.lines.length; i++) {
+        const line = data.lines[i];
+        const highlightedLine = highlightedLines[i] || '';
+
+        // Vulnerable line styling
+        const isVuln = line.is_vulnerable;
+        const rowId = isVuln ? 'vulnerable-line' : '';
+        const bgClass = isVuln ? 'bg-red-900/50 border-l-4 border-red-500' : 'hover:bg-gray-800/30';
+        const lineNumClass = isVuln ? 'text-red-400 font-bold bg-red-900/30' : 'text-gray-600';
+
+        // line.number is integer from server, highlightedLine is sanitized by highlight.js
+        html += `<tr id="${rowId}" class="${bgClass}">
+            <td class="px-2 py-0 text-right select-none ${lineNumClass} border-r border-gray-700 sticky left-0 bg-gray-900" style="min-width: 50px;">${line.number}</td>
+            <td class="px-3 py-0 whitespace-pre">${highlightedLine}</td>
+        </tr>`;
+    }
+
+    // Add expand-down indicator if showing context and there's more below
+    if (!isFullFile && data.lines.length > 0 && data.total_lines) {
+        const lastLineNum = data.lines[data.lines.length - 1].number;
+        if (lastLineNum < data.total_lines) {
+            const linesBelow = data.total_lines - lastLineNum;
+            html += `<tr class="diff-expand-row">
+                <td colspan="2" class="text-center py-1">
+                    <button onclick="toggleFullFile()" class="diff-expand-btn">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                        Expand down (${linesBelow} more lines)
+                    </button>
+                </td>
+            </tr>`;
+        }
+    }
+
+    html += '</tbody></table>';
+    // Safe: html is built from server filesystem content, integers, and highlight.js sanitized output
+    container.innerHTML = html;
+
+    // Update header info
+    const infoSpan = document.getElementById('code-context-info');
+    if (infoSpan && data.total_lines) {
+        if (isFullFile) {
+            infoSpan.textContent = `${data.total_lines} lines | Line ${data.vulnerable_line}`;
+        } else {
+            const showing = data.lines.length;
+            infoSpan.textContent = `${showing} of ${data.total_lines} lines | Line ${data.vulnerable_line}`;
+        }
+    }
+
+    // Update button text
+    const btnText = document.getElementById('toggle-full-file-text');
+    if (btnText) {
+        btnText.textContent = isFullFile ? 'Context only' : 'Full file';
+    }
+
+    // Scroll to vulnerable line after a short delay
+    setTimeout(() => {
+        const vulnRow = document.getElementById('vulnerable-line');
+        if (vulnRow) {
+            vulnRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, 100);
 }
 
 // Load all existing fixes for this finding (both DB fixes and diff files)

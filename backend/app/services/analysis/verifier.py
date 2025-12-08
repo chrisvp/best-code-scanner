@@ -164,9 +164,17 @@ REJECT if:
                     context = await self.context_retriever.get_context(chunk)
                 else:
                     context = "No additional context available."
+
+                # Get file_path from draft directly (Joern findings) or from chunk's ScanFile
+                file_path = draft.file_path
+                if not file_path and chunk:
+                    scan_file = db.query(ScanFile).filter(ScanFile.id == chunk.scan_file_id).first()
+                    if scan_file:
+                        file_path = scan_file.file_path
+                file_path = file_path or "Unknown"
             finally:
                 db.close()
-            
+
             draft_contexts.append({
                 'title': draft.title,
                 'vuln_type': draft.vulnerability_type,
@@ -174,6 +182,7 @@ REJECT if:
                 'severity': draft.severity,
                 'line': draft.line_number,
                 'line_number': draft.line_number,  # Alias
+                'file_path': file_path,  # File path for prompt templates
                 'snippet': draft.snippet or '',
                 'code_snippet': draft.snippet or '',  # Alias
                 'reason': draft.reason or '',
