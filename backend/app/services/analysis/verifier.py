@@ -160,11 +160,6 @@ REJECT if:
                     ScanFileChunk.id == draft.chunk_id
                 ).first()
 
-                if chunk:
-                    context = await self.context_retriever.get_context(chunk)
-                else:
-                    context = "No additional context available."
-
                 # Get file_path from draft directly (Joern findings) or from chunk's ScanFile
                 file_path = draft.file_path
                 if not file_path and chunk:
@@ -172,6 +167,17 @@ REJECT if:
                     if scan_file:
                         file_path = scan_file.file_path
                 file_path = file_path or "Unknown"
+
+                # Get context - use chunk if available, otherwise use file_path for Joern findings
+                if chunk:
+                    context = await self.context_retriever.get_context(chunk)
+                elif file_path and file_path != "Unknown" and draft.line_number:
+                    # Joern finding with file_path - use the new file-based context method
+                    context = await self.context_retriever.get_context_for_file(
+                        file_path, draft.line_number
+                    )
+                else:
+                    context = "No additional context available."
             finally:
                 db.close()
 

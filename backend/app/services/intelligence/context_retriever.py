@@ -1,6 +1,6 @@
 import os
 import re
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.scanner_models import Symbol, SymbolReference, ImportRelation, ScanFileChunk, ScanFile
@@ -29,18 +29,7 @@ class ContextRetriever:
 
         chunk_content = self._get_chunk_content(chunk)
 
-        # 1. List all files in codebase (so model knows what exists)
-        all_files = self.db.query(ScanFile).filter(
-            ScanFile.scan_id == self.scan_id
-        ).all()
-        sections.append("=== FILES IN CODEBASE ===")
-        for f in all_files[:20]:  # Limit to 20 files
-            sections.append(f"- {os.path.basename(f.file_path)}")
-        if len(all_files) > 20:
-            sections.append(f"... and {len(all_files) - 20} more files")
-        sections.append("")
-
-        # 2. FULL file content (this is key - model sees everything)
+        # 1. FULL file content (this is key - model sees the vulnerable code in context)
         if scan_file:
             sections.append(f"=== FULL FILE: {os.path.basename(scan_file.file_path)} ===")
             try:
@@ -509,3 +498,202 @@ class ContextRetriever:
             return f"Variable '{var_name}' assigned from: {', '.join(matches[:3])}"
 
         return f"Variable '{var_name}' source unknown"
+
+    async def get_context_for_file(self, file_path: str, line_number: int,
+                                    context_lines: int = 50, max_tokens: int = 8000) -> str:
+        """
+        Get context for a finding by file path and line number.
+        Used for Joern findings that don't have chunks.
+
+        Returns focused context: surrounding code, function containing the line,
+        and relevant callers/callees.
+        """
+        sections = []
+
+        # Resolve file path - try multiple locations
+        resolved_path = self._resolve_file_path(file_path)
+        if not resolved_path:
+            return f"Could not locate file: {file_path}"
+
+        try:
+            with open(resolved_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+        except Exception as e:
+            return f"Error reading file {file_path}: {e}"
+
+        total_lines = len(lines)
+
+        # 1. Show the vulnerable function (find function boundaries)
+        func_start, func_end, func_name = self._find_containing_function(lines, line_number)
+
+        if func_name:
+            sections.append(f"=== FUNCTION: {func_name} ===")
+            sections.append(f"File: {os.path.basename(resolved_path)}")
+            sections.append("")
+
+            # Show the function with line numbers, highlighting the vulnerable line
+            for i in range(func_start, min(func_end + 1, total_lines)):
+                prefix = ">>> " if i + 1 == line_number else "    "
+                sections.append(f"{prefix}{i + 1}: {lines[i].rstrip()}")
+        else:
+            # No function found, show context around the line
+            sections.append(f"=== CODE CONTEXT ===")
+            sections.append(f"File: {os.path.basename(resolved_path)}")
+            sections.append("")
+
+            start = max(0, line_number - context_lines - 1)
+            end = min(total_lines, line_number + context_lines)
+
+            for i in range(start, end):
+                prefix = ">>> " if i + 1 == line_number else "    "
+                sections.append(f"{prefix}{i + 1}: {lines[i].rstrip()}")
+
+        sections.append("")
+
+        # 2. Find callers of this function (if we found one)
+        if func_name:
+            callers = self._find_callers(func_name)
+            if callers:
+                sections.append("=== CALLERS (who calls this function) ===")
+                for caller in callers[:3]:
+                    code = self._get_symbol_code(caller)
+                    if code:
+                        sections.append(f"# {caller.name} in {os.path.basename(caller.file_path)}:{caller.start_line}")
+                        # Show just the relevant part (truncate long functions)
+                        code_lines = code.split('\n')
+                        if len(code_lines) > 20:
+                            sections.append('\n'.join(code_lines[:20]))
+                            sections.append(f"    ... ({len(code_lines) - 20} more lines)")
+                        else:
+                            sections.append(code)
+                        sections.append("")
+
+        # 3. Data source hints from parameter names
+        if func_name and func_start < total_lines:
+            func_content = ''.join(lines[func_start:min(func_end + 1, total_lines)])
+            data_sources = self._analyze_data_sources(func_content)
+            if data_sources:
+                sections.append("=== POTENTIAL DATA SOURCES ===")
+                for ds in data_sources[:5]:
+                    sections.append(f"- {ds['param']}: {ds['source']} ({ds['risk']})")
+                sections.append("")
+
+        context = '\n'.join(sections)
+
+        # Trim to token budget
+        max_chars = max_tokens * 4
+        if len(context) > max_chars:
+            context = context[:max_chars] + "\n... (context truncated)"
+
+        return context
+
+    def _resolve_file_path(self, file_path: str) -> Optional[str]:
+        """Resolve a file path to an actual file on disk, trying multiple locations"""
+        # Try as-is first
+        if os.path.exists(file_path):
+            return file_path
+
+        # Try relative to sandbox
+        sandbox_paths = [
+            f"sandbox/{self.scan_id}/{file_path}",
+            f"sandbox/{self.scan_id}/{os.path.basename(file_path)}",
+        ]
+
+        # Also check if file_path starts with /app/ (from Joern Docker)
+        if file_path.startswith('/app/'):
+            clean_path = file_path[5:]  # Remove /app/
+            sandbox_paths.extend([
+                f"sandbox/{self.scan_id}/{clean_path}",
+                clean_path,
+            ])
+
+        # Check scan files in database for matching basename
+        basename = os.path.basename(file_path)
+        scan_files = self.db.query(ScanFile).filter(
+            ScanFile.scan_id == self.scan_id
+        ).all()
+
+        for sf in scan_files:
+            if os.path.basename(sf.file_path) == basename:
+                if os.path.exists(sf.file_path):
+                    return sf.file_path
+
+        # Try sandbox paths
+        for sp in sandbox_paths:
+            if os.path.exists(sp):
+                return sp
+
+        return None
+
+    def _find_containing_function(self, lines: List[str], target_line: int) -> tuple:
+        """
+        Find the function that contains the target line.
+        Returns (start_line_idx, end_line_idx, function_name) or (0, 0, None) if not found.
+        """
+        # Patterns for function definitions
+        func_patterns = [
+            # C/C++ function
+            r'^(?:static\s+)?(?:inline\s+)?(?:[\w\*]+\s+)+(\w+)\s*\([^)]*\)\s*\{?\s*$',
+            # Python function
+            r'^def\s+(\w+)\s*\([^)]*\)\s*:',
+            # UEFI/EDK2 style
+            r'^(?:VOID|EFI_STATUS|BOOLEAN|UINTN|UINT\d+)\s*\n?(\w+)\s*\(',
+        ]
+
+        # Find function start (search backwards from target line)
+        func_start = 0
+        func_name = None
+        brace_depth = 0
+
+        for i in range(target_line - 1, -1, -1):
+            line = lines[i] if i < len(lines) else ""
+
+            for pattern in func_patterns:
+                match = re.search(pattern, line, re.MULTILINE)
+                if match:
+                    func_name = match.group(1)
+                    func_start = i
+                    break
+
+            if func_name:
+                break
+
+        if not func_name:
+            return (0, 0, None)
+
+        # Find function end (search for matching closing brace or next function)
+        func_end = func_start
+        brace_depth = 0
+        started_body = False
+
+        for i in range(func_start, len(lines)):
+            line = lines[i]
+
+            # Count braces
+            brace_depth += line.count('{') - line.count('}')
+
+            if '{' in line:
+                started_body = True
+
+            # For Python, look for dedent
+            if line.startswith('def ') and i > func_start:
+                func_end = i - 1
+                break
+
+            # For C, check brace balance
+            if started_body and brace_depth <= 0:
+                func_end = i
+                break
+
+            func_end = i
+
+        # Limit function size to avoid huge context
+        max_func_lines = 150
+        if func_end - func_start > max_func_lines:
+            # Center around the target line
+            half = max_func_lines // 2
+            new_start = max(func_start, target_line - 1 - half)
+            new_end = min(func_end, target_line - 1 + half)
+            return (new_start, new_end, func_name)
+
+        return (func_start, func_end, func_name)
