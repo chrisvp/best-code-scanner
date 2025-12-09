@@ -6,8 +6,8 @@ class Settings(BaseSettings):
     PROJECT_VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     
-    # Database - use Linux filesystem to avoid WSL2 I/O issues
-    DATABASE_URL: str = "sqlite:////tmp/scans.db"
+    # Database - persistent location in user home directory (survives /tmp wipes)
+    DATABASE_URL: str = "sqlite:////home/chris/scans.db"
     DB_PASSWORD: str = "changeme_in_prod" # SQLCipher key (Unused in dev)
     
     # Security

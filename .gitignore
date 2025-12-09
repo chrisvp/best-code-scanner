@@ -13,8 +13,9 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Database files
+# Database files (but allow template)
 *.db
+!backend/data/scans.db.template
 *.db-journal
 
 # Environment files
@@ -39,3 +40,8 @@ uvicorn.log
 # Benchmark/debug artifacts
 benchmark_results*.json
 get-pip.py
+
+# Data directory (but allow template db)
+data/
+!backend/data/
+!backend/data/scans.db.template
