@@ -14,6 +14,14 @@
     .response-content { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; max-height: 400px; overflow-y: auto; }
     .prompt-content { white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; max-height: 300px; overflow-y: auto; }
     .tab-btn.active { color: #fff; border-color: #3b82f6; }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-5px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in {
+        animation: fadeIn 0.3s ease-out;
+    }
 </style>
 
 <div class="p-6 h-full overflow-auto custom-scrollbar">
@@ -42,64 +50,107 @@
             </nav>
         </div>
 
-        <!-- Tab: Benchmark -->
+        <!-- Tab: Benchmark (Prompt Testing) -->
         <div id="panel-benchmark" class="tab-panel hidden">
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <!-- Run Benchmark -->
-                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
-                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
-                            <svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                            </svg>
-                            Run Benchmark
-                        </h2>
+            <div class="space-y-6">
+                <!-- Select Prompts Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="select-all-prompts" onchange="toggleAllPrompts(this.checked)" class="w-4 h-4">
+                            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                                Select Prompts <span id="prompts-count" class="text-blue-400">(0 selected)</span>
+                            </h2>
+                        </label>
+                        <button onclick="openPromptDialog()" class="text-blue-400 hover:text-blue-300 text-sm">+ New Prompt</button>
                     </div>
-                    <div class="p-4 space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-1">Dataset</label>
-                            <select id="benchmark-dataset" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                <option value="">Loading...</option>
-                            </select>
+                    <div class="p-4">
+                        <div id="prompts-checkboxes" class="space-y-2 max-h-48 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-700">
+                            <!-- Loaded via JS -->
                         </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-1">Model</label>
-                            <select id="benchmark-model" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-purple-500">
-                                <option value="">Loading...</option>
-                            </select>
+                        <div class="flex gap-2 mt-3">
+                            <button onclick="selectAllPrompts()" class="text-xs text-blue-400 hover:text-blue-300">Select All</button>
+                            <span class="text-gray-600">|</span>
+                            <button onclick="deselectAllPrompts()" class="text-xs text-gray-400 hover:text-gray-300">Deselect All</button>
                         </div>
-
-                        <div>
-                            <label class="block text-sm font-medium text-gray-300 mb-1">Prompt Template (Optional Override)</label>
-                            <textarea id="benchmark-prompt" rows="4" placeholder="Leave empty to use model default..."
-                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
-                        </div>
-
-                        <button onclick="runBenchmark()" id="run-benchmark-btn"
-                            class="w-full px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                            </svg>
-                            Start Benchmark
-                        </button>
                     </div>
                 </div>
 
-                <!-- Recent Runs -->
-                <div class="lg:col-span-2 bg-gray-800 rounded-lg border border-gray-700 overflow-hidden flex flex-col h-[600px]">
+                <!-- Select Test Cases Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
                     <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
-                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
-                            <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
-                            </svg>
-                            Recent Runs
-                        </h2>
-                        <button onclick="loadBenchmarkRuns()" class="text-xs text-gray-400 hover:text-white">Refresh</button>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="select-all-test-cases" onchange="toggleAllTestCases(this.checked)" class="w-4 h-4">
+                            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                                Select Test Cases <span id="test-cases-count" class="text-blue-400">(0 selected)</span>
+                            </h2>
+                        </label>
+                        <div class="flex gap-3">
+                            <button onclick="openImportFindingsDialog()" class="text-blue-400 hover:text-blue-300 text-sm">+ Import Findings</button>
+                            <button onclick="openTestCaseDialog()" class="text-blue-400 hover:text-blue-300 text-sm">+ New Test Case</button>
+                        </div>
                     </div>
-                    <div class="flex-1 overflow-auto p-4" id="benchmark-runs-container">
-                        <div class="text-center text-gray-500 py-12">Loading runs...</div>
+                    <div class="p-4">
+                        <div id="test-cases-checkboxes" class="space-y-2 max-h-48 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-700">
+                            <!-- Loaded via JS -->
+                        </div>
+                        <div class="flex gap-2 mt-3">
+                            <button onclick="selectAllTestCases()" class="text-xs text-blue-400 hover:text-blue-300">Select All</button>
+                            <span class="text-gray-600">|</span>
+                            <button onclick="deselectAllTestCases()" class="text-xs text-gray-400 hover:text-gray-300">Deselect All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Select Models Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="select-all-models" onchange="toggleAllBenchmarkModels(this.checked)" class="w-4 h-4">
+                            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                                Select Models <span id="models-count" class="text-blue-400">(0 selected)</span>
+                            </h2>
+                        </label>
+                    </div>
+                    <div class="p-4">
+                        <div id="benchmark-models-checkboxes" class="space-y-2 max-h-48 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-700">
+                            <!-- Loaded via JS -->
+                        </div>
+                        <div class="flex gap-2 mt-3">
+                            <button onclick="selectAllBenchmarkModels()" class="text-xs text-blue-400 hover:text-blue-300">Select All</button>
+                            <span class="text-gray-600">|</span>
+                            <button onclick="deselectAllBenchmarkModels()" class="text-xs text-gray-400 hover:text-gray-300">Deselect All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Run Tests Button -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                    <div class="mb-3">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Max Concurrency per Model</label>
+                        <input type="number" id="benchmark-concurrency" min="1" max="10" value="4"
+                            class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <button onclick="runBenchmarkTests()" id="run-benchmark-tests-btn"
+                        class="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span id="run-tests-label">Run Tests (0 tests)</span>
+                    </button>
+                </div>
+
+                <!-- Results Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Results</h2>
+                        <span class="text-xs text-gray-500">Auto-refreshing every 5s</span>
+                    </div>
+                    <div class="p-4 max-h-96 overflow-y-auto" id="results-panel">
+                        <div class="text-center text-gray-500 py-12">
+                            <p>Run a test to see results</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -840,9 +891,10 @@ switchTab = function(tabId) {
 };
 
 function initBenchmarkTab() {
-    loadBenchmarkDatasets();
-    loadBenchmarkModels();
-    loadBenchmarkRuns();
+    // Load data for checkboxes
+    loadPrompts();
+    loadTestCases();
+    loadTuningModels();
 }
 
 async function loadBenchmarkDatasets() {
@@ -970,5 +1022,1438 @@ function showRunDetails(runId) {
     // Implementation for detailed view pending
     alert('Detailed view implementation pending for run ' + runId);
 }
+
+// =====================
+// PROMPT TESTING (Benchmark Tab)
+// =====================
+let prompts = [];
+let testCases = [];
+let tuningModels = [];
+let tuningRuns = [];
+let currentPromptId = null;
+let currentTestCaseId = null;
+
+async function loadPromptTuningData() {
+    await Promise.all([
+        loadPrompts(),
+        loadTestCases(),
+        loadTuningModels(),
+        loadPromptTuningRuns()
+    ]);
+}
+
+async function loadPrompts() {
+    const res = await fetch('/api/v1/tuning/prompts');
+    prompts = await res.json();
+    renderPromptsCheckboxes();
+}
+
+async function loadTestCases() {
+    const res = await fetch('/api/v1/tuning/test-cases');
+    testCases = await res.json();
+    renderTestCasesCheckboxes();
+}
+
+async function loadTuningModels() {
+    try {
+        const res = await fetch('/api/v1/tuning/models');
+        tuningModels = await res.json();
+        renderBenchmarkModelsCheckboxes();
+    } catch (e) {
+        console.error('Failed to load tuning models:', e);
+        const container = document.getElementById('benchmark-models-checkboxes');
+        if (container) {
+            container.innerHTML = '<div class="text-center text-red-500 py-4">Error loading models</div>';
+        }
+    }
+}
+
+async function loadPromptTuningRuns() {
+    const res = await fetch('/api/v1/tuning/runs');
+    tuningRuns = await res.json();
+    renderTuningRuns();
+}
+
+function renderPromptsCheckboxes() {
+    const container = document.getElementById('prompts-checkboxes');
+    if (!container) return;
+
+    if (prompts.length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-4">No prompts yet. Create one to get started.</div>';
+        updatePromptsCount();
+        return;
+    }
+
+    container.innerHTML = prompts.map(p => `
+        <div class="flex items-center gap-3 p-2 rounded hover:bg-gray-800 group">
+            <label class="flex items-center gap-2 flex-1 cursor-pointer">
+                <input type="checkbox" class="prompt-checkbox w-4 h-4" value="${p.id}" onchange="updatePromptsCount()">
+                <div class="flex-1">
+                    <div class="text-white text-sm">${escapeHtml(p.name)}</div>
+                    ${p.description ? `<div class="text-xs text-gray-400">${escapeHtml(p.description)}</div>` : ''}
+                </div>
+            </label>
+            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onclick="editPrompt(${p.id}); event.stopPropagation();" class="text-xs text-blue-400 hover:text-blue-300">Edit</button>
+                <button onclick="deletePrompt(${p.id}); event.stopPropagation();" class="text-xs text-red-400 hover:text-red-300">Delete</button>
+            </div>
+        </div>
+    `).join('');
+
+    updatePromptsCount();
+}
+
+function renderTestCasesCheckboxes() {
+    const container = document.getElementById('test-cases-checkboxes');
+    if (!container) return;
+
+    if (testCases.length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-4">No test cases yet. Create one to get started.</div>';
+        updateTestCasesCount();
+        return;
+    }
+
+    const verdictColors = {
+        'REAL': 'text-red-400',
+        'FALSE_POSITIVE': 'text-green-400',
+        'WEAKNESS': 'text-yellow-400',
+        'NEEDS_VERIFIED': 'text-gray-400'
+    };
+
+    container.innerHTML = testCases.map(tc => `
+        <div class="flex items-center gap-3 p-2 rounded hover:bg-gray-800 group">
+            <label class="flex items-center gap-2 flex-1 cursor-pointer">
+                <input type="checkbox" class="test-case-checkbox w-4 h-4" value="${tc.id}" onchange="updateTestCasesCount()">
+                <div class="flex-1">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-white text-sm">${escapeHtml(tc.name)}</span>
+                            ${tc.draft_finding_id ? '<span class="text-xs bg-purple-500/20 text-purple-400 px-1.5 rounded" title="Linked to Finding">REF</span>' : ''}
+                        </div>
+                        <span class="text-xs font-semibold ${verdictColors[tc.verdict] || 'text-gray-400'}">${tc.verdict}</span>
+                    </div>
+                </div>
+            </label>
+            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onclick="editTestCase(${tc.id}); event.stopPropagation();" class="text-xs text-blue-400 hover:text-blue-300">Edit</button>
+                <button onclick="deleteTestCase(${tc.id}); event.stopPropagation();" class="text-xs text-red-400 hover:text-red-300">Delete</button>
+            </div>
+        </div>
+    `).join('');
+
+    updateTestCasesCount();
+}
+
+function renderBenchmarkModelsCheckboxes() {
+    const container = document.getElementById('benchmark-models-checkboxes');
+    if (!container) return;
+
+    if (tuningModels.length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-4">No verifier models configured</div>';
+        updateModelsCount();
+        return;
+    }
+
+    container.innerHTML = tuningModels.map(m => `
+        <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white p-2 rounded hover:bg-gray-800">
+            <input type="checkbox" class="benchmark-model-checkbox w-4 h-4" value="${m.id}" data-name="${m.name}" onchange="updateModelsCount()">
+            ${escapeHtml(m.name)}
+        </label>
+    `).join('');
+
+    updateModelsCount();
+}
+
+function renderTuningRuns() {
+    const panel = document.getElementById('results-panel');
+    if (!panel) return;
+
+    if (tuningRuns.length === 0) {
+        panel.innerHTML = '<div class="text-center text-gray-500 py-12">No runs yet. Start a run to see results.</div>';
+        return;
+    }
+
+    const statusColors = {
+        'completed': 'text-green-400',
+        'running': 'text-yellow-400',
+        'failed': 'text-red-400'
+    };
+
+    panel.innerHTML = `
+        <div class="space-y-3">
+            ${tuningRuns.map(run => `
+                <div class="bg-gray-900 border border-gray-700 rounded-lg p-3 cursor-pointer hover:border-blue-500" onclick="viewTuningRunResults(${run.id})">
+                    <div class="flex items-center justify-between">
+                        <div class="font-medium text-white">${escapeHtml(run.name || `Run #${run.id}`)}</div>
+                        <span class="text-xs ${statusColors[run.status]}">${run.status}</span>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1">
+                        ${run.completed_tests} / ${run.total_tests} tests
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1">${new Date(run.created_at).toLocaleString()}</div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function viewTuningRunResults(runId) {
+    const res = await fetch(`/api/v1/tuning/runs/${runId}/results`);
+    const data = await res.json();
+
+    const panel = document.getElementById('results-panel');
+    const analysis = data.analysis;
+
+    const getAccuracyClass = (accuracy) => {
+        if (accuracy >= 80) return 'text-green-400';
+        if (accuracy >= 60) return 'text-yellow-400';
+        return 'text-red-400';
+    };
+
+    // Helper to create result row
+    const createResultRow = (result) => {
+        const promptName = analysis.by_prompt[result.prompt_id]?.prompt_name || `Prompt #${result.prompt_id}`;
+        const correctIcon = result.correct
+            ? '<span class="text-green-500">✓</span>'
+            : '<span class="text-red-500">✗</span>';
+
+        return `
+            <tr class="border-b border-gray-800 hover:bg-gray-800 cursor-pointer transition-colors"
+                onclick="openInspectorPanel(${result.id})">
+                <td class="px-3 py-2 text-gray-300">${escapeHtml(result.model_name)}</td>
+                <td class="px-3 py-2 text-gray-300">${escapeHtml(promptName)}</td>
+                <td class="px-3 py-2">
+                    <span class="text-xs px-2 py-0.5 rounded ${
+                        result.predicted_vote === 'VERIFY' || result.predicted_vote === 'REAL' ? 'bg-red-500/20 text-red-400' :
+                        result.predicted_vote === 'REJECT' || result.predicted_vote === 'FALSE_POSITIVE' ? 'bg-green-500/20 text-green-400' :
+                        result.predicted_vote === 'WEAKNESS' ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-gray-500/20 text-gray-400'
+                    }">
+                        ${result.predicted_vote || 'N/A'}
+                    </span>
+                </td>
+                <td class="px-3 py-2 text-center">${correctIcon}</td>
+                <td class="px-3 py-2 text-right text-gray-400">${(result.duration_ms || 0).toFixed(0)}ms</td>
+            </tr>
+        `;
+    };
+
+    panel.innerHTML = `
+        <div class="space-y-4">
+            <!-- Header with Back Button -->
+            <div class="flex items-center gap-3">
+                <button onclick="loadPromptTuningRuns()"
+                        class="text-gray-400 hover:text-white">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                </button>
+                <div>
+                    <h3 class="text-lg font-bold text-white">${escapeHtml(data.run.name || `Run #${data.run.id}`)}</h3>
+                    <div class="text-xs text-gray-400">${new Date(data.run.created_at).toLocaleString()}</div>
+                </div>
+            </div>
+
+            <!-- Overall Stats -->
+            <div class="grid grid-cols-4 gap-2">
+                <div class="bg-gray-900 border border-gray-700 rounded p-2 text-center">
+                    <div class="text-xl font-bold ${getAccuracyClass(analysis.overall.accuracy)}">${analysis.overall.accuracy.toFixed(1)}%</div>
+                    <div class="text-xs text-gray-400 uppercase">Accuracy</div>
+                </div>
+                <div class="bg-gray-900 border border-gray-700 rounded p-2 text-center">
+                    <div class="text-xl font-bold text-white">${analysis.overall.correct}</div>
+                    <div class="text-xs text-gray-400 uppercase">Correct</div>
+                </div>
+                <div class="bg-gray-900 border border-gray-700 rounded p-2 text-center">
+                    <div class="text-xl font-bold text-white">${analysis.overall.total_tests - analysis.overall.correct}</div>
+                    <div class="text-xs text-gray-400 uppercase">Wrong</div>
+                </div>
+                <div class="bg-gray-900 border border-gray-700 rounded p-2 text-center">
+                    <div class="text-xl font-bold text-white">${(analysis.overall.avg_duration || 0).toFixed(0)}ms</div>
+                    <div class="text-xs text-gray-400 uppercase">Avg Time</div>
+                </div>
+            </div>
+
+            <!-- Results Table -->
+            <div class="bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
+                <div class="px-3 py-2 bg-gray-800 text-xs font-semibold text-gray-400 uppercase flex items-center justify-between">
+                    <span>All Results (click to inspect)</span>
+                    <span class="text-blue-400">${data.results.length} results</span>
+                </div>
+                <div class="overflow-x-auto max-h-96 overflow-y-auto custom-scrollbar">
+                    <table class="w-full text-sm">
+                        <thead class="sticky top-0 bg-gray-800">
+                            <tr class="border-b border-gray-700">
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-400 uppercase">Model</th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-400 uppercase">Prompt</th>
+                                <th class="px-3 py-2 text-left text-xs font-semibold text-gray-400 uppercase">Predicted</th>
+                                <th class="px-3 py-2 text-center text-xs font-semibold text-gray-400 uppercase">Result</th>
+                                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-400 uppercase">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.results.map(r => createResultRow(r)).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Selection count updates
+function updatePromptsCount() {
+    const count = document.querySelectorAll('.prompt-checkbox:checked').length;
+    const countEl = document.getElementById('prompts-count');
+    if (countEl) countEl.textContent = `(${count} selected)`;
+    updateTestsCount();
+}
+
+function updateTestCasesCount() {
+    const count = document.querySelectorAll('.test-case-checkbox:checked').length;
+    const countEl = document.getElementById('test-cases-count');
+    if (countEl) countEl.textContent = `(${count} selected)`;
+    updateTestsCount();
+}
+
+function updateModelsCount() {
+    const count = document.querySelectorAll('.benchmark-model-checkbox:checked').length;
+    const countEl = document.getElementById('models-count');
+    if (countEl) countEl.textContent = `(${count} selected)`;
+    updateTestsCount();
+}
+
+function updateTestsCount() {
+    const promptCount = document.querySelectorAll('.prompt-checkbox:checked').length;
+    const testCaseCount = document.querySelectorAll('.test-case-checkbox:checked').length;
+    const modelCount = document.querySelectorAll('.benchmark-model-checkbox:checked').length;
+    const totalTests = promptCount * testCaseCount * modelCount;
+
+    const label = document.getElementById('run-tests-label');
+    if (label) {
+        label.textContent = `Run Tests (${promptCount} prompts × ${testCaseCount} cases × ${modelCount} models = ${totalTests} tests)`;
+    }
+}
+
+// Select/Deselect functions for Prompts
+function selectAllPrompts() {
+    document.querySelectorAll('.prompt-checkbox').forEach(cb => cb.checked = true);
+    updatePromptsCount();
+}
+
+function deselectAllPrompts() {
+    document.querySelectorAll('.prompt-checkbox').forEach(cb => cb.checked = false);
+    updatePromptsCount();
+}
+
+function toggleAllPrompts(checked) {
+    document.querySelectorAll('.prompt-checkbox').forEach(cb => cb.checked = checked);
+    updatePromptsCount();
+}
+
+// Select/Deselect functions for Test Cases
+function selectAllTestCases() {
+    document.querySelectorAll('.test-case-checkbox').forEach(cb => cb.checked = true);
+    updateTestCasesCount();
+}
+
+function deselectAllTestCases() {
+    document.querySelectorAll('.test-case-checkbox').forEach(cb => cb.checked = false);
+    updateTestCasesCount();
+}
+
+function toggleAllTestCases(checked) {
+    document.querySelectorAll('.test-case-checkbox').forEach(cb => cb.checked = checked);
+    updateTestCasesCount();
+}
+
+// Select/Deselect functions for Models
+function selectAllBenchmarkModels() {
+    document.querySelectorAll('.benchmark-model-checkbox').forEach(cb => cb.checked = true);
+    updateModelsCount();
+}
+
+function deselectAllBenchmarkModels() {
+    document.querySelectorAll('.benchmark-model-checkbox').forEach(cb => cb.checked = false);
+    updateModelsCount();
+}
+
+function toggleAllBenchmarkModels(checked) {
+    document.querySelectorAll('.benchmark-model-checkbox').forEach(cb => cb.checked = checked);
+    updateModelsCount();
+}
+
+function openPromptDialog() {
+    // Create dialog dynamically
+    const dialog = document.createElement('div');
+    dialog.id = 'prompt-dialog-temp';
+    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    dialog.innerHTML = `
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <h2 class="text-xl font-bold text-white mb-4">New Prompt Template</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
+                    <input type="text" id="prompt-name-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., v2_verdict_first">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Description (optional)</label>
+                    <input type="text" id="prompt-description-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="Brief description">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Template <span class="text-xs text-gray-500">(Placeholders: {code}, {claim}, {issue}, {file})</span></label>
+                    <textarea id="prompt-template-input" rows="12" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm" placeholder="Enter prompt template..."></textarea>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="savePrompt()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Save</button>
+                <button onclick="closePromptDialog()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+    currentPromptId = null;
+}
+
+function editPrompt(id) {
+    const prompt = prompts.find(p => p.id === id);
+    currentPromptId = id;
+
+    const dialog = document.createElement('div');
+    dialog.id = 'prompt-dialog-temp';
+    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    dialog.innerHTML = `
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <h2 class="text-xl font-bold text-white mb-4">Edit Prompt Template</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
+                    <input type="text" id="prompt-name-input" value="${escapeHtml(prompt.name)}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Description (optional)</label>
+                    <input type="text" id="prompt-description-input" value="${escapeHtml(prompt.description || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Template</label>
+                    <textarea id="prompt-template-input" rows="12" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm">${escapeHtml(prompt.template)}</textarea>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="savePrompt()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Save</button>
+                <button onclick="closePromptDialog()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+}
+
+function closePromptDialog() {
+    const dialog = document.getElementById('prompt-dialog-temp');
+    if (dialog) dialog.remove();
+}
+
+async function savePrompt() {
+    const name = document.getElementById('prompt-name-input').value.trim();
+    const description = document.getElementById('prompt-description-input').value.trim();
+    const template = document.getElementById('prompt-template-input').value.trim();
+
+    if (!name || !template) {
+        alert('Name and template are required');
+        return;
+    }
+
+    const method = currentPromptId ? 'PUT' : 'POST';
+    const url = currentPromptId ? `/api/v1/tuning/prompts/${currentPromptId}` : '/api/v1/tuning/prompts';
+
+    const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description, template })
+    });
+
+    if (res.ok) {
+        closePromptDialog();
+        await loadPrompts();
+    } else {
+        const error = await res.json();
+        alert(error.detail || 'Failed to save prompt');
+    }
+}
+
+async function deletePrompt(id) {
+    if (!confirm('Delete this prompt template?')) return;
+    const res = await fetch(`/api/v1/tuning/prompts/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+        await loadPrompts();
+    } else {
+        alert('Failed to delete prompt');
+    }
+}
+
+function openTestCaseDialog() {
+    const dialog = document.createElement('div');
+    dialog.id = 'testcase-dialog-temp';
+    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    dialog.innerHTML = `
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <h2 class="text-xl font-bold text-white mb-4">New Test Case</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
+                    <input type="text" id="testcase-name-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., 221_integer_overflow">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Ground Truth Verdict</label>
+                    <select id="testcase-verdict-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <option value="REAL">REAL</option>
+                        <option value="FALSE_POSITIVE">FALSE_POSITIVE</option>
+                        <option value="WEAKNESS">WEAKNESS</option>
+                        <option value="NEEDS_VERIFIED">NEEDS_VERIFIED</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Issue</label>
+                    <input type="text" id="testcase-issue-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., Integer Overflow in ROM Size Calculation">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">File</label>
+                    <input type="text" id="testcase-file-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., BootManagerDxe/Legacy.c:4450">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Code</label>
+                    <textarea id="testcase-code-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm"></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Claim</label>
+                    <textarea id="testcase-claim-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"></textarea>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="saveTestCase()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Save</button>
+                <button onclick="closeTestCaseDialog()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+    currentTestCaseId = null;
+}
+
+function editTestCase(id) {
+    const tc = testCases.find(c => c.id === id);
+    currentTestCaseId = id;
+
+    const dialog = document.createElement('div');
+    dialog.id = 'testcase-dialog-temp';
+    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    dialog.innerHTML = `
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <h2 class="text-xl font-bold text-white mb-4">Edit Test Case</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
+                    <input type="text" id="testcase-name-input" value="${escapeHtml(tc.name)}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Ground Truth Verdict</label>
+                    <select id="testcase-verdict-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <option value="REAL" ${tc.verdict === 'REAL' ? 'selected' : ''}>REAL</option>
+                        <option value="FALSE_POSITIVE" ${tc.verdict === 'FALSE_POSITIVE' ? 'selected' : ''}>FALSE_POSITIVE</option>
+                        <option value="WEAKNESS" ${tc.verdict === 'WEAKNESS' ? 'selected' : ''}>WEAKNESS</option>
+                        <option value="NEEDS_VERIFIED" ${tc.verdict === 'NEEDS_VERIFIED' ? 'selected' : ''}>NEEDS_VERIFIED</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Issue</label>
+                    <input type="text" id="testcase-issue-input" value="${escapeHtml(tc.issue || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">File</label>
+                    <input type="text" id="testcase-file-input" value="${escapeHtml(tc.file || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Code</label>
+                    <textarea id="testcase-code-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm">${escapeHtml(tc.code || '')}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Claim</label>
+                    <textarea id="testcase-claim-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">${escapeHtml(tc.claim || '')}</textarea>
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="saveTestCase()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Save</button>
+                <button onclick="closeTestCaseDialog()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+}
+
+function closeTestCaseDialog() {
+    const dialog = document.getElementById('testcase-dialog-temp');
+    if (dialog) dialog.remove();
+}
+
+async function saveTestCase() {
+    const name = document.getElementById('testcase-name-input').value.trim();
+    const verdict = document.getElementById('testcase-verdict-input').value;
+    const issue = document.getElementById('testcase-issue-input').value.trim();
+    const file = document.getElementById('testcase-file-input').value.trim();
+    const code = document.getElementById('testcase-code-input').value.trim();
+    const claim = document.getElementById('testcase-claim-input').value.trim();
+
+    if (!name || !verdict) {
+        alert('Name and verdict are required');
+        return;
+    }
+
+    const method = currentTestCaseId ? 'PUT' : 'POST';
+    const url = currentTestCaseId ? `/api/v1/tuning/test-cases/${currentTestCaseId}` : '/api/v1/tuning/test-cases';
+
+    const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, verdict, issue, file, code, claim })
+    });
+
+    if (res.ok) {
+        closeTestCaseDialog();
+        await loadTestCases();
+    } else {
+        const error = await res.json();
+        alert(error.detail || 'Failed to save test case');
+    }
+}
+
+async function deleteTestCase(id) {
+    if (!confirm('Delete this test case?')) return;
+    const res = await fetch(`/api/v1/tuning/test-cases/${id}`, { method: 'DELETE' });
+    if (res.ok) {
+        await loadTestCases();
+    } else {
+        alert('Failed to delete test case');
+    }
+}
+
+// Track if a benchmark run is in progress
+let benchmarkRunInProgress = false;
+let benchmarkRunId = null;
+let benchmarkProgressPollInterval = null;
+let benchmarkDebounceTimeout = null;
+let currentEventSource = null;
+let currentRunId = null;
+
+async function runBenchmarkTests() {
+    // Debounce: prevent multiple runs
+    if (benchmarkRunInProgress) {
+        console.log('Benchmark run already in progress, ignoring click');
+        return;
+    }
+
+    // Clear any existing debounce timeout
+    if (benchmarkDebounceTimeout) {
+        clearTimeout(benchmarkDebounceTimeout);
+    }
+
+    // Set a 500ms debounce
+    benchmarkDebounceTimeout = setTimeout(async () => {
+        await executeBenchmarkRun();
+    }, 500);
+}
+
+async function executeBenchmarkRun() {
+    // Double-check the flag
+    if (benchmarkRunInProgress) {
+        return;
+    }
+
+    const modelIds = Array.from(document.querySelectorAll('.benchmark-model-checkbox:checked')).map(cb => parseInt(cb.value));
+    const promptIds = Array.from(document.querySelectorAll('.prompt-checkbox:checked')).map(cb => parseInt(cb.value));
+    const testCaseIds = Array.from(document.querySelectorAll('.test-case-checkbox:checked')).map(cb => parseInt(cb.value));
+
+    if (modelIds.length === 0 || promptIds.length === 0 || testCaseIds.length === 0) {
+        alert('Please select at least one model, prompt, and test case');
+        return;
+    }
+
+    // Get concurrency value from input
+    const concurrency = parseInt(document.getElementById('benchmark-concurrency').value) || 4;
+
+    const btn = document.getElementById('run-benchmark-tests-btn');
+    const label = document.getElementById('run-tests-label');
+    const originalHTML = btn.innerHTML;
+
+    // Set flag and disable button immediately
+    benchmarkRunInProgress = true;
+    btn.disabled = true;
+    label.textContent = 'Starting...';
+
+    try {
+        const res = await fetch('/api/v1/tuning/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model_ids: modelIds,
+                prompt_ids: promptIds,
+                test_case_ids: testCaseIds,
+                concurrency: concurrency,
+                name: null
+            })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            currentRunId = data.run_id;
+            initializeResultsUI(data);
+            connectToResultStream(data.run_id);
+        } else {
+            const error = await res.json();
+            alert('Failed to start run: ' + (error.detail || 'Unknown error'));
+            benchmarkRunInProgress = false;
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+        benchmarkRunInProgress = false;
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+    }
+}
+
+function connectToResultStream(runId) {
+    if (currentEventSource) {
+        currentEventSource.close();
+    }
+
+    currentEventSource = new EventSource(`/api/v1/tuning/runs/${runId}/stream`);
+
+    currentEventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleStreamEvent(data);
+    };
+
+    currentEventSource.onerror = (error) => {
+        console.error('SSE error:', error);
+        if (currentEventSource.readyState === EventSource.CLOSED) {
+            setTimeout(() => {
+                if (currentRunId === runId) {
+                    connectToResultStream(runId);
+                }
+            }, 3000);
+        }
+    };
+}
+
+function handleStreamEvent(event) {
+    switch (event.type) {
+        case 'connected':
+            console.log('Connected to stream');
+            break;
+
+        case 'result':
+            addResultToLiveTable(event.data);
+            updateProgressBar(event.progress);
+            break;
+
+        case 'existing_result':
+            addResultToLiveTable(event.data, false);
+            break;
+
+        case 'paused':
+            updateControlButtons('paused');
+            showToast(event.message, 'info');
+            break;
+
+        case 'resumed':
+            updateControlButtons('running');
+            showToast(event.message, 'success');
+            break;
+
+        case 'cancelled':
+            updateControlButtons('cancelled');
+            currentEventSource.close();
+            benchmarkRunInProgress = false;
+            const cancelBtn = document.getElementById('run-benchmark-tests-btn');
+            if (cancelBtn) cancelBtn.disabled = false;
+            loadPromptTuningRuns();
+            showToast(event.message, 'warning');
+            break;
+
+        case 'completed':
+            updateControlButtons('completed');
+            currentEventSource.close();
+            benchmarkRunInProgress = false;
+            const btn = document.getElementById('run-benchmark-tests-btn');
+            if (btn) btn.disabled = false;
+            loadPromptTuningRuns();
+            showToast('Benchmark completed!', 'success');
+            break;
+
+        case 'heartbeat':
+            // Keep-alive
+            break;
+    }
+}
+
+function initializeResultsUI(runData) {
+    const resultsPanel = document.getElementById('results-panel');
+    resultsPanel.innerHTML = `
+        <div class="space-y-4">
+            <div id="run-controls" class="flex gap-2">
+                <button onclick="pauseRun()" id="pause-btn"
+                    class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                    </svg>
+                    Pause
+                </button>
+                <button onclick="resumeRun()" id="resume-btn"
+                    class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded hidden flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
+                    </svg>
+                    Resume
+                </button>
+                <button onclick="cancelRun()" id="cancel-btn"
+                    class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/>
+                    </svg>
+                    Cancel
+                </button>
+            </div>
+
+            <div class="bg-gray-900 rounded-lg p-3">
+                <div class="flex justify-between text-xs text-gray-400 mb-1">
+                    <span>Progress</span>
+                    <span id="progress-text">0 / ${runData.total_tests}</span>
+                </div>
+                <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                         style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="bg-gray-900 rounded-lg overflow-hidden">
+                <div class="px-3 py-2 bg-gray-800 text-xs font-semibold text-gray-400 uppercase flex items-center justify-between">
+                    <span>Live Results</span>
+                    <span id="live-count" class="text-blue-400">0 results</span>
+                </div>
+                <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                    <table class="w-full text-xs">
+                        <thead class="sticky top-0 bg-gray-800">
+                            <tr class="border-b border-gray-700">
+                                <th class="px-3 py-2 text-left">Model</th>
+                                <th class="px-3 py-2 text-left">Prompt</th>
+                                <th class="px-3 py-2 text-left">Test</th>
+                                <th class="px-3 py-2 text-left">Predicted</th>
+                                <th class="px-3 py-2 text-center">Result</th>
+                                <th class="px-3 py-2 text-right">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function addResultToLiveTable(result, animate = true) {
+    const tbody = document.getElementById('results-tbody');
+    const row = document.createElement('tr');
+    row.className = animate ? 'border-b border-gray-800 animate-fade-in cursor-pointer hover:bg-gray-800 transition-colors' : 'border-b border-gray-800 cursor-pointer hover:bg-gray-800 transition-colors';
+    row.onclick = () => openInspectorPanel(result.id);
+
+    const correctIcon = result.correct
+        ? '<span class="text-green-500">✓</span>'
+        : '<span class="text-red-500">✗</span>';
+
+    row.innerHTML = `
+        <td class="px-3 py-2">${escapeHtml(result.model_name)}</td>
+        <td class="px-3 py-2">Prompt #${result.prompt_id}</td>
+        <td class="px-3 py-2">Case #${result.test_case_id}</td>
+        <td class="px-3 py-2">${result.predicted_vote || 'N/A'}</td>
+        <td class="px-3 py-2 text-center">${correctIcon}</td>
+        <td class="px-3 py-2 text-right text-gray-400">${result.duration_ms.toFixed(0)}ms</td>
+    `;
+
+    tbody.insertBefore(row, tbody.firstChild);
+
+    // Update count
+    const count = tbody.children.length;
+    document.getElementById('live-count').textContent = `${count} result${count !== 1 ? 's' : ''}`;
+}
+
+function updateProgressBar(progress) {
+    document.getElementById('progress-bar').style.width = `${progress.percent}%`;
+    document.getElementById('progress-text').textContent = `${progress.completed} / ${progress.total}`;
+}
+
+function updateControlButtons(status) {
+    const pauseBtn = document.getElementById('pause-btn');
+    const resumeBtn = document.getElementById('resume-btn');
+    const cancelBtn = document.getElementById('cancel-btn');
+
+    if (status === 'paused') {
+        pauseBtn.classList.add('hidden');
+        resumeBtn.classList.remove('hidden');
+    } else if (status === 'running') {
+        pauseBtn.classList.remove('hidden');
+        resumeBtn.classList.add('hidden');
+    } else {
+        pauseBtn.classList.add('hidden');
+        resumeBtn.classList.add('hidden');
+        cancelBtn.disabled = true;
+        cancelBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+}
+
+async function pauseRun() {
+    try {
+        const resp = await fetch(`/api/v1/tuning/runs/${currentRunId}/pause`, {method: 'POST'});
+        const data = await resp.json();
+        if (!data.success) {
+            showToast('Failed to pause run', 'error');
+        }
+    } catch (e) {
+        console.error('Pause error:', e);
+        showToast('Error pausing run', 'error');
+    }
+}
+
+async function resumeRun() {
+    try {
+        const resp = await fetch(`/api/v1/tuning/runs/${currentRunId}/resume`, {method: 'POST'});
+        const data = await resp.json();
+        if (!data.success) {
+            showToast('Failed to resume run', 'error');
+        }
+    } catch (e) {
+        console.error('Resume error:', e);
+        showToast('Error resuming run', 'error');
+    }
+}
+
+async function cancelRun() {
+    if (!confirm('Cancel this benchmark run? Results so far will be saved.')) {
+        return;
+    }
+
+    try {
+        const resp = await fetch(`/api/v1/tuning/runs/${currentRunId}/cancel`, {method: 'POST'});
+        const data = await resp.json();
+        if (data.success && currentEventSource) {
+            currentEventSource.close();
+        }
+    } catch (e) {
+        console.error('Cancel error:', e);
+        showToast('Error cancelling run', 'error');
+    }
+}
+
+function showToast(message, type = 'info') {
+    // Simple toast notification
+    const toast = document.createElement('div');
+    const colors = {
+        info: 'bg-blue-600',
+        success: 'bg-green-600',
+        warning: 'bg-yellow-600',
+        error: 'bg-red-600'
+    };
+    toast.className = `fixed top-4 right-4 ${colors[type]} text-white px-4 py-2 rounded shadow-lg z-50 animate-fade-in`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+function startBenchmarkProgressPolling(runId, totalTests) {
+    // Poll every 2 seconds
+    benchmarkProgressPollInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/api/v1/tuning/runs/${runId}/progress`);
+            if (res.ok) {
+                const progress = await res.json();
+                const label = document.getElementById('run-tests-label');
+                const btn = document.getElementById('run-benchmark-tests-btn');
+
+                label.textContent = `Running: ${progress.completed_tests}/${totalTests} tests completed`;
+
+                // Check if completed
+                if (progress.status === 'completed' || progress.status === 'failed') {
+                    clearInterval(benchmarkProgressPollInterval);
+                    benchmarkProgressPollInterval = null;
+                    benchmarkRunInProgress = false;
+                    btn.disabled = false;
+
+                    if (progress.status === 'completed') {
+                        label.textContent = `✓ Run completed (${progress.completed_tests}/${totalTests})`;
+                    } else {
+                        label.textContent = `✗ Run failed`;
+                    }
+
+                    // Refresh results table
+                    await loadPromptTuningRuns();
+
+                    // Reset button after 3 seconds
+                    setTimeout(() => {
+                        updateTestsCount();
+                    }, 3000);
+                }
+            }
+        } catch (e) {
+            console.error('Failed to poll progress:', e);
+        }
+    }, 2000);
+}
+
+// Load prompt tuning data when benchmark tab is activated
+const originalSwitchTabFunc = switchTab;
+switchTab = function(tabId) {
+    originalSwitchTabFunc(tabId);
+    if (tabId === 'benchmark') {
+        loadPromptTuningData();
+        startAutoRefresh();
+    } else {
+        stopAutoRefresh();
+    }
+};
+
+// =====================
+// IMPORT FINDINGS
+// =====================
+let importFindingsDrafts = [];
+
+function openImportFindingsDialog() {
+    const dialog = document.createElement('div');
+    dialog.id = 'import-findings-dialog';
+    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+    dialog.innerHTML = `
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            <h2 class="text-xl font-bold text-white mb-4">Import Findings as Test Cases</h2>
+            
+            <!-- Filters -->
+            <div class="grid grid-cols-3 gap-4 mb-4">
+                <div>
+                    <label class="block text-xs text-gray-400 mb-1">Scan ID</label>
+                    <input type="number" id="import-scan-id" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm" placeholder="Optional">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-400 mb-1">Finding ID</label>
+                    <input type="number" id="import-finding-id" class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white text-sm" placeholder="Optional">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="fetchImportFindings()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm">Load Findings</button>
+                </div>
+            </div>
+
+            <!-- List -->
+            <div class="flex-1 overflow-y-auto bg-gray-900 border border-gray-700 rounded-lg p-2 mb-4">
+                <div id="import-findings-list" class="space-y-2">
+                    <div class="text-center text-gray-500 py-8">Click "Load Findings" to search for importable drafts</div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="flex justify-between items-center border-t border-gray-700 pt-4">
+                <div class="text-sm text-gray-400">
+                    <span id="import-selected-count">0</span> selected
+                </div>
+                <div class="flex gap-3">
+                    <button onclick="closeImportFindingsDialog()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded font-medium">Cancel</button>
+                    <button onclick="importSelectedFindings()" class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium">Import Selected</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+    // Auto-load recent
+    fetchImportFindings();
+}
+
+function closeImportFindingsDialog() {
+    const dialog = document.getElementById('import-findings-dialog');
+    if (dialog) dialog.remove();
+}
+
+async function fetchImportFindings() {
+    const scanId = document.getElementById('import-scan-id').value;
+    const findingId = document.getElementById('import-finding-id').value;
+    const container = document.getElementById('import-findings-list');
+    
+    container.innerHTML = '<div class="text-center text-gray-400 py-8">Loading...</div>';
+    
+    try {
+        let url = '/api/v1/tuning/draft-findings?limit=50';
+        if (scanId) url += `&scan_id=${scanId}`;
+        if (findingId) url += `&finding_id=${findingId}`;
+        
+        const res = await fetch(url);
+        importFindingsDrafts = await res.json();
+        
+        renderImportFindingsList();
+    } catch (e) {
+        container.innerHTML = `<div class="text-center text-red-400 py-8">Error: ${e.message}</div>`;
+    }
+}
+
+function renderImportFindingsList() {
+    const container = document.getElementById('import-findings-list');
+    
+    if (importFindingsDrafts.length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-8">No findings found</div>';
+        return;
+    }
+    
+    container.innerHTML = importFindingsDrafts.map(draft => `
+        <div class="p-3 bg-gray-800 rounded border border-gray-700 hover:border-blue-500 cursor-pointer" onclick="toggleImportSelection(${draft.id})">
+            <div class="flex items-start gap-3">
+                <input type="checkbox" class="import-checkbox mt-1" value="${draft.id}" id="import-check-${draft.id}" onclick="event.stopPropagation(); updateImportCount();">
+                <div class="flex-1 overflow-hidden">
+                    <div class="flex justify-between items-start">
+                        <div class="font-medium text-white truncate pr-2" title="${escapeHtml(draft.title)}">${escapeHtml(draft.title)}</div>
+                        <span class="text-xs bg-gray-700 text-gray-300 px-1.5 rounded whitespace-nowrap">${draft.severity}</span>
+                    </div>
+                    <div class="text-xs text-gray-400 truncate mt-0.5">${escapeHtml(draft.file_path)}:${draft.line_number}</div>
+                    <div class="text-xs text-gray-500 mt-0.5 flex gap-2">
+                        <span>Scan #${draft.scan_id}</span>
+                        <span>${draft.vulnerability_type}</span>
+                    </div>
+                    
+                    ${draft.vote_summary && draft.vote_summary.total > 0 ? `
+                    <div class="flex gap-1 mt-1.5">
+                        ${draft.vote_summary.verify > 0 ? `<span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded text-[10px]" title="Verify Votes">✓ ${draft.vote_summary.verify}</span>` : ''}
+                        ${draft.vote_summary.reject > 0 ? `<span class="px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded text-[10px]" title="Reject Votes">✗ ${draft.vote_summary.reject}</span>` : ''}
+                        ${draft.vote_summary.weakness > 0 ? `<span class="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-[10px]" title="Weakness Votes">⚠ ${draft.vote_summary.weakness}</span>` : ''}
+                    </div>
+                    ` : ''}
+                    
+                    <!-- Ground Truth Selection -->
+                    <div class="mt-2 flex items-center gap-2" onclick="event.stopPropagation()">
+                        <label class="text-xs text-gray-400">Ground Truth:</label>
+                        <select id="verdict-select-${draft.id}" class="bg-gray-900 border border-gray-600 text-white text-xs rounded px-2 py-1 focus:border-blue-500 outline-none">
+                            <option value="REAL">REAL (Vulnerable)</option>
+                            <option value="FALSE_POSITIVE">FALSE POSITIVE (Safe)</option>
+                            <option value="WEAKNESS">WEAKNESS (Bad Practice)</option>
+                            <option value="NEEDS_VERIFIED">NEEDS VERIFIED (Unsure)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    updateImportCount();
+}
+
+function toggleImportSelection(id) {
+    const checkbox = document.getElementById(`import-check-${id}`);
+    checkbox.checked = !checkbox.checked;
+    updateImportCount();
+}
+
+function updateImportCount() {
+    const count = document.querySelectorAll('.import-checkbox:checked').length;
+    document.getElementById('import-selected-count').textContent = count;
+}
+
+async function importSelectedFindings() {
+    const selectedCheckboxes = document.querySelectorAll('.import-checkbox:checked');
+    if (selectedCheckboxes.length === 0) {
+        alert('Please select at least one finding to import');
+        return;
+    }
+    
+    const btn = document.querySelector('#import-findings-dialog button.bg-green-600');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = `Importing ${selectedCheckboxes.length}...`;
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const checkbox of selectedCheckboxes) {
+        const id = checkbox.value;
+        const verdict = document.getElementById(`verdict-select-${id}`).value;
+        
+        try {
+            const res = await fetch(`/api/v1/tuning/test-cases/from-finding/${id}?verdict=${verdict}`, {
+                method: 'POST'
+            });
+            
+            if (res.ok) {
+                successCount++;
+            } else {
+                failCount++;
+                console.error(`Failed to import finding ${id}`, await res.text());
+            }
+        } catch (e) {
+            failCount++;
+            console.error(`Error importing finding ${id}`, e);
+        }
+    }
+    
+    btn.disabled = false;
+    btn.textContent = originalText;
+    
+    alert(`Import complete: ${successCount} succeeded, ${failCount} failed`);
+    closeImportFindingsDialog();
+    loadTestCases(); // Refresh main list
+}
+
+// ============================================================================
+// Result Inspector Panel Functions
+// ============================================================================
+
+let currentInspectorResult = null;
+
+async function openInspectorPanel(resultId) {
+    const panel = document.getElementById('result-inspector-panel');
+    const backdrop = document.getElementById('inspector-backdrop');
+    const content = document.getElementById('inspector-content');
+
+    // Show loading state
+    content.innerHTML = '<div class="text-center text-gray-500 py-8">Loading...</div>';
+
+    // Show panel and backdrop
+    panel.classList.remove('translate-x-full');
+    backdrop.classList.remove('hidden');
+
+    try {
+        // Fetch result details
+        const res = await fetch(`/api/v1/tuning/results/${resultId}`);
+        const data = await res.json();
+        currentInspectorResult = data;
+
+        // Render content
+        content.innerHTML = `
+            <div class="space-y-6">
+                <!-- Summary -->
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase mb-3">Summary</h4>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <div class="text-xs text-gray-500">Model</div>
+                            <div class="text-white font-medium">${escapeHtml(data.model.name)}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Prompt</div>
+                            <div class="text-white font-medium">${escapeHtml(data.prompt.name || 'N/A')}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Test Case</div>
+                            <div class="text-white font-medium">${escapeHtml(data.test_case.name)}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Expected</div>
+                            <div class="font-medium ${
+                                data.test_case.verdict === 'REAL' ? 'text-red-400' :
+                                data.test_case.verdict === 'FALSE_POSITIVE' ? 'text-green-400' :
+                                data.test_case.verdict === 'WEAKNESS' ? 'text-yellow-400' :
+                                'text-gray-400'
+                            }">${data.test_case.verdict}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Predicted</div>
+                            <div class="font-medium ${
+                                data.predicted_vote === 'REAL' ? 'text-red-400' :
+                                data.predicted_vote === 'FALSE_POSITIVE' ? 'text-green-400' :
+                                data.predicted_vote === 'WEAKNESS' ? 'text-yellow-400' :
+                                'text-gray-400'
+                            }">${data.predicted_vote || 'N/A'}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Result</div>
+                            <div class="font-medium ${data.correct ? 'text-green-400' : 'text-red-400'}">
+                                ${data.correct ? '✓ Correct' : '✗ Incorrect'}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Performance Metrics -->
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase mb-3">Performance</h4>
+                    <div class="grid grid-cols-3 gap-4">
+                        <div>
+                            <div class="text-xs text-gray-500">Duration</div>
+                            <div class="text-white font-medium">${(data.duration_ms || 0).toFixed(0)}ms</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Tokens In</div>
+                            <div class="text-white font-medium">${data.tokens_in || 'N/A'}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500">Tokens Out</div>
+                            <div class="text-white font-medium">${data.tokens_out || 'N/A'}</div>
+                        </div>
+                    </div>
+                    ${data.confidence !== null ? `
+                        <div class="mt-3">
+                            <div class="text-xs text-gray-500">Confidence</div>
+                            <div class="flex items-center gap-2 mt-1">
+                                <div class="flex-1 bg-gray-700 rounded-full h-2">
+                                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${data.confidence}%"></div>
+                                </div>
+                                <span class="text-white font-medium">${data.confidence}%</span>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <!-- Test Case Details -->
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase mb-3">Test Case</h4>
+                    <div class="space-y-3">
+                        <div>
+                            <div class="text-xs text-gray-500 mb-1">Issue</div>
+                            <div class="text-gray-300">${escapeHtml(data.test_case.issue || 'N/A')}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500 mb-1">File</div>
+                            <div class="text-gray-300 font-mono text-xs">${escapeHtml(data.test_case.file || 'N/A')}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500 mb-1">Code Snippet</div>
+                            <pre class="bg-gray-900 p-3 rounded text-xs text-gray-300 overflow-x-auto"><code>${escapeHtml(data.test_case.code || 'N/A')}</code></pre>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-500 mb-1">Claim</div>
+                            <div class="text-gray-300 text-sm">${escapeHtml(data.test_case.claim || 'N/A')}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Full Prompt -->
+                <details class="bg-gray-800 rounded-lg overflow-hidden">
+                    <summary class="px-4 py-3 cursor-pointer hover:bg-gray-700 text-sm font-semibold text-gray-400 uppercase">
+                        Full Prompt Sent
+                    </summary>
+                    <div class="p-4 border-t border-gray-700">
+                        <pre class="bg-gray-900 p-3 rounded text-xs text-gray-300 overflow-x-auto max-h-96"><code>${escapeHtml(data.full_prompt || 'N/A')}</code></pre>
+                    </div>
+                </details>
+
+                <!-- Raw Response -->
+                <details class="bg-gray-800 rounded-lg overflow-hidden">
+                    <summary class="px-4 py-3 cursor-pointer hover:bg-gray-700 text-sm font-semibold text-gray-400 uppercase">
+                        Raw LLM Response
+                    </summary>
+                    <div class="p-4 border-t border-gray-700">
+                        <pre class="bg-gray-900 p-3 rounded text-xs text-gray-300 overflow-x-auto max-h-96"><code>${escapeHtml(data.raw_response || 'N/A')}</code></pre>
+                    </div>
+                </details>
+
+                <!-- Parsed Output -->
+                ${data.reasoning ? `
+                <div class="bg-gray-800 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-gray-400 uppercase mb-3">Model Reasoning</h4>
+                    <div class="text-gray-300 text-sm">${escapeHtml(data.reasoning)}</div>
+                </div>
+                ` : ''}
+
+                ${data.parse_error ? `
+                <div class="bg-red-900/20 border border-red-700 rounded-lg p-4">
+                    <h4 class="text-sm font-semibold text-red-400 uppercase mb-3">Parse Error</h4>
+                    <div class="text-red-300 text-sm font-mono">${escapeHtml(data.parse_error)}</div>
+                </div>
+                ` : ''}
+            </div>
+        `;
+    } catch (e) {
+        content.innerHTML = `
+            <div class="text-center text-red-500 py-8">
+                <p>Error loading result details</p>
+                <p class="text-sm text-gray-400 mt-2">${e.message}</p>
+            </div>
+        `;
+    }
+}
+
+function closeInspectorPanel() {
+    const panel = document.getElementById('result-inspector-panel');
+    const backdrop = document.getElementById('inspector-backdrop');
+
+    panel.classList.add('translate-x-full');
+    backdrop.classList.add('hidden');
+    currentInspectorResult = null;
+}
+
+// Add keyboard shortcut (ESC to close)
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeInspectorPanel();
+    }
+});
+
+// ============================================================================
+// Auto-refresh for runs list
+// ============================================================================
+
+let autoRefreshInterval = null;
+
+function startAutoRefresh() {
+    // Clear any existing interval
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+
+    // Refresh every 5 seconds
+    autoRefreshInterval = setInterval(async () => {
+        // Only refresh if on benchmark tab and not viewing a specific run
+        const activeTab = localStorage.getItem('tuning_active_tab');
+        if (activeTab === 'benchmark') {
+            const resultsPanel = document.getElementById('results-panel');
+            // Check if we're on the main list view (check for runs container)
+            if (resultsPanel && !resultsPanel.querySelector('#run-results-tbody')) {
+                await loadPromptTuningRuns();
+            }
+        }
+    }, 5000);
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+// Stop auto-refresh when page is hidden
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        stopAutoRefresh();
+    } else {
+        const activeTab = localStorage.getItem('tuning_active_tab');
+        if (activeTab === 'benchmark') {
+            startAutoRefresh();
+        }
+    }
+});
 </script>
+
+<!-- Result Inspector Panel (slides in from right) -->
+<div id="result-inspector-panel" class="fixed right-0 top-0 h-full w-[600px] bg-gray-900 border-l border-gray-700 transform translate-x-full transition-transform duration-300 ease-in-out z-50 overflow-hidden flex flex-col">
+    <!-- Header -->
+    <div class="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
+        <h3 class="text-lg font-semibold text-white">Result Inspector</h3>
+        <button onclick="closeInspectorPanel()" class="text-gray-400 hover:text-white">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Content -->
+    <div id="inspector-content" class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+        <div class="text-center text-gray-500 py-8">
+            Loading...
+        </div>
+    </div>
+</div>
+
+<!-- Backdrop (semi-transparent overlay) -->
+<div id="inspector-backdrop" class="fixed inset-0 bg-black bg-opacity-50 hidden z-40" onclick="closeInspectorPanel()"></div>
+
 {% endblock %}

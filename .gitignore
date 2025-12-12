@@ -1,47 +1,43 @@
-# Virtual environments
-venv/
-.venv/
-*_venv/
-*venv*/
-
-# Sandbox directories
-sandbox/
-
-# Python cache
+# Python
 __pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
 
-# Database files (but allow template)
+# Database
 *.db
-!backend/data/scans.db.template
 *.db-journal
-
-# Environment files
-.env
+*.sqlite
+*.sqlite3
+backend/data/*.db
+backend/scans.db
+backend/data/scans.db.backup*
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Test artifacts
-vulnerable_test/
-json2cpp-test/
-*.zip
-*.tar.gz
+# OS
+.DS_Store
+Thumbs.db
 
-# Logs and temp files
+# Logs
 *.log
-*.tmp
-*.bak
-uvicorn.log
+logs/
 
-# Benchmark/debug artifacts
-benchmark_results*.json
-get-pip.py
+# Secrets
+.env
+.env.local
+cookies.txt
 
-# Data directory (but allow template db)
-data/
-!backend/data/
-!backend/data/scans.db.template
+# Test outputs
+test_outputs/
+temp/
+tmp/
