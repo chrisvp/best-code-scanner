@@ -6,6 +6,10 @@ Guidance for Claude Code when working with this repository.
 
 **Davy Code Scanner** - An LLM-powered security vulnerability scanner that analyzes code repositories using multi-model voting and a three-phase pipeline. Supports scanning Git repositories or uploaded archives containing Python, C, and C++ code.
 
+## Workflow
+
+- **Commit after completing tasks**: Before stopping or at each successfully completed list of tasks, commit changes with a descriptive comment.
+
 ## Quick Start
 
 ```bash
@@ -22,7 +26,7 @@ cd backend && pip install -r requirements.txt
 ```
 
 **Server URL**: http://localhost:8000
-**Database**: `/tmp/scans.db` (SQLite)
+**Database**: `data/scans.db` (SQLite, relative to backend/)
 
 ## Tech Stack
 
@@ -125,9 +129,9 @@ Profiles define how scans run with multiple analyzers:
 
 ```
 LLM_BASE_URL=https://192.168.33.158:5000/v1
-LLM_API_KEY=your-api-key
+LLM_API_KEY=testkeyforchrisvp
 LLM_VERIFY_SSL=false
-DATABASE_URL=sqlite:////tmp/scans.db
+DATABASE_URL=sqlite:////home/aiadmin/web-davy-code-scanner/backend/data/scans.db
 MAX_CONCURRENT_REQUESTS=5
 ```
 
@@ -234,8 +238,8 @@ The Agent Fix feature generates security fixes using an agentic approach:
 curl http://localhost:8000/scan/{id}/progress | python3 -m json.tool
 
 # Check database
-sqlite3 /tmp/scans.db "SELECT * FROM scans ORDER BY id DESC LIMIT 5;"
-sqlite3 /tmp/scans.db "SELECT * FROM draft_findings WHERE scan_id=X;"
+sqlite3 backend/data/scans.db "SELECT * FROM scans ORDER BY id DESC LIMIT 5;"
+sqlite3 backend/data/scans.db "SELECT * FROM draft_findings WHERE scan_id=X;"
 ```
 
 ### Database Migrations
