@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # Database - persistent location in backend directory
-    DATABASE_URL: str = "sqlite:////home/aiadmin/web-davy-code-scanner/backend/scans.db"
+    DATABASE_URL: str = "sqlite:////home/aiadmin/web-davy-code-scanner/backend/data/scans.db"
     DB_PASSWORD: str = "changeme_in_prod" # SQLCipher key (Unused in dev)
     
     # Security

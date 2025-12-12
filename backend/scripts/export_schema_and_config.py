@@ -29,9 +29,10 @@ CONFIG_TABLES = [
     'tuning_prompt_templates',
     'tuning_test_cases',
     'users',
-    'gitlab_repos',
-    'github_repos',
-    'repo_watchers',
+    # Exclude these - contain secrets/tokens:
+    # 'gitlab_repos',
+    # 'github_repos',
+    # 'repo_watchers',
     'output_templates',
 ]
 
@@ -39,7 +40,7 @@ def export_schema_and_config(output_file='backend/init_db.sql'):
     """Export schema and config tables to SQL file"""
 
     # Use actual database location
-    db_path = '/home/aiadmin/web-davy-code-scanner/backend/scans.db'
+    db_path = '/home/aiadmin/web-davy-code-scanner/backend/data/scans.db'
 
     if not os.path.exists(db_path):
         print(f"Database not found: {db_path}")

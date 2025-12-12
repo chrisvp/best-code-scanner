@@ -97,19 +97,23 @@ CREATE TABLE draft_findings (
 	vulnerability_type VARCHAR, 
 	severity VARCHAR, 
 	line_number INTEGER, 
+	file_path VARCHAR, 
 	snippet TEXT, 
 	reason TEXT, 
 	auto_detected BOOLEAN, 
 	initial_votes INTEGER, 
 	source_models JSON, 
 	dedup_key VARCHAR, 
+	analyzer_id INTEGER, 
+	analyzer_name VARCHAR, 
 	status VARCHAR, 
 	verification_notes TEXT, 
 	verification_votes INTEGER, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id), 
-	FOREIGN KEY(chunk_id) REFERENCES scan_file_chunks (id)
+	FOREIGN KEY(chunk_id) REFERENCES scan_file_chunks (id), 
+	FOREIGN KEY(analyzer_id) REFERENCES profile_analyzers (id)
 );
 
 CREATE TABLE finding_comments (
@@ -128,9 +132,12 @@ CREATE TABLE findings (
 	id INTEGER NOT NULL, 
 	scan_id INTEGER, 
 	verified_id INTEGER, 
+	draft_id INTEGER, 
+	mr_review_id INTEGER, 
 	file_path VARCHAR NOT NULL, 
 	line_number INTEGER, 
 	severity VARCHAR, 
+	status VARCHAR, 
 	description TEXT NOT NULL, 
 	snippet TEXT, 
 	remediation TEXT, 
@@ -140,10 +147,18 @@ CREATE TABLE findings (
 	proof_of_concept TEXT, 
 	corrected_code TEXT, 
 	remediation_steps TEXT, 
-	"references" TEXT, mr_review_id INTEGER REFERENCES mr_reviews(id), source_model TEXT, detected_at DATETIME, confidence_score REAL, 
+	"references" TEXT, 
+	source_model VARCHAR, 
+	detected_at DATETIME, 
+	confidence_score FLOAT, 
+	status_changed_by_id INTEGER, 
+	status_changed_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id), 
-	FOREIGN KEY(verified_id) REFERENCES verified_findings (id)
+	FOREIGN KEY(verified_id) REFERENCES verified_findings (id), 
+	FOREIGN KEY(draft_id) REFERENCES draft_findings (id), 
+	FOREIGN KEY(mr_review_id) REFERENCES mr_reviews (id), 
+	FOREIGN KEY(status_changed_by_id) REFERENCES users (id)
 );
 
 CREATE TABLE generated_fixes (
@@ -153,21 +168,22 @@ CREATE TABLE generated_fixes (
 	model_name VARCHAR, 
 	code TEXT NOT NULL, 
 	reasoning TEXT, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(finding_id) REFERENCES findings (id)
 );
 
 CREATE TABLE github_repos (
-    id INTEGER PRIMARY KEY,
-    name VARCHAR NOT NULL,
-    github_url VARCHAR NOT NULL DEFAULT 'https://api.github.com',
-    github_token VARCHAR,
-    owner VARCHAR NOT NULL,
-    repo VARCHAR NOT NULL,
-    description VARCHAR,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP
+	id INTEGER NOT NULL, 
+	name VARCHAR NOT NULL, 
+	github_url VARCHAR NOT NULL, 
+	github_token VARCHAR, 
+	owner VARCHAR NOT NULL, 
+	repo VARCHAR NOT NULL, 
+	description VARCHAR, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (id)
 );
 
 CREATE TABLE gitlab_repos (
@@ -177,8 +193,9 @@ CREATE TABLE gitlab_repos (
 	gitlab_token VARCHAR, 
 	project_id VARCHAR NOT NULL, 
 	description VARCHAR, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
-	updated_at DATETIME, verify_ssl BOOLEAN DEFAULT 0, 
+	verify_ssl BOOLEAN, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
 	PRIMARY KEY (id)
 );
 
@@ -212,14 +229,35 @@ CREATE TABLE llm_call_metrics (
 	total_time_ms FLOAT, 
 	tokens_in INTEGER, 
 	tokens_out INTEGER, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id)
 );
 
-CREATE TABLE llm_request_logs (id INTEGER PRIMARY KEY, scan_id INTEGER, mr_review_id INTEGER, model_name VARCHAR, phase VARCHAR, analyzer_name VARCHAR,
-  file_path VARCHAR, chunk_id INTEGER, request_prompt TEXT, raw_response TEXT, parsed_result JSON, parse_success BOOLEAN DEFAULT 1, parse_error TEXT, findings_count INTEGER DEFAULT 0, tokens_in
-  INTEGER, tokens_out INTEGER, duration_ms FLOAT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE llm_request_logs (
+	id INTEGER NOT NULL, 
+	scan_id INTEGER, 
+	mr_review_id INTEGER, 
+	status VARCHAR, 
+	model_name VARCHAR, 
+	phase VARCHAR, 
+	analyzer_name VARCHAR, 
+	file_path VARCHAR, 
+	chunk_id INTEGER, 
+	request_prompt TEXT, 
+	raw_response TEXT, 
+	parsed_result JSON, 
+	parse_success BOOLEAN, 
+	parse_error TEXT, 
+	findings_count INTEGER, 
+	tokens_in INTEGER, 
+	tokens_out INTEGER, 
+	duration_ms FLOAT, 
+	created_at DATETIME, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(scan_id) REFERENCES scans (id), 
+	FOREIGN KEY(mr_review_id) REFERENCES mr_reviews (id)
+);
 
 CREATE TABLE model_configs (
 	id INTEGER NOT NULL, 
@@ -227,45 +265,54 @@ CREATE TABLE model_configs (
 	base_url VARCHAR, 
 	api_key VARCHAR, 
 	max_tokens INTEGER, 
+	max_context_length INTEGER, 
 	max_concurrent INTEGER, 
 	votes INTEGER, 
 	chunk_size INTEGER, 
 	is_analyzer BOOLEAN, 
 	is_verifier BOOLEAN, 
+	is_cleanup BOOLEAN, 
+	is_chat BOOLEAN, 
+	response_format VARCHAR, 
+	tool_call_format VARCHAR, 
 	analysis_prompt_template TEXT, 
-	verification_prompt_template TEXT, is_cleanup BOOLEAN DEFAULT 0, is_chat BOOLEAN DEFAULT 0, 
+	verification_prompt_template TEXT, 
 	PRIMARY KEY (id), 
 	UNIQUE (name)
 );
 
-CREATE TABLE "mr_reviews" (
-    id INTEGER NOT NULL PRIMARY KEY,
-    watcher_id INTEGER,
-    gitlab_repo_id INTEGER,
-    mr_iid INTEGER NOT NULL,
-    mr_title VARCHAR,
-    mr_url VARCHAR,
-    mr_author VARCHAR,
-    source_branch VARCHAR,
-    target_branch VARCHAR,
-    status VARCHAR,
-    files_reviewed INTEGER DEFAULT 0,
-    diff_findings JSON,
-    diff_summary TEXT,
-    diff_reviewed_at DATETIME,
-    scan_id INTEGER,
-    scan_started_at DATETIME,
-    scan_completed_at DATETIME,
-    generated_comments JSON,
-    comments_posted JSON,
-    approval_status VARCHAR,
-    post_comments BOOLEAN DEFAULT 0,
-    last_error VARCHAR,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME, provider VARCHAR DEFAULT 'gitlab', github_repo_id INTEGER,
-    FOREIGN KEY(watcher_id) REFERENCES repo_watchers (id),
-    FOREIGN KEY(gitlab_repo_id) REFERENCES gitlab_repos (id),
-    FOREIGN KEY(scan_id) REFERENCES scans (id)
+CREATE TABLE mr_reviews (
+	id INTEGER NOT NULL, 
+	watcher_id INTEGER, 
+	gitlab_repo_id INTEGER, 
+	github_repo_id INTEGER, 
+	provider VARCHAR, 
+	mr_iid INTEGER NOT NULL, 
+	mr_title VARCHAR, 
+	mr_url VARCHAR, 
+	mr_author VARCHAR, 
+	source_branch VARCHAR, 
+	target_branch VARCHAR, 
+	status VARCHAR, 
+	files_reviewed INTEGER, 
+	post_comments BOOLEAN, 
+	diff_findings JSON, 
+	diff_summary TEXT, 
+	diff_reviewed_at DATETIME, 
+	scan_id INTEGER, 
+	scan_started_at DATETIME, 
+	scan_completed_at DATETIME, 
+	generated_comments JSON, 
+	comments_posted JSON, 
+	approval_status VARCHAR, 
+	last_error VARCHAR, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(watcher_id) REFERENCES repo_watchers (id), 
+	FOREIGN KEY(gitlab_repo_id) REFERENCES gitlab_repos (id), 
+	FOREIGN KEY(github_repo_id) REFERENCES github_repos (id), 
+	FOREIGN KEY(scan_id) REFERENCES scans (id)
 );
 
 CREATE TABLE profile_agent_models (
@@ -285,8 +332,11 @@ CREATE TABLE profile_analyzers (
 	profile_id INTEGER, 
 	name VARCHAR, 
 	description TEXT, 
-	model_id INTEGER, 
+	model_id INTEGER NOT NULL, 
+	chunk_size INTEGER, 
 	prompt_template TEXT, 
+	output_mode VARCHAR, 
+	json_schema TEXT, 
 	file_filter VARCHAR, 
 	language_filter JSON, 
 	role VARCHAR, 
@@ -294,7 +344,7 @@ CREATE TABLE profile_analyzers (
 	enabled BOOLEAN, 
 	stop_on_findings BOOLEAN, 
 	min_severity_to_report VARCHAR, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, chunk_size INTEGER DEFAULT 6000, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(profile_id) REFERENCES scan_profiles (id), 
 	FOREIGN KEY(model_id) REFERENCES model_configs (id)
@@ -322,9 +372,16 @@ CREATE TABLE profile_verifiers (
 CREATE TABLE repo_watchers (
 	id INTEGER NOT NULL, 
 	name VARCHAR NOT NULL, 
-	gitlab_url VARCHAR NOT NULL, 
+	provider VARCHAR, 
+	gitlab_repo_id INTEGER, 
+	gitlab_url VARCHAR, 
 	gitlab_token VARCHAR, 
-	project_id VARCHAR NOT NULL, 
+	project_id VARCHAR, 
+	github_repo_id INTEGER, 
+	github_url VARCHAR, 
+	github_token VARCHAR, 
+	github_owner VARCHAR, 
+	github_repo_name VARCHAR, 
 	branch_filter VARCHAR, 
 	label_filter VARCHAR, 
 	scan_profile_id INTEGER, 
@@ -334,11 +391,15 @@ CREATE TABLE repo_watchers (
 	enabled BOOLEAN, 
 	poll_interval INTEGER, 
 	post_comments BOOLEAN, 
+	max_files_to_review INTEGER, 
+	mr_lookback_days INTEGER, 
 	last_check DATETIME, 
 	last_error VARCHAR, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
-	updated_at DATETIME, gitlab_repo_id INTEGER REFERENCES gitlab_repos(id), provider VARCHAR DEFAULT 'gitlab', github_repo_id INTEGER, github_url VARCHAR DEFAULT 'https://api.github.com', github_token VARCHAR, github_owner VARCHAR, github_repo_name VARCHAR, max_files_to_review INTEGER DEFAULT 100, mr_lookback_days INTEGER DEFAULT 7, 
+	created_at DATETIME, 
+	updated_at DATETIME, 
 	PRIMARY KEY (id), 
+	FOREIGN KEY(gitlab_repo_id) REFERENCES gitlab_repos (id), 
+	FOREIGN KEY(github_repo_id) REFERENCES github_repos (id), 
 	FOREIGN KEY(scan_profile_id) REFERENCES scan_profiles (id), 
 	FOREIGN KEY(review_model_id) REFERENCES model_configs (id), 
 	FOREIGN KEY(webhook_id) REFERENCES webhook_configs (id)
@@ -347,6 +408,7 @@ CREATE TABLE repo_watchers (
 CREATE TABLE scan_configs (
 	id INTEGER NOT NULL, 
 	scan_id INTEGER, 
+	profile_id INTEGER, 
 	analysis_mode VARCHAR, 
 	primary_analyzer_id INTEGER, 
 	scope VARCHAR, 
@@ -359,10 +421,13 @@ CREATE TABLE scan_configs (
 	batch_size INTEGER, 
 	chunk_size INTEGER, 
 	chunk_strategy VARCHAR, 
-	file_filter VARCHAR, profile_id INTEGER REFERENCES scan_profiles(id), 
+	file_filter VARCHAR, 
+	source_scan_id INTEGER, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id), 
-	FOREIGN KEY(primary_analyzer_id) REFERENCES model_configs (id)
+	FOREIGN KEY(profile_id) REFERENCES scan_profiles (id), 
+	FOREIGN KEY(primary_analyzer_id) REFERENCES model_configs (id), 
+	FOREIGN KEY(source_scan_id) REFERENCES scans (id)
 );
 
 CREATE TABLE scan_error_logs (
@@ -376,7 +441,7 @@ CREATE TABLE scan_error_logs (
 	model_name VARCHAR, 
 	file_path VARCHAR, 
 	chunk_index INTEGER, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	resolved_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id), 
@@ -407,7 +472,7 @@ CREATE TABLE scan_files (
 	file_hash VARCHAR, 
 	risk_level VARCHAR, 
 	status VARCHAR, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id)
 );
@@ -428,7 +493,7 @@ CREATE TABLE scan_metrics (
 	total_tokens_in INTEGER, 
 	total_tokens_out INTEGER, 
 	tokens_per_second FLOAT, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id)
 );
@@ -440,24 +505,36 @@ CREATE TABLE scan_profiles (
 	is_default BOOLEAN, 
 	chunk_size INTEGER, 
 	chunk_strategy VARCHAR, 
+	first_phase_method VARCHAR, 
+	joern_chunk_strategy VARCHAR, 
+	joern_max_files_per_cpg INTEGER, 
+	joern_query_set VARCHAR, 
+	enricher_model_id INTEGER, 
+	enricher_prompt_template TEXT, 
+	agentic_verifier_mode VARCHAR, 
+	agentic_verifier_model_id INTEGER, 
+	agentic_verifier_max_steps INTEGER, 
+	verification_threshold INTEGER, 
+	require_unanimous_reject BOOLEAN, 
 	enabled BOOLEAN, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	updated_at DATETIME, 
-	PRIMARY KEY (id)
+	PRIMARY KEY (id), 
+	FOREIGN KEY(enricher_model_id) REFERENCES model_configs (id), 
+	FOREIGN KEY(agentic_verifier_model_id) REFERENCES model_configs (id)
 );
 
 CREATE TABLE scans (
 	id INTEGER NOT NULL, 
 	target_url VARCHAR, 
 	status VARCHAR, 
+	current_phase VARCHAR, 
 	consensus_enabled BOOLEAN, 
 	logs TEXT, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id)
 );
-
-CREATE TABLE sqlite_sequence(name,seq);
 
 CREATE TABLE static_rules (
 	id INTEGER NOT NULL, 
@@ -473,7 +550,7 @@ CREATE TABLE static_rules (
 	enabled BOOLEAN, 
 	built_in BOOLEAN, 
 	match_count INTEGER, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id)
 );
@@ -507,64 +584,63 @@ CREATE TABLE symbols (
 );
 
 CREATE TABLE tuning_prompt_templates (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR NOT NULL UNIQUE,
-        description TEXT,
-        template TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP
-    );
+    id INTEGER PRIMARY KEY,
+    name VARCHAR NOT NULL UNIQUE,
+    description TEXT,
+    template TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
 
 CREATE TABLE tuning_results (
-        id INTEGER PRIMARY KEY,
-        run_id INTEGER NOT NULL REFERENCES tuning_runs(id),
-        model_id INTEGER NOT NULL REFERENCES model_configs(id),
-        model_name VARCHAR NOT NULL,
-        prompt_id INTEGER NOT NULL REFERENCES tuning_prompt_templates(id),
-        test_case_id INTEGER NOT NULL REFERENCES tuning_test_cases(id),
-        full_prompt TEXT NOT NULL,
-        raw_response TEXT,
-        predicted_vote VARCHAR,
-        confidence INTEGER,
-        reasoning TEXT,
-        correct BOOLEAN DEFAULT 0,
-        parse_success BOOLEAN DEFAULT 1,
-        parse_error TEXT,
-        duration_ms REAL,
-        tokens_in INTEGER,
-        tokens_out INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+    id INTEGER PRIMARY KEY,
+    run_id INTEGER NOT NULL REFERENCES tuning_runs(id),
+    model_id INTEGER NOT NULL REFERENCES model_configs(id),
+    model_name VARCHAR NOT NULL,
+    prompt_id INTEGER NOT NULL REFERENCES tuning_prompt_templates(id),
+    test_case_id INTEGER NOT NULL REFERENCES tuning_test_cases(id),
+    full_prompt TEXT NOT NULL,
+    raw_response TEXT,
+    predicted_vote VARCHAR,
+    confidence INTEGER,
+    reasoning TEXT,
+    correct BOOLEAN DEFAULT 0,
+    parse_success BOOLEAN DEFAULT 1,
+    parse_error TEXT,
+    duration_ms REAL,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE tuning_runs (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR,
-        description TEXT,
-        model_ids JSON NOT NULL,
-        prompt_ids JSON NOT NULL,
-        test_case_ids JSON NOT NULL,
-        concurrency INTEGER DEFAULT 4,
-        status VARCHAR DEFAULT 'running',
-        total_tests INTEGER DEFAULT 0,
-        completed_tests INTEGER DEFAULT 0,
-        total_duration_ms REAL,
-        error_message TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        completed_at TIMESTAMP
-    );
+    id INTEGER PRIMARY KEY,
+    name VARCHAR,
+    description TEXT,
+    model_ids JSON NOT NULL,
+    prompt_ids JSON NOT NULL,
+    test_case_ids JSON NOT NULL,
+    concurrency INTEGER DEFAULT 4,
+    status VARCHAR DEFAULT 'running',
+    total_tests INTEGER DEFAULT 0,
+    completed_tests INTEGER DEFAULT 0,
+    total_duration_ms REAL,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
 
 CREATE TABLE tuning_test_cases (
-        id INTEGER PRIMARY KEY,
-        name VARCHAR NOT NULL UNIQUE,
-        verdict VARCHAR NOT NULL,
-        draft_finding_id INTEGER REFERENCES draft_findings(id),
-        issue TEXT,
-        file VARCHAR,
-        code TEXT,
-        claim TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP
-    );
+    id INTEGER PRIMARY KEY,
+    name VARCHAR NOT NULL UNIQUE,
+    verdict VARCHAR NOT NULL,
+    issue TEXT NOT NULL,
+    file VARCHAR NOT NULL,
+    code TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+, draft_finding_id INTEGER REFERENCES draft_findings(id), title VARCHAR, vulnerability_type VARCHAR, severity VARCHAR, line_number INTEGER, snippet TEXT, reason TEXT, file_path VARCHAR, language VARCHAR);
 
 CREATE TABLE user_sessions (
 	id INTEGER NOT NULL, 
@@ -594,24 +670,25 @@ CREATE TABLE users (
 );
 
 CREATE TABLE verification_votes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        scan_id INTEGER,
-        draft_finding_id INTEGER,
-        model_name VARCHAR,
-        verifier_id INTEGER,
-        decision VARCHAR,
-        confidence INTEGER,
-        reasoning TEXT,
-        attack_scenario TEXT,
-        raw_response TEXT,
-        parse_success BOOLEAN,
-        format_detected VARCHAR,
-        vote_weight FLOAT,
-        created_at DATETIME,
-        FOREIGN KEY(scan_id) REFERENCES scans(id),
-        FOREIGN KEY(draft_finding_id) REFERENCES draft_findings(id),
-        FOREIGN KEY(verifier_id) REFERENCES profile_verifiers(id)
-    );
+	id INTEGER NOT NULL, 
+	scan_id INTEGER, 
+	draft_finding_id INTEGER, 
+	model_name VARCHAR, 
+	verifier_id INTEGER, 
+	decision VARCHAR, 
+	confidence INTEGER, 
+	reasoning TEXT, 
+	attack_scenario TEXT, 
+	raw_response TEXT, 
+	parse_success BOOLEAN, 
+	format_detected VARCHAR, 
+	vote_weight FLOAT, 
+	created_at DATETIME, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(scan_id) REFERENCES scans (id), 
+	FOREIGN KEY(draft_finding_id) REFERENCES draft_findings (id), 
+	FOREIGN KEY(verifier_id) REFERENCES profile_verifiers (id)
+);
 
 CREATE TABLE verified_findings (
 	id INTEGER NOT NULL, 
@@ -623,7 +700,7 @@ CREATE TABLE verified_findings (
 	data_flow TEXT, 
 	adjusted_severity VARCHAR, 
 	status VARCHAR, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(draft_id) REFERENCES draft_findings (id), 
 	FOREIGN KEY(scan_id) REFERENCES scans (id)
@@ -637,7 +714,7 @@ CREATE TABLE vulnerability_categories (
 	description TEXT, 
 	keywords JSON, 
 	usage_count INTEGER, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	PRIMARY KEY (id)
 );
 
@@ -652,7 +729,7 @@ CREATE TABLE webhook_configs (
 	last_triggered DATETIME, 
 	trigger_count INTEGER, 
 	last_error VARCHAR, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	updated_at DATETIME, 
 	PRIMARY KEY (id)
 );
@@ -669,7 +746,7 @@ CREATE TABLE webhook_delivery_logs (
 	response_body TEXT, 
 	error_message VARCHAR, 
 	attempt_count INTEGER, 
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+	created_at DATETIME, 
 	delivered_at DATETIME, 
 	PRIMARY KEY (id), 
 	FOREIGN KEY(webhook_id) REFERENCES webhook_configs (id), 
@@ -680,43 +757,77 @@ CREATE TABLE webhook_delivery_logs (
 -- INDEXES
 -- ==========================================
 
+CREATE INDEX ix_users_id ON users (id);
+CREATE UNIQUE INDEX ix_users_email ON users (email);
+CREATE INDEX ix_scans_status ON scans (status);
+CREATE INDEX ix_scans_current_phase ON scans (current_phase);
 CREATE INDEX ix_scans_id ON scans (id);
-CREATE INDEX ix_vulnerability_categories_cwe_id ON vulnerability_categories (cwe_id);
 CREATE UNIQUE INDEX ix_vulnerability_categories_name ON vulnerability_categories (name);
+CREATE INDEX ix_vulnerability_categories_cwe_id ON vulnerability_categories (cwe_id);
 CREATE INDEX ix_static_rules_name ON static_rules (name);
-CREATE INDEX ix_scan_files_scan_id ON scan_files (scan_id);
+CREATE UNIQUE INDEX ix_global_settings_key ON global_settings ("key");
+CREATE INDEX idx_sessions_expires ON user_sessions (expires_at);
+CREATE INDEX ix_user_sessions_id ON user_sessions (id);
+CREATE UNIQUE INDEX ix_user_sessions_token ON user_sessions (token);
 CREATE INDEX ix_scan_files_file_path ON scan_files (file_path);
+CREATE INDEX ix_scan_files_scan_id ON scan_files (scan_id);
+CREATE INDEX ix_symbols_qualified_name ON symbols (qualified_name);
+CREATE INDEX ix_symbols_name ON symbols (name);
 CREATE INDEX ix_symbols_file_path ON symbols (file_path);
 CREATE INDEX ix_symbols_scan_id ON symbols (scan_id);
-CREATE INDEX ix_symbols_name ON symbols (name);
-CREATE INDEX ix_symbols_qualified_name ON symbols (qualified_name);
-CREATE INDEX ix_import_relations_importer_file ON import_relations (importer_file);
 CREATE INDEX ix_import_relations_scan_id ON import_relations (scan_id);
+CREATE INDEX ix_import_relations_importer_file ON import_relations (importer_file);
+CREATE INDEX ix_llm_call_metrics_scan_id ON llm_call_metrics (scan_id);
 CREATE INDEX ix_llm_call_metrics_phase ON llm_call_metrics (phase);
 CREATE INDEX ix_llm_call_metrics_model_name ON llm_call_metrics (model_name);
-CREATE INDEX ix_llm_call_metrics_scan_id ON llm_call_metrics (scan_id);
-CREATE UNIQUE INDEX ix_scan_metrics_scan_id ON scan_metrics (scan_id);
-CREATE INDEX ix_scan_file_chunks_content_hash ON scan_file_chunks (content_hash);
-CREATE INDEX ix_scan_file_chunks_scan_file_id ON scan_file_chunks (scan_file_id);
-CREATE INDEX ix_symbol_references_symbol_id ON symbol_references (symbol_id);
-CREATE INDEX ix_symbol_references_scan_id ON symbol_references (scan_id);
-CREATE INDEX ix_draft_findings_scan_id ON draft_findings (scan_id);
-CREATE INDEX ix_draft_findings_dedup_key ON draft_findings (dedup_key);
-CREATE INDEX ix_scan_error_logs_phase ON scan_error_logs (phase);
-CREATE INDEX ix_scan_error_logs_scan_id ON scan_error_logs (scan_id);
-CREATE INDEX ix_verified_findings_scan_id ON verified_findings (scan_id);
-CREATE INDEX ix_findings_id ON findings (id);
 CREATE UNIQUE INDEX ix_scan_profiles_name ON scan_profiles (name);
-CREATE INDEX ix_profile_analyzers_profile_id ON profile_analyzers (profile_id);
+CREATE INDEX ix_webhook_delivery_logs_scan_id ON webhook_delivery_logs (scan_id);
 CREATE INDEX ix_webhook_delivery_logs_webhook_id ON webhook_delivery_logs (webhook_id);
 CREATE INDEX ix_webhook_delivery_logs_event_type ON webhook_delivery_logs (event_type);
-CREATE INDEX ix_webhook_delivery_logs_scan_id ON webhook_delivery_logs (scan_id);
+CREATE UNIQUE INDEX ix_scan_metrics_scan_id ON scan_metrics (scan_id);
+CREATE INDEX ix_benchmark_cases_dataset_id ON benchmark_cases (dataset_id);
+CREATE INDEX ix_benchmark_runs_dataset_id ON benchmark_runs (dataset_id);
+CREATE INDEX ix_benchmark_runs_model_id ON benchmark_runs (model_id);
+CREATE INDEX ix_scan_file_chunks_scan_file_id ON scan_file_chunks (scan_file_id);
+CREATE INDEX ix_scan_file_chunks_content_hash ON scan_file_chunks (content_hash);
+CREATE INDEX ix_scan_file_chunks_status ON scan_file_chunks (status);
+CREATE INDEX ix_symbol_references_scan_id ON symbol_references (scan_id);
+CREATE INDEX ix_symbol_references_symbol_id ON symbol_references (symbol_id);
+CREATE INDEX ix_profile_analyzers_profile_id ON profile_analyzers (profile_id);
+CREATE INDEX ix_profile_agent_models_profile_id ON profile_agent_models (profile_id);
+CREATE INDEX ix_profile_verifiers_profile_id ON profile_verifiers (profile_id);
+CREATE INDEX ix_benchmark_results_run_id ON benchmark_results (run_id);
+CREATE INDEX ix_benchmark_results_case_id ON benchmark_results (case_id);
+CREATE INDEX ix_draft_findings_scan_id ON draft_findings (scan_id);
+CREATE INDEX ix_draft_findings_dedup_key ON draft_findings (dedup_key);
+CREATE INDEX ix_draft_findings_status ON draft_findings (status);
+CREATE INDEX ix_scan_error_logs_phase ON scan_error_logs (phase);
+CREATE INDEX ix_scan_error_logs_scan_id ON scan_error_logs (scan_id);
 CREATE INDEX ix_mr_reviews_watcher_id ON mr_reviews (watcher_id);
 CREATE INDEX ix_mr_reviews_gitlab_repo_id ON mr_reviews (gitlab_repo_id);
-CREATE INDEX ix_generated_fixes_id ON generated_fixes (id);
-CREATE INDEX ix_verification_votes_scan_id ON verification_votes (scan_id);
-CREATE INDEX ix_verification_votes_draft_finding_id ON verification_votes (draft_finding_id);
+CREATE INDEX ix_mr_reviews_github_repo_id ON mr_reviews (github_repo_id);
+CREATE INDEX ix_verified_findings_scan_id ON verified_findings (scan_id);
+CREATE INDEX ix_verified_findings_draft_id ON verified_findings (draft_id);
+CREATE INDEX ix_llm_request_logs_status ON llm_request_logs (status);
+CREATE INDEX ix_llm_request_logs_model_name ON llm_request_logs (model_name);
+CREATE INDEX ix_llm_request_logs_mr_review_id ON llm_request_logs (mr_review_id);
+CREATE INDEX ix_llm_request_logs_phase ON llm_request_logs (phase);
+CREATE INDEX ix_llm_request_logs_scan_id ON llm_request_logs (scan_id);
 CREATE INDEX ix_verification_votes_model_name ON verification_votes (model_name);
+CREATE INDEX ix_verification_votes_draft_finding_id ON verification_votes (draft_finding_id);
+CREATE INDEX ix_verification_votes_scan_id ON verification_votes (scan_id);
+CREATE INDEX ix_findings_id ON findings (id);
+CREATE INDEX ix_findings_status ON findings (status);
+CREATE INDEX ix_findings_mr_review_id ON findings (mr_review_id);
+CREATE INDEX ix_findings_scan_id ON findings (scan_id);
+CREATE INDEX ix_findings_draft_id ON findings (draft_id);
+CREATE INDEX idx_comments_finding ON finding_comments (finding_id);
+CREATE INDEX ix_finding_comments_id ON finding_comments (id);
+CREATE INDEX ix_generated_fixes_id ON generated_fixes (id);
+CREATE INDEX ix_agent_sessions_status ON agent_sessions (status);
+CREATE INDEX ix_agent_sessions_draft_finding_id ON agent_sessions (draft_finding_id);
+CREATE INDEX ix_agent_sessions_finding_id ON agent_sessions (finding_id);
+CREATE INDEX ix_agent_sessions_scan_id ON agent_sessions (scan_id);
 CREATE INDEX idx_tuning_prompts_name ON tuning_prompt_templates(name);
 CREATE INDEX idx_tuning_cases_name ON tuning_test_cases(name);
 CREATE INDEX idx_tuning_cases_verdict ON tuning_test_cases(verdict);
@@ -726,436 +837,33 @@ CREATE INDEX idx_tuning_results_model ON tuning_results(model_id);
 CREATE INDEX idx_tuning_results_prompt ON tuning_results(prompt_id);
 CREATE INDEX idx_tuning_results_case ON tuning_results(test_case_id);
 CREATE INDEX idx_tuning_results_correct ON tuning_results(correct);
-CREATE UNIQUE INDEX ix_users_email ON users (email);
-CREATE INDEX ix_users_id ON users (id);
-CREATE INDEX ix_profile_agent_models_profile_id ON profile_agent_models (profile_id);
-CREATE INDEX ix_agent_sessions_draft_finding_id ON agent_sessions (draft_finding_id);
-CREATE INDEX ix_agent_sessions_status ON agent_sessions (status);
-CREATE INDEX ix_agent_sessions_finding_id ON agent_sessions (finding_id);
-CREATE INDEX ix_agent_sessions_scan_id ON agent_sessions (scan_id);
-CREATE INDEX ix_profile_verifiers_profile_id ON profile_verifiers (profile_id);
-CREATE UNIQUE INDEX ix_global_settings_key ON global_settings ("key");
-CREATE INDEX idx_sessions_expires ON user_sessions (expires_at);
-CREATE INDEX ix_user_sessions_id ON user_sessions (id);
-CREATE UNIQUE INDEX ix_user_sessions_token ON user_sessions (token);
-CREATE INDEX idx_comments_finding ON finding_comments (finding_id);
-CREATE INDEX ix_finding_comments_id ON finding_comments (id);
-CREATE INDEX ix_benchmark_cases_dataset_id ON benchmark_cases (dataset_id);
-CREATE INDEX ix_benchmark_runs_model_id ON benchmark_runs (model_id);
-CREATE INDEX ix_benchmark_runs_dataset_id ON benchmark_runs (dataset_id);
-CREATE INDEX ix_benchmark_results_run_id ON benchmark_results (run_id);
-CREATE INDEX ix_benchmark_results_case_id ON benchmark_results (case_id);
+CREATE INDEX idx_tuning_cases_draft_finding ON tuning_test_cases(draft_finding_id);
+CREATE INDEX idx_ttc_draft_finding ON tuning_test_cases(draft_finding_id);
+CREATE INDEX idx_ttc_verdict ON tuning_test_cases(verdict);
 
 -- ==========================================
 -- CONFIGURATION DATA
 -- ==========================================
 
--- Table: model_configs (5 rows)
-INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, analysis_prompt_template, verification_prompt_template, is_cleanup, is_chat) VALUES (1, 'gpt-oss-120b', 'https://davy.labs.lenovo.com:5000/v1', 'testkeyforchrisvp', 99000, 10, 1, 3000, 1, 1, 'Analyze this {language} code for security vulnerabilities.
-
-=== FILE BEING ANALYZED ===
-{file_name}
-
-=== CODE TO ANALYZE (with line numbers) ===
-{code}
-
-=== OTHER FILES IN CODEBASE ===
-{file_list}
-
-=== FULL FILE CONTEXT ===
-{full_file}
-
-Code has line numbers (e.g., "  42 | code"). Use EXACT line numbers in findings.
-
-=== CWE CLASSIFICATION RULES ===
-Use the CORRECT CWE based on the SINK, not the intermediate functions:
-
-| Sink Pattern | CWE | Name |
-|--------------|-----|------|
-| system(), popen(), exec*() with user data | CWE-78 | Command Injection |
-| strcpy(), strcat(), sprintf(), gets() to fixed buffer | CWE-120 | Buffer Overflow |
-| printf(user_data) - user string AS format | CWE-134 | Format String |
-| free(ptr) then use ptr, or free twice | CWE-416/415 | Use-After-Free/Double-Free |
-| SQL query with concatenated user input | CWE-89 | SQL Injection |
-| file path with "../" or user-controlled path | CWE-22 | Path Traversal |
-| size_t/int overflow in malloc size or loop | CWE-190 | Integer Overflow |
-| hardcoded password, key, token in source | CWE-798 | Hardcoded Credentials |
-
-=== CRITICAL CLASSIFICATION RULES ===
-- If sprintf/snprintf builds a string that is THEN passed to system()/popen()/exec() → CWE-78 Command Injection
-- CWE-134 Format String is ONLY when user input IS the format string (e.g., printf(user_data))
-- sprintf(buf, "%s", user_data) is NOT format string - the format IS fixed ("%s")
-- LOOK AT THE SINK (system/printf/strcpy), not the intermediate functions
-
-=== WHAT TO REPORT ===
-- Memory corruption: buffer overflow, use-after-free, double-free
-- Injection: command, SQL, format string, path traversal
-- Crypto issues: hardcoded secrets, weak algorithms
-- Integer issues: overflow in size calculations
-
-=== WHAT TO SKIP ===
-- Missing null checks (unless causes crash with untrusted input)
-- Style issues, missing error handling
-- Theoretical issues requiring unlikely conditions
-
-=== EXAMPLES ===
-
- 331 | strcpy(credentials, username);
- 332 | strcat(credentials, password);
-
-*DRAFT: Buffer Overflow in Credential Handling
-*TYPE: CWE-120
-*SEVERITY: High
-*LINE: 331
-*SNIPPET: strcpy(credentials, username);
-*REASON: Unbounded copy of username into fixed 128-byte buffer
-*END_DRAFT
-
- 330 | snprintf(cmd, sizeof(cmd), "/bin/sh %s", user_input);
- 331 | system(cmd);
-
-*DRAFT: Command Injection via Shell Execution
-*TYPE: CWE-78
-*SEVERITY: Critical
-*LINE: 331
-*SNIPPET: system(cmd);
-*REASON: User-controlled input passed to system() shell execution
-*END_DRAFT
-
- 410 | free(block);
- 411 | process_data(block->data);
-
-*DRAFT: Use-After-Free
-*TYPE: CWE-416
-*SEVERITY: High
-*LINE: 411
-*SNIPPET: process_data(block->data);
-*REASON: Accessing block->data after block was freed
-*END_DRAFT
-
- 312 | log_message(user_input);  // where log_message calls printf(msg)
-
-*DRAFT: Format String Vulnerability
-*TYPE: CWE-134
-*SEVERITY: High
-*LINE: 312
-*SNIPPET: log_message(user_input);
-*REASON: User input passed as format string to printf-family function
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation
-*END_DRAFT
-
-Report all findings. If none found: *DRAFT:NONE', 'You are verifying a potential security vulnerability.
-
-=== FINDING TO VERIFY ===
-Title: {title}
-Type: {vuln_type}
-Severity: {severity}
-Line: {line}
-
-Reported Code:
-{snippet}
-
-Scanner''s Reason: {reason}
-
-=== PRE-FETCHED CONTEXT (already gathered for you) ===
-{context}
-
-=== VERIFICATION CRITERIA ===
-
-IMPORTANT: Missing a real vulnerability is worse than a false positive, BUT low-quality findings waste developer time.
-Your goal is to identify EXPLOITABLE vulnerabilities while filtering out safe patterns.
-
-=== SAFE PATTERNS TO REJECT ===
-
-These are FALSE POSITIVES - REJECT them:
-- `(size + 7) & ~7` or similar alignment - standard idiom, unexploitable
-- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe even without explicit null-term
-- `strncpy(dst, src, sizeof(dst)); dst[sizeof(dst)-1] = ''\0'';` - bounded with null-term
-- `strncpy(dst, src, N)` where N <= sizeof(dst) - size-limited is safe
-- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- `vsnprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- Integer overflow in display/logging only (no security impact)
-- Functions with no callers and not exported (dead code)
-- Missing null-termination claims when strncpy uses sizeof(dst)-1 (leaves room for null)
-
-=== WEAKNESS PATTERNS ===
-
-These are real but low-priority - mark as WEAKNESS:
-- Theoretical overflow with no realistic attack path
-- Missing null-termination where buffer is always overwritten
-- Bad practice in non-security-critical code path
-- DoS-only impact (no RCE, no data leak)
-
-=== VERIFY PATTERNS ===
-
-These are TRUE POSITIVES - VERIFY them:
-- `system(user_input)` or `popen(user_input)` - command injection
-- `strcpy(fixed_buf, user_input)` - unbounded copy
-- `sprintf(buf, user_fmt)` where user controls format - format string
-- `printf(user_str)` - format string (user string AS the format)
-- `free(ptr); use(ptr);` - use-after-free
-- SQL/path with concatenated user input - injection
-
-=== DECISION GUIDE ===
-
-VERIFY if:
-1. Dangerous sink function (system, strcpy, printf with user format)
-2. AND attacker data can reach it (trace the data flow)
-3. AND security impact exists (RCE, memory corruption, data leak)
-
-WEAKNESS if:
-- Pattern is risky but impact is limited (DoS, info leak of non-sensitive data)
-- OR requires unlikely conditions to exploit
-
-REJECT if:
-- Safe variant used (strncpy with limit, snprintf)
-- OR standard safe idiom (alignment, bounded copy)
-- OR no attacker-controlled input reaches the sink
-
-=== RESPONSE ===
-*VOTE: VERIFY, WEAKNESS, or REJECT
-*CONFIDENCE: 0-100 (lower if uncertain)
-*REASONING: [2-3 sentences explaining data flow and exploitability]
-*END_VOTE', 0, 0);
-INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, analysis_prompt_template, verification_prompt_template, is_cleanup, is_chat) VALUES (2, 'mistral-small', 'https://davy.labs.lenovo.com:5000/v1', 'testkeyforchrisvp', 99000, 5, 1, 3000, 0, 1, NULL, 'You are verifying a potential security vulnerability.
-
-=== FINDING TO VERIFY ===
-Title: {title}
-Type: {vuln_type}
-Severity: {severity}
-Line: {line}
-
-Reported Code:
-{snippet}
-
-Scanner''s Reason: {reason}
-
-=== PRE-FETCHED CONTEXT (already gathered for you) ===
-{context}
-
-=== VERIFICATION CRITERIA ===
-
-IMPORTANT: Missing a real vulnerability is worse than a false positive, BUT low-quality findings waste developer time.
-Your goal is to identify EXPLOITABLE vulnerabilities while filtering out safe patterns.
-
-=== SAFE PATTERNS TO REJECT ===
-
-These are FALSE POSITIVES - REJECT them:
-- `(size + 7) & ~7` or similar alignment - standard idiom, unexploitable
-- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe even without explicit null-term
-- `strncpy(dst, src, sizeof(dst)); dst[sizeof(dst)-1] = ''\0'';` - bounded with null-term
-- `strncpy(dst, src, N)` where N <= sizeof(dst) - size-limited is safe
-- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- `vsnprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- Integer overflow in display/logging only (no security impact)
-- Functions with no callers and not exported (dead code)
-- Missing null-termination claims when strncpy uses sizeof(dst)-1 (leaves room for null)
-
-=== WEAKNESS PATTERNS ===
-
-These are real but low-priority - mark as WEAKNESS:
-- Theoretical overflow with no realistic attack path
-- Missing null-termination where buffer is always overwritten
-- Bad practice in non-security-critical code path
-- DoS-only impact (no RCE, no data leak)
-
-=== VERIFY PATTERNS ===
-
-These are TRUE POSITIVES - VERIFY them:
-- `system(user_input)` or `popen(user_input)` - command injection
-- `strcpy(fixed_buf, user_input)` - unbounded copy
-- `sprintf(buf, user_fmt)` where user controls format - format string
-- `printf(user_str)` - format string (user string AS the format)
-- `free(ptr); use(ptr);` - use-after-free
-- SQL/path with concatenated user input - injection
-
-=== DECISION GUIDE ===
-
-VERIFY if:
-1. Dangerous sink function (system, strcpy, printf with user format)
-2. AND attacker data can reach it (trace the data flow)
-3. AND security impact exists (RCE, memory corruption, data leak)
-
-WEAKNESS if:
-- Pattern is risky but impact is limited (DoS, info leak of non-sensitive data)
-- OR requires unlikely conditions to exploit
-
-REJECT if:
-- Safe variant used (strncpy with limit, snprintf)
-- OR standard safe idiom (alignment, bounded copy)
-- OR no attacker-controlled input reaches the sink
-
-=== RESPONSE ===
-*VOTE: VERIFY, WEAKNESS, or REJECT
-*CONFIDENCE: 0-100 (lower if uncertain)
-*REASONING: [2-3 sentences explaining data flow and exploitability]
-*END_VOTE', 0, 0);
-INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, analysis_prompt_template, verification_prompt_template, is_cleanup, is_chat) VALUES (3, 'llama3.3-70b-instruct', 'https://davy.labs.lenovo.com:5000/v1', 'testkeyforchrisvp', 99000, 5, 1, 3000, 0, 1, NULL, 'You are verifying a potential security vulnerability.
-
-=== FINDING TO VERIFY ===
-Title: {title}
-Type: {vuln_type}
-Severity: {severity}
-Line: {line}
-
-Reported Code:
-{snippet}
-
-Scanner''s Reason: {reason}
-
-=== PRE-FETCHED CONTEXT (already gathered for you) ===
-{context}
-
-=== VERIFICATION CRITERIA ===
-
-IMPORTANT: Missing a real vulnerability is worse than a false positive, BUT low-quality findings waste developer time.
-Your goal is to identify EXPLOITABLE vulnerabilities while filtering out safe patterns.
-
-=== SAFE PATTERNS TO REJECT ===
-
-These are FALSE POSITIVES - REJECT them:
-- `(size + 7) & ~7` or similar alignment - standard idiom, unexploitable
-- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe even without explicit null-term
-- `strncpy(dst, src, sizeof(dst)); dst[sizeof(dst)-1] = ''\0'';` - bounded with null-term
-- `strncpy(dst, src, N)` where N <= sizeof(dst) - size-limited is safe
-- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- `vsnprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- Integer overflow in display/logging only (no security impact)
-- Functions with no callers and not exported (dead code)
-- Missing null-termination claims when strncpy uses sizeof(dst)-1 (leaves room for null)
-
-=== WEAKNESS PATTERNS ===
-
-These are real but low-priority - mark as WEAKNESS:
-- Theoretical overflow with no realistic attack path
-- Missing null-termination where buffer is always overwritten
-- Bad practice in non-security-critical code path
-- DoS-only impact (no RCE, no data leak)
-
-=== VERIFY PATTERNS ===
-
-These are TRUE POSITIVES - VERIFY them:
-- `system(user_input)` or `popen(user_input)` - command injection
-- `strcpy(fixed_buf, user_input)` - unbounded copy
-- `sprintf(buf, user_fmt)` where user controls format - format string
-- `printf(user_str)` - format string (user string AS the format)
-- `free(ptr); use(ptr);` - use-after-free
-- SQL/path with concatenated user input - injection
-
-=== DECISION GUIDE ===
-
-VERIFY if:
-1. Dangerous sink function (system, strcpy, printf with user format)
-2. AND attacker data can reach it (trace the data flow)
-3. AND security impact exists (RCE, memory corruption, data leak)
-
-WEAKNESS if:
-- Pattern is risky but impact is limited (DoS, info leak of non-sensitive data)
-- OR requires unlikely conditions to exploit
-
-REJECT if:
-- Safe variant used (strncpy with limit, snprintf)
-- OR standard safe idiom (alignment, bounded copy)
-- OR no attacker-controlled input reaches the sink
-
-=== RESPONSE ===
-*VOTE: VERIFY, WEAKNESS, or REJECT
-*CONFIDENCE: 0-100 (lower if uncertain)
-*REASONING: [2-3 sentences explaining data flow and exploitability]
-*END_VOTE', 0, 1);
-INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, analysis_prompt_template, verification_prompt_template, is_cleanup, is_chat) VALUES (4, 'gemma-3-27b-it', 'https://davy.labs.lenovo.com:5000/v1', 'testkeyforchrisvp', 99000, 5, 1, 3000, 0, 1, NULL, 'You are verifying a potential security vulnerability.
-
-=== FINDING TO VERIFY ===
-Title: {title}
-Type: {vuln_type}
-Severity: {severity}
-Line: {line}
-
-Reported Code:
-{snippet}
-
-Scanner''s Reason: {reason}
-
-=== PRE-FETCHED CONTEXT (already gathered for you) ===
-{context}
-
-=== VERIFICATION CRITERIA ===
-
-IMPORTANT: Missing a real vulnerability is worse than a false positive, BUT low-quality findings waste developer time.
-Your goal is to identify EXPLOITABLE vulnerabilities while filtering out safe patterns.
-
-=== SAFE PATTERNS TO REJECT ===
-
-These are FALSE POSITIVES - REJECT them:
-- `(size + 7) & ~7` or similar alignment - standard idiom, unexploitable
-- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe even without explicit null-term
-- `strncpy(dst, src, sizeof(dst)); dst[sizeof(dst)-1] = ''\0'';` - bounded with null-term
-- `strncpy(dst, src, N)` where N <= sizeof(dst) - size-limited is safe
-- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- `vsnprintf(buf, sizeof(buf), ...)` - size-limited, safe
-- Integer overflow in display/logging only (no security impact)
-- Functions with no callers and not exported (dead code)
-- Missing null-termination claims when strncpy uses sizeof(dst)-1 (leaves room for null)
-
-=== WEAKNESS PATTERNS ===
-
-These are real but low-priority - mark as WEAKNESS:
-- Theoretical overflow with no realistic attack path
-- Missing null-termination where buffer is always overwritten
-- Bad practice in non-security-critical code path
-- DoS-only impact (no RCE, no data leak)
-
-=== VERIFY PATTERNS ===
-
-These are TRUE POSITIVES - VERIFY them:
-- `system(user_input)` or `popen(user_input)` - command injection
-- `strcpy(fixed_buf, user_input)` - unbounded copy
-- `sprintf(buf, user_fmt)` where user controls format - format string
-- `printf(user_str)` - format string (user string AS the format)
-- `free(ptr); use(ptr);` - use-after-free
-- SQL/path with concatenated user input - injection
-
-=== DECISION GUIDE ===
-
-VERIFY if:
-1. Dangerous sink function (system, strcpy, printf with user format)
-2. AND attacker data can reach it (trace the data flow)
-3. AND security impact exists (RCE, memory corruption, data leak)
-
-WEAKNESS if:
-- Pattern is risky but impact is limited (DoS, info leak of non-sensitive data)
-- OR requires unlikely conditions to exploit
-
-REJECT if:
-- Safe variant used (strncpy with limit, snprintf)
-- OR standard safe idiom (alignment, bounded copy)
-- OR no attacker-controlled input reaches the sink
-
-=== RESPONSE ===
-*VOTE: VERIFY, WEAKNESS, or REJECT
-*CONFIDENCE: 0-100 (lower if uncertain)
-*REASONING: [2-3 sentences explaining data flow and exploitability]
-*END_VOTE', 0, 0);
-INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, analysis_prompt_template, verification_prompt_template, is_cleanup, is_chat) VALUES (5, 'phi4', 'https://davy.labs.lenovo.com:5000/v1', 'testkeyforchrisvp', 11000, 5, 1, 3000, 0, 0, 'You are a cleanup model. Reformat the following LLM response to match the expected format.', 'You are a cleanup model. Reformat the following LLM response to match the expected format.', 1, 0);
-
--- Table: scan_profiles (6 rows)
-INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, enabled, created_at, updated_at) VALUES (1, 'Quick Scan', 'Fast general security scan using smaller model', 1, 6000, 'smart', 1, '2025-11-26 04:43:41', NULL);
-INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, enabled, created_at, updated_at) VALUES (2, 'Deep C Audit', 'Comprehensive C/C++ security audit with memory safety and signal handler checks', 0, 8000, 'smart', 1, '2025-11-26 04:43:41', NULL);
-INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, enabled, created_at, updated_at) VALUES (3, 'Python Audit', 'Python-focused security scan', 0, 6000, 'smart', 1, '2025-11-26 04:43:41', NULL);
-INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, enabled, created_at, updated_at) VALUES (4, 'Crypto Audit', 'Focus on cryptographic weaknesses', 0, 6000, 'smart', 1, '2025-11-26 04:43:41', NULL);
-INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, enabled, created_at, updated_at) VALUES (5, 'CVE Hunt', 'Maximum coverage - runs all specialized analyzers', 0, 8000, 'smart', 1, '2025-11-26 04:43:41', NULL);
-INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, enabled, created_at, updated_at) VALUES (6, 'Test', '', 0, 6000, 'smart', 1, '2025-11-26 06:30:10', NULL);
-
--- Table: profile_analyzers (14 rows)
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (1, 1, 'General Security', 'General security analysis for all languages', 1, 'Analyze this {language} code for security vulnerabilities.
+-- Table: model_configs (8 rows)
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (1, 'gpt-oss-120b', NULL, NULL, 96000, 131072, 5, 1, NULL, 1, 1, 1, 1, 'markers', 'openai', NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (2, 'gemma-3-27b-it', NULL, NULL, 96000, 131072, 5, 1, NULL, 1, 1, 0, 1, 'json_schema', 'openai', NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (3, 'mistral-small', NULL, NULL, 96000, 128000, 5, 1, NULL, 1, 1, 0, 1, 'json_schema', 'openai', NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (4, 'mistral-nemo-instruct', NULL, NULL, 96000, 128000, 1, NULL, NULL, 1, 1, 0, 0, NULL, NULL, NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (5, 'phi-4', NULL, NULL, 12000, 16384, 1, 1, NULL, 1, 1, 0, 1, 'json_schema', 'openai', NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (6, 'kimi-k2-thinking-test', '', '', 96000, 128000, 1, 1, 3000, 0, 0, 0, 0, 'markers', 'openai', NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (7, 'llama3.3-70b-instruct', NULL, '', 96000, 131072, 1, 1, 3000, 0, 0, 0, 0, 'json_schema', 'openai', NULL, NULL);
+INSERT INTO model_configs (id, name, base_url, api_key, max_tokens, max_context_length, max_concurrent, votes, chunk_size, is_analyzer, is_verifier, is_cleanup, is_chat, response_format, tool_call_format, analysis_prompt_template, verification_prompt_template) VALUES (8, 'devstral-small-2-24b-instruct-test', NULL, '', 100000, 393216, 5, 1, 3000, 0, 1, 0, 0, 'json_schema', 'openai', NULL, NULL);
+
+-- Table: scan_profiles (5 rows)
+INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, first_phase_method, joern_chunk_strategy, joern_max_files_per_cpg, joern_query_set, enricher_model_id, enricher_prompt_template, agentic_verifier_mode, agentic_verifier_model_id, agentic_verifier_max_steps, verification_threshold, require_unanimous_reject, enabled, created_at, updated_at) VALUES (1, 'Default (llm only)', 'Joern CPG analysis with LLM verification - best accuracy', 1, 2000, 'function', 'llm', 'directory', 100, 'default', 5, NULL, 'hybrid', NULL, 8, 2, 1, 1, '2025-12-09 16:16:58', '2025-12-09 13:40:10.658381');
+INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, first_phase_method, joern_chunk_strategy, joern_max_files_per_cpg, joern_query_set, enricher_model_id, enricher_prompt_template, agentic_verifier_mode, agentic_verifier_model_id, agentic_verifier_max_steps, verification_threshold, require_unanimous_reject, enabled, created_at, updated_at) VALUES (2, 'Joern Only (Fast)', 'Joern findings auto-verified, skip LLM verification', 0, 2000, 'function', 'joern', 'directory', 100, 'all', NULL, NULL, NULL, NULL, NULL, 1, 0, 1, '2025-12-09 16:16:58', NULL);
+INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, first_phase_method, joern_chunk_strategy, joern_max_files_per_cpg, joern_query_set, enricher_model_id, enricher_prompt_template, agentic_verifier_mode, agentic_verifier_model_id, agentic_verifier_max_steps, verification_threshold, require_unanimous_reject, enabled, created_at, updated_at) VALUES (3, 'LLM Only', 'Pure LLM-based scanning without Joern', 0, 2000, 'function', 'llm', 'directory', 100, 'default', NULL, NULL, NULL, NULL, NULL, 2, 1, 1, '2025-12-09 16:16:58', NULL);
+INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, first_phase_method, joern_chunk_strategy, joern_max_files_per_cpg, joern_query_set, enricher_model_id, enricher_prompt_template, agentic_verifier_mode, agentic_verifier_model_id, agentic_verifier_max_steps, verification_threshold, require_unanimous_reject, enabled, created_at, updated_at) VALUES (4, 'UEFI/Firmware', 'UEFI and firmware-specific queries with Joern', 0, 2000, 'function', 'hybrid', 'directory', 100, 'uefi', NULL, NULL, NULL, NULL, NULL, 2, 1, 1, '2025-12-09 16:16:58', NULL);
+INSERT INTO scan_profiles (id, name, description, is_default, chunk_size, chunk_strategy, first_phase_method, joern_chunk_strategy, joern_max_files_per_cpg, joern_query_set, enricher_model_id, enricher_prompt_template, agentic_verifier_mode, agentic_verifier_model_id, agentic_verifier_max_steps, verification_threshold, require_unanimous_reject, enabled, created_at, updated_at) VALUES (5, 'Memory Safety', 'Focus on memory-related vulnerabilities', 0, 2000, 'function', 'hybrid', 'directory', 100, 'memory', NULL, NULL, NULL, NULL, NULL, 2, 1, 1, '2025-12-09 16:16:58', NULL);
+
+-- Table: profile_analyzers (4 rows)
+INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, chunk_size, prompt_template, output_mode, json_schema, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at) VALUES (2, 1, 'gpt-oss Analyzer', 'Secondary LLM analyzer for hybrid mode', 1, 32000, 'Analyze this {language} code for security vulnerabilities.
 
 File: {file_path}
 
@@ -1172,40 +880,8 @@ Look for:
 - Race conditions
 - Resource leaks
 
-=== EXAMPLES ===
-
- 42 | query = "SELECT * FROM users WHERE id = " + user_id
-
-*DRAFT: SQL Injection via String Concatenation
-*TYPE: CWE-89 SQL Injection
-*SEVERITY: Critical
-*LINE: 42
-*SNIPPET: query = "SELECT * FROM users WHERE id = " + user_id
-*REASON: User input directly concatenated into SQL query without parameterization
-*END_DRAFT
-
- 15 | os.system("rm -rf " + user_path)
-
-*DRAFT: Command Injection via os.system
-*TYPE: CWE-78 OS Command Injection
-*SEVERITY: Critical
-*LINE: 15
-*SNIPPET: os.system("rm -rf " + user_path)
-*REASON: User-controlled path passed to shell command without sanitization
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.c,*.h,*.cpp,*.py', NULL, 'analyzer', 1, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (2, 2, 'General Security', NULL, 1, 'Analyze this {language} code for security vulnerabilities.
+{output_format}', 'markers', NULL, '*.c,*.h,*.cpp,*.py', NULL, 'analyzer', 1, 1, NULL, NULL, '2025-12-09 16:17:28');
+INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, chunk_size, prompt_template, output_mode, json_schema, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at) VALUES (3, 3, 'gpt-oss Primary', 'Primary analyzer', 1, 2000, 'Analyze this {language} code for security vulnerabilities.
 
 File: {file_path}
 
@@ -1222,203 +898,8 @@ Look for:
 - Race conditions
 - Resource leaks
 
-=== EXAMPLES ===
-
- 42 | query = "SELECT * FROM users WHERE id = " + user_id
-
-*DRAFT: SQL Injection via String Concatenation
-*TYPE: CWE-89 SQL Injection
-*SEVERITY: Critical
-*LINE: 42
-*SNIPPET: query = "SELECT * FROM users WHERE id = " + user_id
-*REASON: User input directly concatenated into SQL query without parameterization
-*END_DRAFT
-
- 15 | os.system("rm -rf " + user_path)
-
-*DRAFT: Command Injection via os.system
-*TYPE: CWE-78 OS Command Injection
-*SEVERITY: Critical
-*LINE: 15
-*SNIPPET: os.system("rm -rf " + user_path)
-*REASON: User-controlled path passed to shell command without sanitization
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', NULL, NULL, 'analyzer', 1, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (3, 2, 'C Memory Safety', 'Deep analysis of memory safety issues', 1, 'Analyze this C/C++ code for memory safety vulnerabilities.
-
-File: {file_path}
-
-```c
-{code}
-```
-
-Focus specifically on:
-- Buffer overflows (stack and heap)
-- Use-after-free vulnerabilities
-- Double-free conditions
-- Null pointer dereferences
-- Integer overflows leading to buffer issues
-- Format string vulnerabilities
-- Uninitialized memory usage
-- Out-of-bounds reads/writes
-- Memory leaks in error paths
-
-=== EXAMPLES ===
-
- 331 | strcpy(credentials, username);
- 332 | strcat(credentials, password);
-
-*DRAFT: Buffer Overflow in Credential Handling
-*TYPE: CWE-120 Buffer Overflow
-*SEVERITY: High
-*LINE: 331
-*SNIPPET: strcpy(credentials, username);
-*REASON: Unbounded copy of username into fixed-size buffer without length check
-*END_DRAFT
-
- 410 | free(block);
- 411 | process_data(block->data);
-
-*DRAFT: Use-After-Free Memory Access
-*TYPE: CWE-416 Use After Free
-*SEVERITY: High
-*LINE: 411
-*SNIPPET: process_data(block->data);
-*REASON: Accessing block->data after block was freed on previous line
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.c,*.h,*.cpp,*.cc,*.cxx', '["c", "cpp"]', 'analyzer', 2, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (4, 2, 'Signal Handler Audit', 'Detect async-signal-unsafe calls in signal handlers (CVE-2024-6387 pattern)', 1, 'Analyze this C/C++ code for signal handler safety issues.
-
-File: {file_path}
-
-```c
-{code}
-```
-
-CRITICAL: Look for signal handlers that call async-signal-UNSAFE functions.
-
-Async-signal-UNSAFE functions include (but not limited to):
-- printf, fprintf, sprintf, snprintf, vprintf (and variants)
-- malloc, free, realloc, calloc
-- syslog, openlog, closelog
-- exit (use _exit instead)
-- pthread functions
-- stdio functions (fopen, fclose, fread, fwrite, etc.)
-- string functions that allocate (strdup, etc.)
-- Any function that acquires locks or uses global/static state
-
-Signal handlers should ONLY call async-signal-safe functions like:
-- _exit, _Exit
-- write (not printf!)
-- signal, sigaction
-- Simple variable assignments to volatile sig_atomic_t
-
-Race condition pattern to detect:
-1. Signal handler registered with signal() or sigaction()
-2. Handler calls any async-signal-unsafe function
-3. This creates exploitable race condition (potential RCE)
-
-=== EXAMPLE ===
-
- 100 | void sigalarm_handler(int sig) {
- 101 |     syslog(LOG_WARNING, "Timeout reached");
- 102 |     cleanup_connection();
- 103 | }
-
-*DRAFT: Async-Signal-Unsafe Function in Signal Handler
-*TYPE: CWE-364 Signal Handler Race Condition
-*SEVERITY: Critical
-*LINE: 101
-*SNIPPET: syslog(LOG_WARNING, "Timeout reached");
-*REASON: Signal handler calls syslog() which is async-signal-unsafe, creating exploitable race condition (CVE-2024-6387 pattern)
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.c,*.h,*.cpp', '["c", "cpp"]', 'analyzer', 3, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (5, 2, 'Race Conditions', 'Detect race conditions and concurrency bugs', 1, 'Analyze this code for race conditions and concurrency vulnerabilities.
-
-File: {file_path}
-
-```{language}
-{code}
-```
-
-Look for:
-- TOCTOU (Time-of-check to time-of-use) bugs
-- Unprotected shared state access
-- Missing synchronization primitives
-- Deadlock potential
-- Signal handler races (async-signal-unsafe calls)
-- File system races (symlink attacks, temp file races)
-- Double-checked locking anti-pattern
-- Atomic operation assumptions on non-atomic types
-
-=== EXAMPLES ===
-
- 55 | if os.path.exists(filepath):
- 56 |     with open(filepath, ''r'') as f:
-
-*DRAFT: TOCTOU Race Condition
-*TYPE: CWE-367 Time-of-check Time-of-use
-*SEVERITY: Medium
-*LINE: 55
-*SNIPPET: if os.path.exists(filepath):
-*REASON: File existence check and open are not atomic; file could be modified between check and use
-*END_DRAFT
-
- 120 | temp_file = "/tmp/app_" + str(random.randint(0, 1000))
-
-*DRAFT: Predictable Temporary File Name
-*TYPE: CWE-377 Insecure Temporary File
-*SEVERITY: Medium
-*LINE: 120
-*SNIPPET: temp_file = "/tmp/app_" + str(random.randint(0, 1000))
-*REASON: Predictable temp filename enables symlink attacks; use tempfile.mkstemp()
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.c,*.h,*.cpp', '["c", "cpp"]', 'analyzer', 4, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (6, 3, 'General Security', NULL, 1, 'Analyze this {language} code for security vulnerabilities.
+{output_format}', 'markers', NULL, NULL, NULL, 'analyzer', 1, 1, NULL, NULL, '2025-12-09 16:17:28');
+INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, chunk_size, prompt_template, output_mode, json_schema, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at) VALUES (4, 3, 'mistral-small Analyzer', 'Secondary analyzer', 3, 2000, 'Analyze this {language} code for security vulnerabilities.
 
 File: {file_path}
 
@@ -1435,145 +916,8 @@ Look for:
 - Race conditions
 - Resource leaks
 
-=== EXAMPLES ===
-
- 42 | query = "SELECT * FROM users WHERE id = " + user_id
-
-*DRAFT: SQL Injection via String Concatenation
-*TYPE: CWE-89 SQL Injection
-*SEVERITY: Critical
-*LINE: 42
-*SNIPPET: query = "SELECT * FROM users WHERE id = " + user_id
-*REASON: User input directly concatenated into SQL query without parameterization
-*END_DRAFT
-
- 15 | os.system("rm -rf " + user_path)
-
-*DRAFT: Command Injection via os.system
-*TYPE: CWE-78 OS Command Injection
-*SEVERITY: Critical
-*LINE: 15
-*SNIPPET: os.system("rm -rf " + user_path)
-*REASON: User-controlled path passed to shell command without sanitization
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', NULL, NULL, 'analyzer', 1, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (7, 3, 'Python Security', 'Python-specific vulnerability detection', 1, 'Analyze this Python code for security vulnerabilities.
-
-File: {file_path}
-
-```python
-{code}
-```
-
-Focus on:
-- SQL Injection (raw queries, f-strings in SQL)
-- Command Injection (os.system, subprocess with shell=True, eval, exec)
-- Path Traversal (unsanitized file paths)
-- SSRF (unvalidated URLs)
-- Deserialization (pickle.loads, yaml.load without Loader)
-- Template Injection (Jinja2 with user input)
-- Hardcoded secrets/credentials
-- Insecure random (random module for crypto)
-- XML vulnerabilities (XXE with lxml/xml.etree)
-
-=== EXAMPLES ===
-
- 25 | result = eval(user_expression)
-
-*DRAFT: Code Injection via eval()
-*TYPE: CWE-94 Code Injection
-*SEVERITY: Critical
-*LINE: 25
-*SNIPPET: result = eval(user_expression)
-*REASON: User input passed directly to eval() allows arbitrary code execution
-*END_DRAFT
-
- 88 | data = pickle.loads(request.data)
-
-*DRAFT: Insecure Deserialization
-*TYPE: CWE-502 Deserialization of Untrusted Data
-*SEVERITY: Critical
-*LINE: 88
-*SNIPPET: data = pickle.loads(request.data)
-*REASON: Deserializing untrusted data with pickle allows arbitrary code execution
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.py', '["python"]', 'analyzer', 2, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (8, 4, 'Cryptographic Audit', 'Detect weak cryptography usage', 1, 'Analyze this code for cryptographic weaknesses.
-
-File: {file_path}
-
-```{language}
-{code}
-```
-
-Look for:
-- Weak algorithms: MD5, SHA1 (for security), DES, 3DES, RC4, Blowfish
-- Weak key sizes: RSA < 2048, ECC < 256, AES < 128
-- ECB mode usage (deterministic encryption)
-- Static/hardcoded IVs or keys
-- Missing authentication (encryption without MAC/AEAD)
-- Weak PRNGs for cryptographic use
-- Deprecated TLS versions (< 1.2)
-- Weak Diffie-Hellman groups (group1, group2)
-- Certificate validation disabled
-- Timing-vulnerable comparisons for secrets
-
-=== EXAMPLES ===
-
- 45 | hash = hashlib.md5(password.encode()).hexdigest()
-
-*DRAFT: Weak Password Hashing with MD5
-*TYPE: CWE-327 Use of Broken Crypto Algorithm
-*SEVERITY: High
-*LINE: 45
-*SNIPPET: hash = hashlib.md5(password.encode()).hexdigest()
-*REASON: MD5 is cryptographically broken; use bcrypt/scrypt/argon2 for passwords
-*END_DRAFT
-
- 72 | SECRET_KEY = "hardcoded_secret_123"
-
-*DRAFT: Hardcoded Cryptographic Key
-*TYPE: CWE-798 Hardcoded Credentials
-*SEVERITY: High
-*LINE: 72
-*SNIPPET: SECRET_KEY = "hardcoded_secret_123"
-*REASON: Cryptographic key hardcoded in source code; should use environment variables or key management
-*END_DRAFT
-
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
-
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', NULL, NULL, 'analyzer', 1, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (9, 5, 'General Security', NULL, 1, 'Analyze this {language} code for security vulnerabilities.
+{output_format}', 'markers', NULL, NULL, NULL, 'analyzer', 2, 1, NULL, NULL, '2025-12-09 16:17:28');
+INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, chunk_size, prompt_template, output_mode, json_schema, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at) VALUES (5, 3, 'gemma-3-27b Analyzer', 'Tertiary analyzer', 2, 2000, 'Analyze this {language} code for security vulnerabilities.
 
 File: {file_path}
 
@@ -1590,775 +934,2358 @@ Look for:
 - Race conditions
 - Resource leaks
 
-=== EXAMPLES ===
+{output_format}', 'markers', NULL, NULL, NULL, 'analyzer', 3, 1, NULL, NULL, '2025-12-09 16:17:28');
 
- 42 | query = "SELECT * FROM users WHERE id = " + user_id
+-- Table: profile_verifiers (10 rows)
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (1, 1, 'gpt-oss Verifier', 'Primary verifier with detailed criteria', 1, 'You are verifying a potential security vulnerability.
 
-*DRAFT: SQL Injection via String Concatenation
-*TYPE: CWE-89 SQL Injection
-*SEVERITY: Critical
-*LINE: 42
-*SNIPPET: query = "SELECT * FROM users WHERE id = " + user_id
-*REASON: User input directly concatenated into SQL query without parameterization
-*END_DRAFT
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
 
- 15 | os.system("rm -rf " + user_path)
+Reported Code:
+{snippet}
 
-*DRAFT: Command Injection via os.system
-*TYPE: CWE-78 OS Command Injection
-*SEVERITY: Critical
-*LINE: 15
-*SNIPPET: os.system("rm -rf " + user_path)
-*REASON: User-controlled path passed to shell command without sanitization
-*END_DRAFT
+Scanner''s Reason: {reason}
 
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
+=== PRE-FETCHED CONTEXT ===
+{context}
 
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', NULL, NULL, 'analyzer', 1, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (10, 5, 'C Memory Safety', NULL, 1, 'Analyze this C/C++ code for memory safety vulnerabilities.
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
 
-File: {file_path}
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
 
-```c
-{code}
-```
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
 
-Focus specifically on:
-- Buffer overflows (stack and heap)
-- Use-after-free vulnerabilities
-- Double-free conditions
-- Null pointer dereferences
-- Integer overflows leading to buffer issues
-- Format string vulnerabilities
-- Uninitialized memory usage
-- Out-of-bounds reads/writes
-- Memory leaks in error paths
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
 
-=== EXAMPLES ===
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
 
- 331 | strcpy(credentials, username);
- 332 | strcat(credentials, password);
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
 
-*DRAFT: Buffer Overflow in Credential Handling
-*TYPE: CWE-120 Buffer Overflow
-*SEVERITY: High
-*LINE: 331
-*SNIPPET: strcpy(credentials, username);
-*REASON: Unbounded copy of username into fixed-size buffer without length check
-*END_DRAFT
+=== FALSE_POSITIVE PATTERNS ===
 
- 410 | free(block);
- 411 | process_data(block->data);
+Vote FALSE_POSITIVE for these (scanner mistakes):
 
-*DRAFT: Use-After-Free Memory Access
-*TYPE: CWE-416 Use After Free
-*SEVERITY: High
-*LINE: 411
-*SNIPPET: process_data(block->data);
-*REASON: Accessing block->data after block was freed on previous line
-*END_DRAFT
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
 
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
 
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.c,*.h,*.cpp,*.cc', NULL, 'analyzer', 2, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (11, 5, 'Signal Handler Audit', NULL, 1, 'Analyze this C/C++ code for signal handler safety issues.
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
 
-File: {file_path}
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
 
-```c
-{code}
-```
+=== WEAKNESS PATTERNS ===
 
-CRITICAL: Look for signal handlers that call async-signal-UNSAFE functions.
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
 
-Async-signal-UNSAFE functions include (but not limited to):
-- printf, fprintf, sprintf, snprintf, vprintf (and variants)
-- malloc, free, realloc, calloc
-- syslog, openlog, closelog
-- exit (use _exit instead)
-- pthread functions
-- stdio functions (fopen, fclose, fread, fwrite, etc.)
-- string functions that allocate (strdup, etc.)
-- Any function that acquires locks or uses global/static state
+=== REAL VULNERABILITY PATTERNS ===
 
-Signal handlers should ONLY call async-signal-safe functions like:
-- _exit, _Exit
-- write (not printf!)
-- signal, sigaction
-- Simple variable assignments to volatile sig_atomic_t
+Vote REAL for these (confirmed exploitable):
 
-Race condition pattern to detect:
-1. Signal handler registered with signal() or sigaction()
-2. Handler calls any async-signal-unsafe function
-3. This creates exploitable race condition (potential RCE)
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
 
-=== EXAMPLE ===
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
 
- 100 | void sigalarm_handler(int sig) {
- 101 |     syslog(LOG_WARNING, "Timeout reached");
- 102 |     cleanup_connection();
- 103 | }
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
 
-*DRAFT: Async-Signal-Unsafe Function in Signal Handler
-*TYPE: CWE-364 Signal Handler Race Condition
-*SEVERITY: Critical
-*LINE: 101
-*SNIPPET: syslog(LOG_WARNING, "Timeout reached");
-*REASON: Signal handler calls syslog() which is async-signal-unsafe, creating exploitable race condition (CVE-2024-6387 pattern)
-*END_DRAFT
+=== NEEDS_VERIFIED PATTERNS ===
 
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
 
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.c,*.h,*.cpp', NULL, 'analyzer', 3, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (12, 5, 'Race Conditions', NULL, 1, 'Analyze this code for race conditions and concurrency vulnerabilities.
+=== DOMAIN KNOWLEDGE ===
 
-File: {file_path}
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
 
-```{language}
-{code}
-```
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
 
-Look for:
-- TOCTOU (Time-of-check to time-of-use) bugs
-- Unprotected shared state access
-- Missing synchronization primitives
-- Deadlock potential
-- Signal handler races (async-signal-unsafe calls)
-- File system races (symlink attacks, temp file races)
-- Double-checked locking anti-pattern
-- Atomic operation assumptions on non-atomic types
+{output_format}', 'markers', NULL, 1.0, 50, 1, 1, '2025-12-09 16:18:34');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (2, 1, 'Devstral Verifier', 'Secondary verifier', 8, 'You are verifying a potential security vulnerability.
 
-=== EXAMPLES ===
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
 
- 55 | if os.path.exists(filepath):
- 56 |     with open(filepath, ''r'') as f:
+Reported Code:
+{snippet}
 
-*DRAFT: TOCTOU Race Condition
-*TYPE: CWE-367 Time-of-check Time-of-use
-*SEVERITY: Medium
-*LINE: 55
-*SNIPPET: if os.path.exists(filepath):
-*REASON: File existence check and open are not atomic; file could be modified between check and use
-*END_DRAFT
+Scanner''s Reason: {reason}
 
- 120 | temp_file = "/tmp/app_" + str(random.randint(0, 1000))
+=== PRE-FETCHED CONTEXT ===
+{context}
 
-*DRAFT: Predictable Temporary File Name
-*TYPE: CWE-377 Insecure Temporary File
-*SEVERITY: Medium
-*LINE: 120
-*SNIPPET: temp_file = "/tmp/app_" + str(random.randint(0, 1000))
-*REASON: Predictable temp filename enables symlink attacks; use tempfile.mkstemp()
-*END_DRAFT
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
 
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
 
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', NULL, NULL, 'analyzer', 4, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (13, 5, 'Cryptographic Audit', NULL, 1, 'Analyze this code for cryptographic weaknesses.
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
 
-File: {file_path}
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
 
-```{language}
-{code}
-```
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
 
-Look for:
-- Weak algorithms: MD5, SHA1 (for security), DES, 3DES, RC4, Blowfish
-- Weak key sizes: RSA < 2048, ECC < 256, AES < 128
-- ECB mode usage (deterministic encryption)
-- Static/hardcoded IVs or keys
-- Missing authentication (encryption without MAC/AEAD)
-- Weak PRNGs for cryptographic use
-- Deprecated TLS versions (< 1.2)
-- Weak Diffie-Hellman groups (group1, group2)
-- Certificate validation disabled
-- Timing-vulnerable comparisons for secrets
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
 
-=== EXAMPLES ===
+=== FALSE_POSITIVE PATTERNS ===
 
- 45 | hash = hashlib.md5(password.encode()).hexdigest()
+Vote FALSE_POSITIVE for these (scanner mistakes):
 
-*DRAFT: Weak Password Hashing with MD5
-*TYPE: CWE-327 Use of Broken Crypto Algorithm
-*SEVERITY: High
-*LINE: 45
-*SNIPPET: hash = hashlib.md5(password.encode()).hexdigest()
-*REASON: MD5 is cryptographically broken; use bcrypt/scrypt/argon2 for passwords
-*END_DRAFT
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
 
- 72 | SECRET_KEY = "hardcoded_secret_123"
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
 
-*DRAFT: Hardcoded Cryptographic Key
-*TYPE: CWE-798 Hardcoded Credentials
-*SEVERITY: High
-*LINE: 72
-*SNIPPET: SECRET_KEY = "hardcoded_secret_123"
-*REASON: Cryptographic key hardcoded in source code; should use environment variables or key management
-*END_DRAFT
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
 
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
 
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', NULL, NULL, 'analyzer', 5, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
-INSERT INTO profile_analyzers (id, profile_id, name, description, model_id, prompt_template, file_filter, language_filter, role, run_order, enabled, stop_on_findings, min_severity_to_report, created_at, chunk_size) VALUES (14, 5, 'Python Security', NULL, 1, 'Analyze this Python code for security vulnerabilities.
+=== WEAKNESS PATTERNS ===
 
-File: {file_path}
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
 
-```python
-{code}
-```
+=== REAL VULNERABILITY PATTERNS ===
 
-Focus on:
-- SQL Injection (raw queries, f-strings in SQL)
-- Command Injection (os.system, subprocess with shell=True, eval, exec)
-- Path Traversal (unsanitized file paths)
-- SSRF (unvalidated URLs)
-- Deserialization (pickle.loads, yaml.load without Loader)
-- Template Injection (Jinja2 with user input)
-- Hardcoded secrets/credentials
-- Insecure random (random module for crypto)
-- XML vulnerabilities (XXE with lxml/xml.etree)
+Vote REAL for these (confirmed exploitable):
 
-=== EXAMPLES ===
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
 
- 25 | result = eval(user_expression)
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
 
-*DRAFT: Code Injection via eval()
-*TYPE: CWE-94 Code Injection
-*SEVERITY: Critical
-*LINE: 25
-*SNIPPET: result = eval(user_expression)
-*REASON: User input passed directly to eval() allows arbitrary code execution
-*END_DRAFT
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
 
- 88 | data = pickle.loads(request.data)
+=== NEEDS_VERIFIED PATTERNS ===
 
-*DRAFT: Insecure Deserialization
-*TYPE: CWE-502 Deserialization of Untrusted Data
-*SEVERITY: Critical
-*LINE: 88
-*SNIPPET: data = pickle.loads(request.data)
-*REASON: Deserializing untrusted data with pickle allows arbitrary code execution
-*END_DRAFT
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
 
-=== OUTPUT FORMAT ===
-*DRAFT: descriptive title
-*TYPE: CWE-XXX or vulnerability category
-*SEVERITY: Critical/High/Medium/Low
-*LINE: exact line number from the code
-*SNIPPET: the vulnerable code
-*REASON: one sentence explanation of why this is vulnerable
-*END_DRAFT
+=== DOMAIN KNOWLEDGE ===
 
-Report each finding separately. If no vulnerabilities found: *DRAFT:NONE
-', '*.py', NULL, 'analyzer', 6, 1, 0, NULL, '2025-11-26 04:43:41', 6000);
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.0, 50, 2, 1, '2025-12-09 16:18:34');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (3, 1, 'Llama Verifier', 'Tertiary verifier - most critical', 2, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.0, 50, 3, 1, '2025-12-09 16:18:34');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (4, 3, 'gpt-oss Verifier', 'Primary verifier', 1, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.0, 50, 1, 1, '2025-12-09 16:18:55');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (5, 3, 'mistral-small Verifier', 'Secondary verifier', 3, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.0, 50, 2, 1, '2025-12-09 16:18:55');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (6, 3, 'gemma-3-27b Verifier', 'Tertiary verifier - most critical', 2, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.5, 50, 3, 1, '2025-12-09 16:18:55');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (7, 4, 'gpt-oss UEFI Verifier', 'UEFI-specialized verifier', 1, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.0, 50, 1, 1, '2025-12-09 16:19:17');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (8, 4, 'gemma-3-27b UEFI Verifier', 'Secondary UEFI verifier', 2, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.5, 50, 2, 1, '2025-12-09 16:19:17');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (9, 5, 'gpt-oss Memory Verifier', 'Memory safety focused verifier', 1, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.0, 50, 1, 1, '2025-12-09 16:19:33');
+INSERT INTO profile_verifiers (id, profile_id, name, description, model_id, prompt_template, output_mode, json_schema, vote_weight, min_confidence, run_order, enabled, created_at) VALUES (10, 5, 'gemma-3-27b Memory Verifier', 'Secondary memory verifier', 2, 'You are verifying a potential security vulnerability.
+
+=== FINDING TO VERIFY ===
+Title: {title}
+Type: {vuln_type}
+Severity: {severity}
+Line: {line}
+
+Reported Code:
+{snippet}
+
+Scanner''s Reason: {reason}
+
+=== PRE-FETCHED CONTEXT ===
+{context}
+
+=== YOUR TASK ===
+Classify this finding into ONE of these categories:
+
+**FALSE_POSITIVE**: The scanner is wrong. There is NO vulnerability here. The code is safe as written.
+
+**REAL**: This is a confirmed exploitable vulnerability. You can see concrete evidence in the PROVIDED code that proves it''s vulnerable.
+
+**NEEDS_VERIFIED**: The code MIGHT be vulnerable, but you CANNOT confirm from what''s shown. Critical validation logic is in unseen functions or files. More investigation needed.
+
+**WEAKNESS**: Poor coding practice or defensive gap, but NOT directly exploitable as described (e.g., DoS-only, no realistic attack path).
+
+=== BURDEN OF PROOF ===
+- Vote REAL only if you can see the vulnerability in the PROVIDED code with CONCRETE EVIDENCE
+- If validation is in unseen functions → you CANNOT verify → vote NEEDS_VERIFIED or FALSE_POSITIVE
+- "Might be vulnerable if function X doesn''t validate" → NOT REAL, vote NEEDS_VERIFIED
+- Speculation about unseen code → NOT REAL
+- Must trace attacker data to dangerous sink in visible code → otherwise NOT REAL
+
+=== FALSE_POSITIVE PATTERNS ===
+
+Vote FALSE_POSITIVE for these (scanner mistakes):
+
+**Math & Logic**:
+- Division operations (division CANNOT overflow, only reduces values)
+- Loop bounds that ARE correctly checked: `i < array_size`
+- Integer overflow in display/logging only (no security impact)
+
+**Bounds & Null Checks**:
+- Code with null checks that scanner missed: `if (ptr == NULL) continue;` before dereference
+- Buffer sizes that ARE correct: `CHAR16 buf[9]` for "Boot####\0" (8 chars + null = 9)
+
+**Safe API Usage**:
+- `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe
+- `snprintf(buf, sizeof(buf), ...)` - size-limited, safe
+- `(size + 7) & ~7` - standard alignment idiom, unexploitable
+
+**UEFI/Firmware Specific**:
+- `GetVariable(..., &DataSize, &Buffer)` - UEFI spec: returns EFI_BUFFER_TOO_SMALL if buffer too small, does NOT overflow
+- `SetVariable()` with validated input - UEFI validates internally
+- `AllocateZeroPool()` / `AllocatePool()` - returns NULL on failure, no overflow
+- `CopyMem(dest, src, sizeof(dest))` where sizeof matches - bounded copy
+- SMM handlers with proper validation - SMI handlers do validate
+- UEFI boot services that perform internal validation
+
+=== WEAKNESS PATTERNS ===
+
+Vote WEAKNESS for these (low priority issues):
+- Theoretical overflow with no realistic attack path
+- DoS-only impact (no RCE, no data leak, no memory corruption)
+- Bad practice in non-security-critical code
+- Missing input validation but impact is minimal
+- Memory leaks (CWE-401) - usually not exploitable
+- Weak crypto (CRC instead of cryptographic hash) for non-security purposes
+- Missing error handling where failure is benign
+
+=== REAL VULNERABILITY PATTERNS ===
+
+Vote REAL for these (confirmed exploitable):
+
+**Command/Code Injection**:
+- `system(user_input)` or `popen(user_input)` - command injection
+- `printf(user_str)` - format string (user string AS the format)
+- SQL/path with concatenated user input - injection
+
+**Memory Safety**:
+- `strcpy(fixed_buf, user_input)` - unbounded copy
+- `sprintf(buf, "%s", user_input)` where buf is fixed size - overflow
+- `free(ptr); use(ptr);` - use-after-free
+- Buffer access without bounds check where attacker controls index/size
+- Array access: `array[user_value]` with no bounds check on user_value
+
+**UEFI/Firmware Specific**:
+- Using EFI variable data DIRECTLY as array index/size without validation
+- Passing EFI variable length to memcpy/CopyMem without checking against buffer size
+- SMM vulnerabilities where attacker controls comm buffer without validation
+- Time-of-check-time-of-use (TOCTOU) in SMM with shared memory
+
+=== NEEDS_VERIFIED PATTERNS ===
+
+Vote NEEDS_VERIFIED when:
+- Function implementation not shown and could contain validation
+- Validation might exist in caller or callee that''s not visible
+- Cannot determine data flow without seeing more code
+- Requires knowledge of external API contracts not shown
+- EFI variable is used but validation function not visible
+- SMM handler validation logic not shown
+
+=== DOMAIN KNOWLEDGE ===
+
+**UEFI Specification Facts**:
+- `GetVariable()` with `&DataSize`: If buffer too small, returns EFI_BUFFER_TOO_SMALL and sets DataSize to required size. Does NOT write past buffer end.
+- `SetVariable()`: Validates data internally, stores atomically
+- Boot services: Generally have internal validation
+- Runtime services: More exposed but still have basic validation
+
+**Common Safe Patterns**:
+- UEFI alignment: `(size + alignment - 1) & ~(alignment - 1)` is standard idiom
+- Pool allocation: `AllocatePool(size)` returns NULL on failure, no overflow
+- CopyMem: When used with sizeof() matching buffer size, it''s bounded
+
+{output_format}', 'markers', NULL, 1.5, 50, 2, 1, '2025-12-09 16:19:33');
 
 -- Table: static_rules (24 rows)
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (1, 'gets() Buffer Overflow', 'gets() has no bounds checking - always vulnerable', 'gets\s*\(', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (2, 'Direct argv to system()', 'Command line argument passed directly to system()', 'system\s*\(\s*argv', '["c", "cpp"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (3, 'strcpy from argv', 'Unbounded copy from command line argument', 'strcpy\s*\([^,]+,\s*argv', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (4, 'strcat from argv', 'Unbounded concatenation from command line argument', 'strcat\s*\([^,]+,\s*argv', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (5, 'scanf %s without width', 'scanf %s without width limit allows buffer overflow', 'scanf\s*\(\s*"%s"', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (6, 'sprintf building system command', 'sprintf builds string passed to system() - command injection', 'sprintf\s*\([^;]+\);\s*\n?\s*system\s*\(', '["c", "cpp"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (7, 'snprintf building system command', 'snprintf builds string passed to system() - command injection', 'snprintf\s*\([^;]+\);\s*\n?\s*system\s*\(', '["c", "cpp"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (8, 'printf with variable format', 'printf with variable as format string', 'printf\s*\(\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\)', '["c", "cpp"]', 'CWE-134', 'Format String', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (9, 'fprintf with variable format', 'fprintf with variable as format string', 'fprintf\s*\([^,]+,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\)', '["c", "cpp"]', 'CWE-134', 'Format String', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (10, 'free then use pattern', 'Pointer used after being freed', 'free\s*\(\s*(\w+)\s*\)[^}]*\1\s*->', '["c", "cpp"]', 'CWE-416', 'Use-After-Free', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (11, 'Double free pattern', 'Same pointer freed twice', 'free\s*\(\s*(\w+)\s*\)[^}]*free\s*\(\s*\1\s*\)', '["c", "cpp"]', 'CWE-415', 'Double-Free', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (12, 'access then fopen TOCTOU', 'Time-of-check to time-of-use race condition', 'access\s*\([^)]+\)[^;]*;[^}]*fopen\s*\(', '["c", "cpp"]', 'CWE-367', 'TOCTOU Race Condition', 'Medium', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (13, 'eval on request data', 'eval() called on user request data', 'eval\s*\(\s*request\.', '["py"]', 'CWE-94', 'Code Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (14, 'exec on request data', 'exec() called on user request data', 'exec\s*\(\s*request\.', '["py"]', 'CWE-94', 'Code Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (15, 'pickle on request data', 'Pickle deserialization of untrusted data', 'pickle\.loads?\s*\(\s*request\.', '["py"]', 'CWE-502', 'Insecure Deserialization', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (16, 'os.system with request', 'os.system() with user request data', 'os\.system\s*\(\s*request\.', '["py"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (17, 'subprocess shell=True with user input', 'subprocess with shell=True and user input', 'subprocess\.(run|call|Popen)\s*\([^)]*shell\s*=\s*True[^)]*request\.', '["py"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (18, 'yaml.load unsafe', 'yaml.load without SafeLoader allows code execution', 'yaml\.load\s*\([^)]*\)', '["py"]', 'CWE-502', 'Insecure Deserialization', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (19, '__import__ with user input', 'Dynamic import with user-controlled module name', '__import__\s*\(\s*request\.', '["py"]', 'CWE-94', 'Code Injection', 'Critical', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (20, 'Hardcoded password', 'Hardcoded password in source code', '(password|passwd|pwd)\s*=\s*["\''][^"\'']{4,}["\'']', '["c", "cpp", "py", "js", "java"]', 'CWE-798', 'Hardcoded Credentials', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (21, 'Hardcoded API key', 'Hardcoded API key in source code', '(api_key|apikey|api_secret)\s*=\s*["\''][^"\'']{8,}["\'']', '["c", "cpp", "py", "js", "java"]', 'CWE-798', 'Hardcoded Credentials', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (22, 'Hardcoded secret/token', 'Hardcoded secret or token in source code', '(secret|token|auth_token)\s*=\s*["\''][^"\'']{8,}["\'']', '["c", "cpp", "py", "js", "java"]', 'CWE-798', 'Hardcoded Credentials', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (23, 'SQL string concatenation', 'SQL query built with string concatenation', '(SELECT|INSERT|UPDATE|DELETE)[^"\'']*\+\s*\w+', '["py", "js", "java"]', 'CWE-89', 'SQL Injection', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
-INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (24, 'SQL f-string interpolation', 'SQL query built with f-string interpolation', 'f["\''].*?(SELECT|INSERT|UPDATE|DELETE).*?\{', '["py"]', 'CWE-89', 'SQL Injection', 'High', 1, 0, 1, 1, 0, '2025-11-26 01:48:16', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (1, 'gets() Buffer Overflow', 'gets() has no bounds checking - always vulnerable', 'gets\s*\(', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647857', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (2, 'Direct argv to system()', 'Command line argument passed directly to system()', 'system\s*\(\s*argv', '["c", "cpp"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647867', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (3, 'strcpy from argv', 'Unbounded copy from command line argument', 'strcpy\s*\([^,]+,\s*argv', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647868', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (4, 'strcat from argv', 'Unbounded concatenation from command line argument', 'strcat\s*\([^,]+,\s*argv', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647870', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (5, 'scanf %s without width', 'scanf %s without width limit allows buffer overflow', 'scanf\s*\(\s*"%s"', '["c", "cpp"]', 'CWE-120', 'Buffer Overflow', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647871', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (6, 'sprintf building system command', 'sprintf builds string passed to system() - command injection', 'sprintf\s*\([^;]+\);\s*\n?\s*system\s*\(', '["c", "cpp"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647873', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (7, 'snprintf building system command', 'snprintf builds string passed to system() - command injection', 'snprintf\s*\([^;]+\);\s*\n?\s*system\s*\(', '["c", "cpp"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647874', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (8, 'printf with variable format', 'printf with variable as format string', 'printf\s*\(\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\)', '["c", "cpp"]', 'CWE-134', 'Format String', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647875', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (9, 'fprintf with variable format', 'fprintf with variable as format string', 'fprintf\s*\([^,]+,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\)', '["c", "cpp"]', 'CWE-134', 'Format String', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647877', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (10, 'free then use pattern', 'Pointer used after being freed', 'free\s*\(\s*(\w+)\s*\)[^}]*\1\s*->', '["c", "cpp"]', 'CWE-416', 'Use-After-Free', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647878', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (11, 'Double free pattern', 'Same pointer freed twice', 'free\s*\(\s*(\w+)\s*\)[^}]*free\s*\(\s*\1\s*\)', '["c", "cpp"]', 'CWE-415', 'Double-Free', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647879', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (12, 'access then fopen TOCTOU', 'Time-of-check to time-of-use race condition', 'access\s*\([^)]+\)[^;]*;[^}]*fopen\s*\(', '["c", "cpp"]', 'CWE-367', 'TOCTOU Race Condition', 'Medium', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647881', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (13, 'eval on request data', 'eval() called on user request data', 'eval\s*\(\s*request\.', '["py"]', 'CWE-94', 'Code Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647882', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (14, 'exec on request data', 'exec() called on user request data', 'exec\s*\(\s*request\.', '["py"]', 'CWE-94', 'Code Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647883', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (15, 'pickle on request data', 'Pickle deserialization of untrusted data', 'pickle\.loads?\s*\(\s*request\.', '["py"]', 'CWE-502', 'Insecure Deserialization', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647885', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (16, 'os.system with request', 'os.system() with user request data', 'os\.system\s*\(\s*request\.', '["py"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647886', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (17, 'subprocess shell=True with user input', 'subprocess with shell=True and user input', 'subprocess\.(run|call|Popen)\s*\([^)]*shell\s*=\s*True[^)]*request\.', '["py"]', 'CWE-78', 'Command Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647887', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (18, 'yaml.load unsafe', 'yaml.load without SafeLoader allows code execution', 'yaml\.load\s*\([^)]*\)', '["py"]', 'CWE-502', 'Insecure Deserialization', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647888', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (19, '__import__ with user input', 'Dynamic import with user-controlled module name', '__import__\s*\(\s*request\.', '["py"]', 'CWE-94', 'Code Injection', 'Critical', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647890', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (20, 'Hardcoded password', 'Hardcoded password in source code', '(password|passwd|pwd)\s*=\s*["\''][^"\'']{4,}["\'']', '["c", "cpp", "py", "js", "java"]', 'CWE-798', 'Hardcoded Credentials', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647891', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (21, 'Hardcoded API key', 'Hardcoded API key in source code', '(api_key|apikey|api_secret)\s*=\s*["\''][^"\'']{8,}["\'']', '["c", "cpp", "py", "js", "java"]', 'CWE-798', 'Hardcoded Credentials', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647892', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (22, 'Hardcoded secret/token', 'Hardcoded secret or token in source code', '(secret|token|auth_token)\s*=\s*["\''][^"\'']{8,}["\'']', '["c", "cpp", "py", "js", "java"]', 'CWE-798', 'Hardcoded Credentials', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647894', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (23, 'SQL string concatenation', 'SQL query built with string concatenation', '(SELECT|INSERT|UPDATE|DELETE)[^"\'']*\+\s*\w+', '["py", "js", "java"]', 'CWE-89', 'SQL Injection', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647895', NULL);
+INSERT INTO static_rules (id, name, description, pattern, languages, cwe_id, vulnerability_type, severity, is_definite, requires_llm_verification, enabled, built_in, match_count, created_at, updated_at) VALUES (24, 'SQL f-string interpolation', 'SQL query built with f-string interpolation', 'f["\''].*?(SELECT|INSERT|UPDATE|DELETE).*?\{', '["py"]', 'CWE-89', 'SQL Injection', 'High', 1, 0, 1, 1, 0, '2025-12-09 11:12:54.647896', NULL);
 
--- Table: vulnerability_categories (26 rows)
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (1, 'CWE‑124: **Buffer Under‑read** (also related to CWE‑120: **Buffer Copy without Checking Size**)', NULL, 'CWE', NULL, '["cwe", "124", "buffer", "under", "read", "also", "related", "cwe", "120", "buffer", "copy", "without", "checking", "size"]', 336, '2025-11-26 02:13:45');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (2, 'CWE‑20 – Improper Input Validation (leads to Arbitrary Code Execution)', 'CWE-20', 'CWE', NULL, '["improper", "input", "validation", "leads", "arbitrary", "code", "execution"]', 28, '2025-12-02 20:45:57');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (3, 'CWE‑401: Missing Release of Memory after Effective Lifetime', 'CWE-401', 'CWE', NULL, '["missing", "release", "memory", "after", "effective", "lifetime"]', 56, '2025-12-02 20:45:57');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (4, 'CWE‑200 – Exposure of Sensitive Information to an Unauthorized Actor', 'CWE-200', 'CWE', NULL, '["exposure", "sensitive", "information", "unauthorized", "actor"]', 48, '2025-12-02 20:46:37');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (5, 'CWE‑190 – Integer Overflow or Wraparound', 'CWE-190', 'CWE', NULL, '["integer", "overflow", "wraparound"]', 42, '2025-12-02 20:46:37');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (6, 'CWE‑126: Buffer Over‑read', 'CWE-126', 'CWE', NULL, '["buffer", "over", "read"]', 7, '2025-12-02 20:46:37');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (7, 'CWE‑119: Improper Restriction of Operations within the Bounds of a Memory Buffer', 'CWE-119', 'CWE', NULL, '["improper", "restriction", "operations", "within", "bounds", "memory", "buffer"]', 36, '2025-12-02 20:47:35');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (8, 'CWE‑125: Out‑of‑bounds Read', 'CWE-125', 'CWE', NULL, '["out", "bounds", "read"]', 20, '2025-12-02 20:53:59');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (9, 'CWE‑362: Race Condition', 'CWE-362', 'CWE', NULL, '["race", "condition"]', 28, '2025-12-02 20:57:54');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (10, 'CWE‑388 – **Error Handling (Missing Check for Return Value)**', 'CWE-388', 'CWE', NULL, '["error", "handling", "missing", "check", "for", "return", "value"]', 20, '2025-12-02 20:59:35');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (11, 'CWE‑835 – Loop with Unreachable Exit Condition', 'CWE-835', 'CWE', NULL, '["loop", "with", "unreachable", "exit", "condition"]', 1, '2025-12-02 21:04:56');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (12, 'CWE‑284: Improper Access Control', 'CWE-284', 'CWE', NULL, '["improper", "access", "control"]', 10, '2025-12-02 21:05:29');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (13, 'CWE‑327: Use of a Weak Cryptographic Algorithm', 'CWE-327', 'CWE', NULL, '["use", "weak", "cryptographic", "algorithm"]', 6, '2025-12-02 21:05:29');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (14, 'CWE‑415: Double Free', 'CWE-415', 'CWE', NULL, '["double", "free"]', 2, '2025-12-02 21:06:12');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (15, 'CWE‑306: Missing Authentication', 'CWE-306', 'CWE', NULL, '["missing", "authentication"]', 5, '2025-12-02 21:06:46');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (16, 'CWE‑476 – NULL Pointer Dereference', 'CWE-476', 'CWE', NULL, '["null", "pointer", "dereference"]', 26, '2025-12-02 21:12:20');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (17, 'CWE‑121: Stack‑Based Buffer Overflow', 'CWE-121', 'CWE', NULL, '["stack", "based", "buffer", "overflow"]', 4, '2025-12-02 21:14:21');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (18, 'CWE‑665: Improper Initialization (logic error that skips security‑critical functionality)', 'CWE-665', 'CWE', NULL, '["improper", "initialization", "logic", "error", "that", "skips", "security", "critical", "functionality"]', 5, '2025-12-02 21:17:15');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (19, 'CWE‑400 – Uncontrolled Resource Consumption (also related to CWE‑789 – Uncontrolled Memory Allocation)', 'CWE-400', 'CWE', NULL, '["uncontrolled", "resource", "consumption", "also", "related", "uncontrolled", "memory", "allocation"]', 5, '2025-12-02 21:18:10');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (20, 'CWE‑416: Use After Free', 'CWE-416', 'CWE', NULL, '["use", "after", "free"]', 2, '2025-12-02 21:20:43');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (21, 'CWE‑269: Improper Privilege Management', 'CWE-269', 'CWE', NULL, '["improper", "privilege", "management"]', 1, '2025-12-02 21:31:23');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (22, 'CWE‑124: Buffer Overflow (Write)', 'CWE-124', 'CWE', NULL, '["buffer", "overflow", "write"]', 2, '2025-12-02 21:37:04');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (23, 'CWE‑590: **Free of Invalid Pointer**', 'CWE-590', 'CWE', NULL, '["free", "invalid", "pointer"]', 1, '2025-12-02 21:38:09');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (24, 'CWE‑131: Incorrect Calculation of Buffer Size', 'CWE-131', 'CWE', NULL, '["incorrect", "calculation", "buffer", "size"]', 2, '2025-12-02 21:48:56');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (25, 'CWE‑571 *Expression Is Always False* (mis‑interpreted result)', 'CWE-571', 'CWE', NULL, '["expression", "always", "false", "mis", "interpreted", "result"]', 1, '2025-12-02 22:10:38');
-INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (26, 'CWE‑285 – Improper Authorization', 'CWE-285', 'CWE', NULL, '["improper", "authorization"]', 1, '2025-12-02 22:15:47');
+-- Table: vulnerability_categories (31 rows)
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (1, 'CWE‑119: Improper Restriction of Operations within the Bounds of a Memory Buffer (Buffer Overflow / Out‑of‑Bounds Read)', 'CWE-119', 'CWE', NULL, '["improper", "restriction", "operations", "within", "bounds", "memory", "buffer", "buffer", "overflow", "out", "bounds", "read"]', 175, '2025-12-09 13:45:53.503124');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (2, 'CWE‑284: Improper Access Control', 'CWE-284', 'CWE', NULL, '["improper", "access", "control"]', 17, '2025-12-09 13:45:53.516515');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (3, 'CWE‑690: Unchecked Return Value to NULL Pointer Dereference  
 
--- Table: tuning_prompt_templates (26 rows)
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (9, 'v1_code_first', 'Imported from test_library (format variant v1_code_first)', '```c
-{code}
-```
+---', 'CWE-690', 'CWE', NULL, '["unchecked", "return", "value", "null", "pointer", "dereference"]', 97, '2025-12-09 13:48:06.491428');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (4, 'CWE‑20 (Improper Input Validation)', 'CWE-20', 'CWE', NULL, '["improper", "input", "validation"]', 30, '2025-12-09 14:30:14.942816');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (5, 'CWE‑269: Improper Privilege Management (mis‑use of untrusted data to gain elevated execution)', 'CWE-269', 'CWE', NULL, '["improper", "privilege", "management", "mis", "use", "untrusted", "data", "gain", "elevated", "execution"]', 6, '2025-12-09 14:30:14.949600');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (6, 'CWE‑190 – Integer Overflow or Wraparound', 'CWE-190', 'CWE', NULL, '["integer", "overflow", "wraparound"]', 148, '2025-12-09 14:34:44.773799');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (7, 'CWE‑457: Use of Uninitialized Variable', 'CWE-457', 'CWE', NULL, '["use", "uninitialized", "variable"]', 4, '2025-12-09 14:41:32.909275');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (8, 'CWE‑285: Improper Authorization', 'CWE-285', 'CWE', NULL, '["improper", "authorization"]', 1, '2025-12-09 14:43:12.784403');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (9, 'CWE‑134: Uncontrolled Format String', 'CWE-134', 'CWE', NULL, '["uncontrolled", "format", "string"]', 6, '2025-12-09 14:51:09.502009');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (10, 'CWE‑732: Incorrect Permission Assignment for Critical Resource', 'CWE-732', 'CWE', NULL, '["incorrect", "permission", "assignment", "for", "critical", "resource"]', 5, '2025-12-09 15:03:03.737278');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (11, 'CWE‑772 – **Missing Release of Resource after Effective Lifetime**', 'CWE-772', 'CWE', NULL, '["missing", "release", "resource", "after", "effective", "lifetime"]', 6, '2025-12-09 15:09:00.751235');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (12, 'CWE‑416: Use After Free', 'CWE-416', 'CWE', NULL, '["use", "after", "free"]', 36, '2025-12-09 15:10:36.146526');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (13, 'CWE‑415: Double Free', 'CWE-415', 'CWE', NULL, '["double", "free"]', 13, '2025-12-09 15:25:54.903078');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (14, 'CWE‑126: Buffer Over‑read', 'CWE-126', 'CWE', NULL, '["buffer", "over", "read"]', 6, '2025-12-09 15:35:52.107700');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (15, 'CWE‑665 – Improper Initialization (and related CWE‑571 – Expression Is Always True)', 'CWE-665', 'CWE', NULL, '["improper", "initialization", "related", "expression", "always", "true"]', 5, '2025-12-09 15:38:35.058215');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (16, 'CWE‑120: Buffer Copy without Size Check', 'CWE-120', 'CWE', NULL, '["buffer", "copy", "without", "size", "check"]', 74, '2025-12-09 16:55:01.723185');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (17, 'CWE‑327: Use of a Broken or Risky Cryptographic Algorithm', 'CWE-327', 'CWE', NULL, '["use", "broken", "risky", "cryptographic", "algorithm"]', 4, '2025-12-09 16:55:01.729931');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (18, 'CWE‑121: Stack‑Based Buffer Overflow (off‑by‑one)', 'CWE-121', 'CWE', NULL, '["stack", "based", "buffer", "overflow", "off", "one"]', 6, '2025-12-10 08:56:32.639383');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (19, 'CWE‑761: **Free of Memory Not on the Heap**', 'CWE-761', 'CWE', NULL, '["free", "memory", "not", "heap"]', 4, '2025-12-10 09:02:24.771805');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (20, 'CWE‑191: Integer Underflow (Wrap‑around)', 'CWE-191', 'CWE', NULL, '["integer", "underflow", "wrap", "around"]', 5, '2025-12-10 09:16:58.672139');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (21, 'CWE‑287: Improper Authentication', 'CWE-287', 'CWE', NULL, '["improper", "authentication"]', 1, '2025-12-10 11:56:42.250656');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (22, 'CWE‑362: **Concurrent Execution using Shared Resource without Proper Synchronization**', 'CWE-362', 'CWE', NULL, '["concurrent", "execution", "using", "shared", "resource", "without", "proper", "synchronization"]', 17, '2025-12-10 12:11:10.103319');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (23, 'CWE131: Incorrect Calculation of Buffer Size', NULL, NULL, NULL, '["cwe131", "incorrect", "calculation", "buffer", "size"]', 3, '2025-12-10 12:14:35.957214');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (24, 'CWE‑367: Time‑of‑Check‑to‑Time‑of‑Use (TOCTOU) Race Condition', 'CWE-367', 'CWE', NULL, '["time", "check", "time", "use", "toctou", "race", "condition"]', 2, '2025-12-10 12:49:05.951108');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (25, 'CWE‑200*: Exposure of Sensitive Information to an Unauthorized Actor', 'CWE-200', 'CWE', NULL, '["exposure", "sensitive", "information", "unauthorized", "actor"]', 4, '2025-12-10 12:49:05.956899');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (26, 'CWE‑400: Uncontrolled Resource Consumption (Denial‑of‑Service)', 'CWE-400', 'CWE', NULL, '["uncontrolled", "resource", "consumption", "denial", "service"]', 2, '2025-12-10 13:55:46.485439');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (27, 'CWE‑306: Missing Authentication', 'CWE-306', 'CWE', NULL, '["missing", "authentication"]', 4, '2025-12-10 22:25:00.454397');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (28, 'CWE‑789: Uncontrolled Memory Allocation', 'CWE-789', 'CWE', NULL, '["uncontrolled", "memory", "allocation"]', 1, '2025-12-10 22:33:10.920317');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (29, 'CWE‑590: **Free of Invalid Pointer**', 'CWE-590', 'CWE', NULL, '["free", "invalid", "pointer"]', 2, '2025-12-10 22:35:49.079362');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (30, 'CWE‑610: Externally Controlled Reference to a Resource in Another Sphere', 'CWE-610', 'CWE', NULL, '["externally", "controlled", "reference", "resource", "another", "sphere"]', 1, '2025-12-11 12:39:59.865003');
+INSERT INTO vulnerability_categories (id, name, cwe_id, short_name, description, keywords, usage_count, created_at) VALUES (31, 'CWE‑494: **Download of Code Without Integrity Check**', 'CWE-494', 'CWE', NULL, '["download", "code", "without", "integrity", "check"]', 1, '2025-12-11 12:42:50.141471');
 
-Claim: {claim}
+-- Table: tuning_prompt_templates (31 rows)
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (19, 'v19_skeptic', 'Imported from test_library (format variant v19_skeptic)', 'You are verifying a potential security vulnerability.
 
-Vote: FALSE_POSITIVE | REAL | NEEDS_VERIFIED | WEAKNESS
-Confidence: 0-100
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (10, 'v2_verdict_first', 'Imported from test_library (format variant v2_verdict_first)', 'Vote on this claim.
+File: {file_path}
+Language: {language}
 
-Options: FALSE_POSITIVE (safe) | REAL (exploitable) | NEEDS_VERIFIED (unclear) | WEAKNESS (not exploitable)
-
-Claim: {claim}
-
-Code:
-```c
-{code}
-```
-
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (11, 'v3_numbered', 'Imported from test_library (format variant v3_numbered)', '1. CLAIM
-{claim}
-
-2. CODE
-```c
-{code}
-```
-
-3. VERDICT
-Vote: [FALSE_POSITIVE|REAL|NEEDS_VERIFIED|WEAKNESS]
-Confidence: [0-100]
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (12, 'v4_question', 'Imported from test_library (format variant v4_question)', 'Is this a vulnerability?
-
-Claim: {claim}
-
-Code:
-```c
-{code}
-```
-
-Vote: FALSE_POSITIVE | REAL | NEEDS_VERIFIED | WEAKNESS
-Confidence: 0-100
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (13, 'v5_checklist', 'Imported from test_library (format variant v5_checklist)', 'Code:
-```c
-{code}
-```
-
-Claim: {claim}
-
-Checklist:
-□ Vulnerability exists?
-□ Exploitable?
-□ Mitigations?
-
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (14, 'v6_expert', 'Imported from test_library (format variant v6_expert)', 'You are a UEFI security expert.
-
-Code:
-```c
-{code}
-```
-
-Claim: {claim}
-
-Expert assessment:
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (15, 'v7_minimal', 'Imported from test_library (format variant v7_minimal)', 'Code:
-```c
-{code}
-```
-
-Claim: {claim}
-
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (16, 'v8_context_last', 'Imported from test_library (format variant v8_context_last)', 'Review this code.
-
-Vote options: FALSE_POSITIVE | REAL | NEEDS_VERIFIED | WEAKNESS
-
-```c
-{code}
-```
-
-Claim: {claim}
-
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (17, 'v9_bullets', 'Imported from test_library (format variant v9_bullets)', 'Vulnerability Report:
-
-• Issue: {issue}
-• File: {file}
-• Claim: {claim}
-
-Code:
-```c
-{code}
-```
-
-Analysis:
-• Vote: [FALSE_POSITIVE|REAL|NEEDS_VERIFIED|WEAKNESS]
-• Confidence: [0-100]
-• Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (18, 'v10_table', 'Imported from test_library (format variant v10_table)', '| Field | Value |
-|-------|-------|
-| Issue | {issue} |
-| File | {file} |
-| Claim | {claim} |
-
-Code:
-```c
-{code}
-```
-
-Verdict:
-| Vote | |
-| Confidence | |
-| Reasoning | |', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (19, 'v11_socratic', 'Imported from test_library (format variant v11_socratic)', 'Code:
-```c
-{code}
-```
-
-Claim: {claim}
-
-Questions:
-1. Where is the issue?
-2. What triggers it?
-3. Can attacker control it?
-4. What''s the impact?
-5. Any protections?
-
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (20, 'v12_redteam', 'Imported from test_library (format variant v12_redteam)', 'RED TEAM: Try to exploit this.
-
-```c
-{code}
-```
-
-Claim: {claim}
-
-If exploitable → REAL
-If safe → FALSE_POSITIVE
-If unclear → NEEDS_VERIFIED
-If bad code but safe → WEAKNESS
-
-Vote:
-Confidence:
-Attack:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (21, 'v13_diff', 'Imported from test_library (format variant v13_diff)', '--- Scanner View ---
-VULNERABLE: {claim}
-
---- Actual Code ---
-```c
-{code}
-```
-
---- Analysis ---
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (22, 'v14_emoji', 'Imported from test_library (format variant v14_emoji)', '🔍 SECURITY ANALYSIS
-
-📄 Code:
-```c
-{code}
-```
-
-⚠️ Alert: {claim}
-
-🤔 Assessment:
-• Vote:
-• Confidence:
-• Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (23, 'v15_json', 'Imported from test_library (format variant v15_json)', '{{
-  "code": "{code}",
-  "claim": "{claim}",
-  "analysis": {{
-    "vote": "",
-    "confidence": 0,
-    "reasoning": ""
-  }}
-}}', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (24, 'v16_markdown', 'Imported from test_library (format variant v16_markdown)', '# Vulnerability Assessment
-
-## Code
-```c
-{code}
-```
-
-## Claim
-{claim}
-
-## Analysis
-
-### Vote
-[FALSE_POSITIVE|REAL|NEEDS_VERIFIED|WEAKNESS]
-
-### Confidence
-[0-100]
-
-### Reasoning
-', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (25, 'v17_xml', 'Imported from test_library (format variant v17_xml)', '<analysis>
-  <code>{code}</code>
-  <claim>{claim}</claim>
-  <verdict>
-    <vote></vote>
-    <confidence></confidence>
-    <reasoning></reasoning>
-  </verdict>
-</analysis>', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (26, 'v18_prose', 'Imported from test_library (format variant v18_prose)', 'Review this code and claim.
-
-Code: {code}
-
-Claim: {claim}
-
-Provide your assessment with vote (FALSE_POSITIVE/REAL/NEEDS_VERIFIED/WEAKNESS), confidence (0-100), and detailed reasoning.', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (27, 'v19_skeptic', 'Imported from test_library (format variant v19_skeptic)', 'SKEPTICAL REVIEW: Assume scanner is wrong.
-
-Code:
-```c
-{code}
-```
-
-Claim: {claim}
-
-Find reasons this is FALSE_POSITIVE. Only vote REAL if you can''t dismiss it.
-
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (28, 'v20_stepwise', 'Imported from test_library (format variant v20_stepwise)', 'Step-by-step analysis.
-
-Code:
-```c
-{code}
-```
-
-Claim: {claim}
-
-Step 1: What does code do?
-Step 2: Where is alleged vulnerability?
-Step 3: Is it exploitable?
-Step 4: Mitigations?
-
-Conclusion:
-Vote:
-Confidence:
-Reasoning:', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (29, 'v21_chain_of_thought', 'Imported from test_library (format variant v21_chain_of_thought)', 'You are a senior security researcher. Verify this finding.
-
-=== FINDING ===
-Title: {claim}
-File: {file}
-Issue: {issue}
-
-=== CODE ===
+Code context:
 ```{language}
-{code}
+{code_snippet}
 ```
 
-=== INSTRUCTIONS ===
-1. Analyze the data flow from input to sink.
-2. Check for validation or sanitization in the context.
-3. Determine if this is a FALSE POSITIVE (safe), WEAKNESS (bad practice but not exploitable), or REAL (exploitable).
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
 
-Thinking Process:
+SKEPTICAL ANALYST INSTRUCTIONS:
+Assume the scanner is WRONG. Your job is to find reasons this is FALSE_POSITIVE. Only vote VERIFY if you absolutely cannot dismiss it.
+
+Look for:
+- Bounds checks the scanner missed
+- Validation logic elsewhere in the codebase
+- Type constraints that prevent exploitation
+- Logic that makes the attack path impossible
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Your analysis focusing on why this is likely a false positive]
+*END_VERIFIED', '2025-12-10 14:33:45.272115', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (21, 'v21_chain_of_thought', 'Imported from test_library (format variant v21_chain_of_thought)', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+CHAIN-OF-THOUGHT ANALYSIS INSTRUCTIONS:
+You are a senior security researcher. Perform a methodical, step-by-step analysis:
+
+1. Analyze the data flow from input to sink
+2. Check for validation or sanitization in the context
+3. Determine if this is exploitable
+
+Use structured thinking:
 <thinking>
-[Analyze the code step-by-step here]
+[Analyze the code step-by-step here, examining each assumption]
 </thinking>
 
-=== VERDICT ===
-*VOTE: [REAL / FALSE_POSITIVE / WEAKNESS]
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
 *CONFIDENCE: [0-100]
-*REASONING: [Summary of your analysis]', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (30, 'v22_adversarial_expert', 'Imported from test_library (format variant v22_adversarial_expert)', 'You are an offensive security expert. Your goal is to prove this code is EXPLOITABLE.
+*REASONING: [Summary of your step-by-step analysis]
+*END_VERIFIED', '2025-12-11 22:20:18', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (22, 'v22_adversarial_expert', 'Imported from test_library (format variant v22_adversarial_expert)', 'You are verifying a potential security vulnerability.
 
-Target: {file}
-Vulnerability Claim: {claim}
+File: {file_path}
+Language: {language}
 
-Code:
+Code context:
+```{language}
+{code_snippet}
 ```
-{code}
-```
 
-=== MISSION ===
-Try to construct a valid attack scenario.
-- If you can prove an exploit path exists -> VOTE REAL.
-- If the code prevents exploitation (bounds checks, types, logic) -> VOTE FALSE_POSITIVE.
-- If it''s theoretically bad but you can''t exploit it -> VOTE WEAKNESS.
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
 
-=== OUTPUT ===
-*ATTACK_SCENARIO: [Describe how you would exploit this, or why you failed]
-*VOTE: [REAL / FALSE_POSITIVE / WEAKNESS]
+ADVERSARIAL EXPERT INSTRUCTIONS:
+You are an offensive security expert. Your goal is to prove this code is EXPLOITABLE. Try to construct a valid attack scenario.
+
+MISSION:
+- If you can prove an exploit path exists -> VOTE VERIFY
+- If the code prevents exploitation (bounds checks, types, logic) -> VOTE REJECT
+
+Construct the attack:
+1. What input do you control?
+2. How does it reach the vulnerable code?
+3. What exploitation primitives exist?
+4. Can you bypass protections?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
 *CONFIDENCE: [0-100]
-*REASONING: [Explain your verdict]', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (31, 'v23_maintainer_review', 'Imported from test_library (format variant v23_maintainer_review)', 'You are the maintainer of this repository. A static analysis tool flagged this code.
+*REASONING: [Describe your attack scenario or why exploitation failed]
+*END_VERIFIED', '2025-12-11 22:20:18', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (24, 'v24_data_flow_analysis', 'Imported from test_library (format variant v24_data_flow_analysis)', 'You are verifying a potential security vulnerability.
 
-File: {file}
-Flagged Issue: {issue}
+File: {file_path}
+Language: {language}
 
-Code:
+Code context:
+```{language}
+{code_snippet}
 ```
-{code}
-```
 
-Would you block this Pull Request?
-- YES (Critical vulnerability) -> REAL
-- MAYBE (Bad practice/Clean up needed) -> WEAKNESS
-- NO (This is fine/False alarm) -> FALSE_POSITIVE
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
 
-*VOTE: [REAL / FALSE_POSITIVE / WEAKNESS]
+DATA FLOW ANALYSIS INSTRUCTIONS:
+Perform a systematic data flow analysis:
+
+1. Identify the Source (where input comes from)
+2. Identify the Sink (dangerous function at line {finding_line})
+3. Check all intermediate steps for Sanitization or Validation
+
+If Source -> Sink exists without proper validation -> VERIFY
+Otherwise -> REJECT
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
 *CONFIDENCE: [0-100]
-*REASONING: [Explanation for the contributor]', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (32, 'v24_data_flow_analysis', 'Imported from test_library (format variant v24_data_flow_analysis)', 'Perform a Data Flow Analysis to verify this vulnerability.
+*REASONING: [Describe the complete data path and validation checks]
+*END_VERIFIED', '2025-12-11 22:20:18', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (25, 'linus_torvalds', 'Brutally skeptical kernel maintainer persona - hates false positives', 'You are verifying a potential security vulnerability.
 
-Claim: {claim}
+File: {file_path}
+Language: {language}
 
-Code:
+Code context:
+```{language}
+{code_snippet}
 ```
-{code}
-```
 
-Trace the data:
-1. Identify the Source (where input comes from).
-2. Identify the Sink (dangerous function).
-3. Check all intermediate steps for Sanitization or Validation.
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
 
-If Source -> Sink exists without Validation -> REAL.
-Otherwise -> FALSE_POSITIVE.
+LINUS TORVALDS MODE:
+You are Linus Torvalds reviewing a security scanner report. You HATE false positives and incompetent security researchers who don''t understand how code actually works.
 
-*VOTE: [REAL / FALSE_POSITIVE / WEAKNESS]
+Tear their analysis apart if they''re wrong. Call out any misunderstanding of basic programming concepts. Only admit it''s real if you absolutely cannot refute it.
+
+Question everything:
+- Did they understand the data types?
+- Did they check the caller''s context?
+- Are they confusing theoretical with practical?
+- Do they even know how this language works?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (if undeniably real) or REJECT (if bullshit)
 *CONFIDENCE: [0-100]
-*REASONING: [Describe the data path]', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (33, 'v25_security_standards', 'Imported from test_library (format variant v25_security_standards)', 'Evaluate this finding against standard security guidelines (OWASP, CWE).
+*REASONING: [Your brutal assessment]
+*END_VERIFIED', '2025-12-11T21:30:54.647956', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (26, 'skeptical_ciso', 'CISO tired of false positives wasting engineering time', 'You are verifying a potential security vulnerability.
 
-Issue: {issue}
-Claim: {claim}
+File: {file_path}
+Language: {language}
 
-Code:
+Code context:
+```{language}
+{code_snippet}
 ```
-{code}
-```
 
-Does this code violate specific security standards in an exploitable way?
-Cite the specific CWE or mechanism that allows exploitation.
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
 
-*VOTE: [REAL / FALSE_POSITIVE / WEAKNESS]
+SKEPTICAL CISO INSTRUCTIONS:
+You''re a CISO who''s sick of vulnerability scanners crying wolf. Your team wastes 100 hours/month on false positives from automated tools.
+
+Economic reality:
+- False positive cost: $5,000 in wasted engineering time
+- Missed real vulnerability cost: $50,000+ in breach
+- Your reputation depends on accuracy
+
+Verify with extreme prejudice. Assume it''s wrong unless the evidence is undeniable. Your job is on the line if you waste more developer time on garbage.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
 *CONFIDENCE: [0-100]
-*REASONING: [Technical analysis citing standards]', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (34, 'v26_strict_json', 'Imported from test_library (format variant v26_strict_json)', 'Analyze this code for vulnerabilities.
+*REASONING: [Business-focused analysis of real vs theoretical risk]
+*END_VERIFIED', '2025-12-11T21:30:54.648014', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (27, 'exploit_developer', 'Professional exploit developer - needs concrete exploit path', 'You are verifying a potential security vulnerability.
 
-Issue: {issue}
-Code:
-```
-{code}
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
 ```
 
-Return ONLY a JSON object. No markdown, no prose.
-{{
-  "vote": "REAL" | "FALSE_POSITIVE" | "WEAKNESS",
-  "confidence": 0-100,
-  "reasoning": "string"
-}}', '2025-12-11 21:42:59', NULL);
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+EXPLOIT DEVELOPER INSTRUCTIONS:
+You''re a professional exploit developer. Someone will pay you $50,000 if you can write a working exploit for this vulnerability. But if you claim it''s real and can''t deliver, you lose your reputation forever.
+
+Can you ACTUALLY exploit this? Think through the concrete attack:
+1. What input do you control?
+2. How does it reach the vulnerable operation?
+3. What are the exact exploitation primitives?
+4. What mitigations must you bypass?
+
+If you can''t write the exploit code, it''s not real.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (with exploit path) or REJECT (can''t exploit)
+*CONFIDENCE: [0-100]
+*REASONING: [Concrete exploitation analysis with specific attack steps]
+*END_VERIFIED', '2025-12-11T21:30:54.648023', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (28, 'bug_bounty_hunter', 'Bug bounty hunter evaluating if finding would be accepted', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+BUG BOUNTY HUNTER INSTRUCTIONS:
+You''re evaluating this finding. Would it get accepted and paid out? Or would it be closed as "informative" or "duplicate"?
+
+Bug bounty programs reject:
+- Theoretical vulnerabilities without proof
+- Findings without real-world impact
+- Issues requiring unrealistic preconditions
+- Low-quality reports without PoC
+
+They accept:
+- Clear exploitation path
+- Concrete security impact
+- Working proof of concept
+- Realistic attack scenarios
+
+Would you submit this? Would it get paid?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (would submit) or REJECT (would not submit)
+*CONFIDENCE: [0-100]
+*REASONING: [Bug bounty evaluation]
+*END_VERIFIED', '2025-12-11T21:30:54.648033', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (29, 'poc_required', 'Requires working proof-of-concept code or rejection', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+POC REQUIRED INSTRUCTIONS:
+You must either write WORKING exploit code that demonstrates exploitation, OR prove mathematically/logically why exploitation is IMPOSSIBLE.
+
+No middle ground. "Might be vulnerable" = REJECT.
+
+If VERIFY, show:
+1. Exact input that triggers the vulnerability
+2. Precise code path from input to vulnerable operation
+3. Working exploit or detailed exploitation steps
+4. Why existing protections don''t prevent this
+
+If REJECT, show:
+1. Why the attack path is blocked
+2. What protections prevent exploitation
+3. Why the scanner''s analysis is wrong
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Concrete proof - code or logic]
+*END_VERIFIED', '2025-12-11T21:30:54.648040', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (30, 'defense_attorney', 'Defense attorney defending the code against accusations', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+DEFENSE ATTORNEY INSTRUCTIONS:
+You are the defense attorney for this code. The prosecution (scanner) claims it''s vulnerable. Your job is to defend it.
+
+Build your defense:
+- Are there bounds checks the scanner missed?
+- Are there validations earlier in the call chain?
+- Does the data flow actually work as claimed?
+- Are there mitigations in place?
+- Is the attack scenario realistic?
+
+Only plead guilty (VERIFY) if you cannot mount a defense. If you have ANY reasonable doubt, fight it (REJECT).
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (guilty) or REJECT (not guilty)
+*CONFIDENCE: [0-100]
+*REASONING: [Defense arguments]
+*END_VERIFIED', '2025-12-11T21:30:54.648047', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (31, 'penetration_tester', 'Pentester planning real-world attack', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+PENETRATION TESTER INSTRUCTIONS:
+You''re a penetration tester. This was flagged during a code review. You have access to the running system. Can you exploit it in a real pentest?
+
+Pentest questions:
+1. What access do I need to trigger this?
+2. Can I reach this code path?
+3. What input do I control?
+4. What''s the actual impact if exploited?
+5. How much time would exploitation take?
+
+Be realistic. Don''t report findings you couldn''t exploit in a real engagement.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (exploitable in pentest) or REJECT (not exploitable)
+*CONFIDENCE: [0-100]
+*REASONING: [Practical exploitation assessment]
+*END_VERIFIED', '2025-12-11T21:30:54.648054', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (32, 'bayesian_analyst', 'Uses Bayesian reasoning and base rates', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+BAYESIAN ANALYST INSTRUCTIONS:
+Use Bayesian reasoning to evaluate this finding.
+
+Historical base rates:
+- 95% of "buffer overflow in parsing" flagged by scanners are FALSE_POSITIVE (bounds checked elsewhere)
+- 99% of "division by zero" are FALSE_POSITIVE (denominator validated)
+- 80% of "format string" are REAL (when user controls format)
+- 90% of "SQL injection" are REAL (when user input in query)
+
+Calculate P(real|evidence):
+1. Prior probability: What''s the base rate for {finding_type}?
+2. Likelihood: How strong is the evidence?
+3. Posterior: P(real|evidence) = ?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (if P(real|evidence) > 0.7) or REJECT
+*CONFIDENCE: [0-100 based on posterior probability]
+*REASONING: [Bayesian analysis with base rates]
+*END_VERIFIED', '2025-12-11T21:30:54.648062', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (33, 'show_me_the_fix', 'Must write exact fix or admit uncertainty', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+SHOW ME THE FIX INSTRUCTIONS:
+Before deciding if this is real, write the EXACT code patch that would fix it.
+
+Task:
+1. Write the specific fix (actual code, not pseudocode)
+2. Evaluate: Does the original code actually need this fix?
+
+If you can''t write a specific fix, you don''t understand the issue well enough.
+
+Rules:
+- No fix needed = REJECT
+- Fix is obvious and necessary = VERIFY
+- Can''t write concrete fix = REJECT (uncertain)
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Analysis with proposed fix code]
+*END_VERIFIED', '2025-12-11T21:30:54.648070', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (34, 'compiler_perspective', 'Think like a compiler - consider optimizations', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+COMPILER PERSPECTIVE INSTRUCTIONS:
+You are a C/C++ compiler (gcc -O2). Analyze this code from a compiler''s perspective.
+
+Compiler questions:
+1. How would YOU compile this code?
+2. What optimizations would you apply?
+3. Would your optimizations accidentally prevent the "vulnerability"?
+4. Are there undefined behaviors you''d exploit?
+5. Does the standard allow this to be optimized away?
+
+Consider: Compilers assume no undefined behavior. If the vulnerability requires UB, the compiler might optimize it away.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Compiler analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648077', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (35, 'time_boxed_exploitation', '30 seconds to find exploit path or reject', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+TIME-BOXED EXPLOITATION INSTRUCTIONS:
+You have 30 seconds of thinking to find a concrete exploit path. If you can''t trace user input to a dangerous operation in that time, a real attacker can''t either.
+
+Quick: What''s the attack?
+- Where''s the user input?
+- How does it reach this code?
+- What''s the dangerous operation?
+- What''s the impact?
+
+No time for theory - need concrete steps NOW.
+Can''t do it fast = REJECT.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (found attack path) or REJECT (no clear path)
+*CONFIDENCE: [0-100]
+*REASONING: [Quick exploitation analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648084', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (36, 'security_researcher', 'Academic security researcher - thorough and methodical', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+SECURITY RESEARCHER INSTRUCTIONS:
+You''re an academic security researcher reviewing this finding for a paper. Your reputation depends on accuracy.
+
+Research methodology:
+1. Threat Model: What attacker capabilities are required?
+2. Attack Surface: Can attackers reach this code?
+3. Data Flow: Trace input from source to sink
+4. Mitigations: What defenses exist?
+5. Exploitability: Can this be weaponized?
+6. Impact: Real-world consequences?
+
+Be thorough but rigorous. Don''t publish false claims.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Methodical research analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648091', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (37, 'red_team_operator', 'Red team operator - practical attacker mindset', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+RED TEAM OPERATOR INSTRUCTIONS:
+You''re a red team operator. This vulnerability was found during reconnaissance. Is it worth your time?
+
+Red team considerations:
+- Can I trigger this remotely?
+- What access level is required?
+- How noisy is exploitation?
+- What''s the detection risk?
+- Is there easier target?
+- What''s the real impact?
+
+You need reliable exploits, not maybes. Would you waste time on this?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (worth exploiting) or REJECT (not worth it)
+*CONFIDENCE: [0-100]
+*REASONING: [Red team assessment]
+*END_VERIFIED', '2025-12-11T21:30:54.648098', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (38, 'code_reviewer', 'Senior code reviewer with security focus', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+CODE REVIEWER INSTRUCTIONS:
+You''re a senior code reviewer. A junior developer flagged this as a security issue. Evaluate their concern.
+
+Review questions:
+- Is this actually vulnerable or just suspicious-looking?
+- Did they miss context (validation elsewhere)?
+- Is the attack scenario realistic?
+- Should this block the PR?
+
+Teach the junior: explain what''s real vs what looks scary but isn''t.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (real issue) or REJECT (false alarm)
+*CONFIDENCE: [0-100]
+*REASONING: [Code review feedback]
+*END_VERIFIED', '2025-12-11T21:30:54.648105', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (39, 'incident_responder', 'Incident responder evaluating post-breach', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+INCIDENT RESPONDER INSTRUCTIONS:
+You''re investigating a security breach. This code was flagged. Could this be the entry point?
+
+Incident questions:
+1. Could attackers have exploited this?
+2. What would the attack look like in logs?
+3. Is this consistent with observed IOCs?
+4. Should we patch this urgently?
+
+You need concrete answers for the executive team.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (likely attack vector) or REJECT (unlikely)
+*CONFIDENCE: [0-100]
+*REASONING: [Forensic analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648112', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (40, 'security_champion', 'Developer security champion balancing safety and velocity', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+SECURITY CHAMPION INSTRUCTIONS:
+You''re a security champion on the dev team. Balance security with delivery velocity.
+
+Questions:
+- Is this a real exploitable bug or theoretical?
+- Should we block the sprint for this?
+- What''s the actual risk vs effort to fix?
+- Is the scanner being paranoid?
+
+Be security-minded but pragmatic. Don''t cry wolf.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (block release) or REJECT (ship it)
+*CONFIDENCE: [0-100]
+*REASONING: [Risk-based decision]
+*END_VERIFIED', '2025-12-11T21:30:54.648119', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (41, 'kernel_developer', 'Kernel developer with deep systems knowledge', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+KERNEL DEVELOPER INSTRUCTIONS:
+You''re a Linux kernel developer reviewing this code. You understand memory management, concurrency, and hardware better than security scanners.
+
+Kernel developer perspective:
+- Are there implicit guarantees the scanner missed?
+- Does the kernel protect against this?
+- Is this pattern safe in kernel context?
+- Would this pass code review by maintainers?
+
+You''ve seen thousands of false positives from scanners that don''t understand kernel internals.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Kernel internals analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648126', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (42, 'zero_day_hunter', 'Zero-day researcher - high bar for ''vulnerability''', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+ZERO-DAY HUNTER INSTRUCTIONS:
+You''re a zero-day researcher. This was flagged by a scanner. Is it a real 0-day or script kiddie nonsense?
+
+Zero-day criteria:
+- Novel exploitation technique?
+- Bypasses current defenses?
+- Provides significant attacker value?
+- Not already widely known?
+
+You only care about high-value findings. Is this actually exploitable in a way that matters?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (real 0-day potential) or REJECT (known issue/not exploitable)
+*CONFIDENCE: [0-100]
+*REASONING: [Vulnerability research analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648133', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (43, 'firmware_engineer', 'Firmware engineer understanding embedded constraints', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+FIRMWARE ENGINEER INSTRUCTIONS:
+You''re a firmware engineer. This code runs in a constrained embedded environment. Context matters.
+
+Firmware context:
+- No network access? Attack surface is limited
+- Input from trusted sources only?
+- Hardware enforces protections?
+- Boot-time validation prevents this?
+
+Desktop security scanners often misunderstand firmware threat models.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Firmware-specific analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648140', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (44, 'appsec_engineer', 'AppSec engineer focused on realistic attack scenarios', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+APPSEC ENGINEER INSTRUCTIONS:
+You''re an application security engineer. Evaluate this finding for your security backlog.
+
+AppSec triage:
+- Can this be exploited remotely?
+- Does it require authentication?
+- What''s the actual business impact?
+- How likely is exploitation?
+- What''s the fix complexity?
+
+Prioritize based on real risk, not theoretical severity.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (add to backlog) or REJECT (close as false positive)
+*CONFIDENCE: [0-100]
+*REASONING: [AppSec triage analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648147', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (45, 'contrarian_committee', 'Three experts arguing - Alice (skeptic), Bob (domain expert), Carol (objective)', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+CONTRARIAN COMMITTEE INSTRUCTIONS:
+You are three security experts reviewing this finding:
+
+Alice (The Skeptic): Believes ALL scanner findings are false positives until proven otherwise. Argue against this being real.
+
+Bob (Domain Expert): Believes {finding_type} vulnerabilities are NEVER exploitable in practice. Explain why scanners always get this type wrong.
+
+Carol (You): Try to be objective. Can you defend this finding against Alice and Bob''s attacks?
+
+If Alice and Bob make good points you can''t refute, vote REJECT.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (defended successfully) or REJECT (can''t defend)
+*CONFIDENCE: [0-100]
+*REASONING: [Committee discussion summary]
+*END_VERIFIED', '2025-12-11T21:30:54.648153', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (46, 'threat_modeler', 'Threat modeling expert using STRIDE framework', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+THREAT MODELER INSTRUCTIONS:
+You''re a threat modeling expert. Evaluate this finding using STRIDE methodology.
+
+STRIDE analysis:
+- Spoofing: Can attacker impersonate?
+- Tampering: Can attacker modify data?
+- Repudiation: Can actions be denied?
+- Information Disclosure: Can data leak?
+- Denial of Service: Can availability be impacted?
+- Elevation of Privilege: Can permissions be escalated?
+
+Which threats apply? What''s the attack path? What mitigations exist?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [STRIDE-based threat analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648161', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (47, 'forensic_analyst', 'Digital forensics expert looking for evidence', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+FORENSIC ANALYST INSTRUCTIONS:
+You''re a forensic analyst. If this vulnerability was exploited, what evidence would exist?
+
+Forensic questions:
+- What logs would capture exploitation?
+- What artifacts would be left?
+- Could we detect this in production?
+- Is exploitation stealthy or noisy?
+
+If exploitation would be undetectable, it''s either not real or the impact is minimal.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Forensic analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648168', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (48, 'ctf_player', 'CTF player - knows exploitation tricks and edge cases', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+CTF PLAYER INSTRUCTIONS:
+You''re a CTF player. This looks like a challenge. Can you get the flag?
+
+CTF mindset:
+- What''s the intended solution?
+- Are there unintended side channels?
+- Can I leverage edge cases?
+- What are the exploitation primitives?
+
+In CTFs, the vulnerability is always real. In production, most flags are fake.
+
+Is this a real vuln or CTF-only?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (real exploit) or REJECT (CTF-only/not real)
+*CONFIDENCE: [0-100]
+*REASONING: [CTF analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648175', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (49, 'compliance_auditor', 'Compliance auditor focused on standards violations', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+COMPLIANCE AUDITOR INSTRUCTIONS:
+You''re a compliance auditor checking against security standards (CWE, OWASP, CERT).
+
+Compliance questions:
+- Does this violate CWE/CERT/OWASP guidelines?
+- Is this a compliance requirement or best practice?
+- Would this fail a security audit?
+- What''s the regulatory impact?
+
+Distinguish between:
+- Compliance violations (must fix)
+- Security risks (should fix)
+- Code smells (nice to fix)
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (compliance violation) or REJECT (compliant)
+*CONFIDENCE: [0-100]
+*REASONING: [Compliance analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648182', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (50, 'debugger_session', 'Walking through exploitation in a debugger', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+DEBUGGER SESSION INSTRUCTIONS:
+You''re debugging this code with GDB. Can you prove exploitation?
+
+GDB session plan:
+1. Where would you set breakpoint?
+2. What input would you provide?
+3. What would you inspect in memory?
+4. Can you show the vulnerability triggering?
+
+Write the GDB commands that would demonstrate the exploit. If you can''t write a concrete debug session showing exploitation, it''s not real.
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY (can demonstrate in GDB) or REJECT (cannot)
+*CONFIDENCE: [0-100]
+*REASONING: [GDB session walkthrough]
+*END_VERIFIED', '2025-12-11T21:30:54.648189', '2025-12-12 06:16:07');
+INSERT INTO tuning_prompt_templates (id, name, description, template, created_at, updated_at) VALUES (51, 'secure_coding_expert', 'Secure coding expert knowing common false positive patterns', 'You are verifying a potential security vulnerability.
+
+File: {file_path}
+Language: {language}
+
+Code context:
+```{language}
+{code_snippet}
+```
+
+Reported vulnerability:
+- Title: {finding_title}
+- Type: {finding_type}
+- Severity: {finding_severity}
+- Line: {finding_line}
+- Reason: {finding_reason}
+
+SECURE CODING EXPERT INSTRUCTIONS:
+You''re a secure coding expert. You''ve reviewed thousands of scanner outputs. You know the common false positive patterns.
+
+Common false positive patterns:
+- Scanners miss bounds checks in caller functions
+- Scanners don''t understand validation logic
+- Scanners flag safe patterns that look scary
+- Scanners don''t track data flow accurately
+
+Common true positive patterns:
+- User input directly in dangerous function
+- Missing validation before sensitive operation
+- TOCTOU (time-of-check-time-of-use) bugs
+- Logic errors in security checks
+
+Which pattern does this match?
+
+=== OUTPUT FORMAT ===
+*VOTE: VERIFY or REJECT
+*CONFIDENCE: [0-100]
+*REASONING: [Pattern recognition analysis]
+*END_VERIFIED', '2025-12-11T21:30:54.648196', '2025-12-12 06:16:07');
 
 -- Table: tuning_test_cases (13 rows)
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (1, '221_integer_overflow', 'FALSE_POSITIVE', NULL, 'Integer Overflow in ROM Size Calculation', 'BootManagerDxe/Legacy.c:4450', 'ImageSize = ((EFI_LEGACY_EXPANSION_ROM_HEADER *)LocalRomImage)->Size512 * 512;
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (1, '221_integer_overflow', 'FALSE_POSITIVE', 'Integer Overflow in ROM Size Calculation', 'BootManagerDxe/Legacy.c:4450', 'ImageSize = ((EFI_LEGACY_EXPANSION_ROM_HEADER *)LocalRomImage)->Size512 * 512;
 Status = (gBS->AllocatePages)(AllocateMaxAddress, EfiBootServicesCode, EFI_SIZE_TO_PAGES(ImageSize), &PhysicalAddress);
 if (EFI_ERROR(Status)) { return EFI_OUT_OF_RESOURCES; }
-CopyMem((VOID *)PhysicalAddress, LocalRomImage, ImageSize);', 'Size512 is 16-bit; multiplying by 512 can overflow 32-bit UINTN, causing smaller ImageSize and buffer overflow', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (2, '213_nvram_size', 'REAL', NULL, 'Missing size validation for NVRAM variable', 'BootManagerDxe/BootManager.c:1791', 'SctLibGetVariable(PBA_STATUS_VAR_NAME, &PbaStatusVarGuid, &Attributes, &VarSize, (VOID**)&PbaStatusVar);
+CopyMem((VOID *)PhysicalAddress, LocalRomImage, ImageSize);', 'Size512 is 16-bit; multiplying by 512 can overflow 32-bit UINTN, causing smaller ImageSize and buffer overflow', '2025-12-10 14:33:45.287323', NULL, NULL, 'Integer Overflow in ROM Size Calculation', 'Integer Overflow in ROM Size Calculation', NULL, NULL, 'ImageSize = ((EFI_LEGACY_EXPANSION_ROM_HEADER *)LocalRomImage)->Size512 * 512;
+Status = (gBS->AllocatePages)(AllocateMaxAddress, EfiBootServicesCode, EFI_SIZE_TO_PAGES(ImageSize), &PhysicalAddress);
+if (EFI_ERROR(Status)) { return EFI_OUT_OF_RESOURCES; }
+CopyMem((VOID *)PhysicalAddress, LocalRomImage, ImageSize);', 'Size512 is 16-bit; multiplying by 512 can overflow 32-bit UINTN, causing smaller ImageSize and buffer overflow', 'BootManagerDxe/Legacy.c:4450', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (2, '213_nvram_size', 'REAL', 'Missing size validation for NVRAM variable', 'BootManagerDxe/BootManager.c:1791', 'SctLibGetVariable(PBA_STATUS_VAR_NAME, &PbaStatusVarGuid, &Attributes, &VarSize, (VOID**)&PbaStatusVar);
 if (EFI_ERROR(Status) || VarSize == 0) { return SCT_STATUS_INVALID_DATA; }
-if (PbaStatusVar->IdentifyOnBoot != 0) { UPDATE_HOTKEY_STATES(mTextInEx); }', 'Checks VarSize != 0 but doesn''t verify VarSize >= sizeof(PBA_STATUS_VAR) before dereferencing', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (3, '215_osindications', 'REAL', NULL, 'Missing UINT64 size check', 'BootManagerDxe/BootManager.c:1972', 'SctLibGetVariable(L"OsIndications", &gEfiGlobalVariableGuid, NULL, &DataSize, (VOID **)&OsIndications);
+if (PbaStatusVar->IdentifyOnBoot != 0) { UPDATE_HOTKEY_STATES(mTextInEx); }', 'Checks VarSize != 0 but doesn''t verify VarSize >= sizeof(PBA_STATUS_VAR) before dereferencing', '2025-12-10 14:33:45.287346', NULL, NULL, 'Missing size validation for NVRAM variable', 'Missing size validation for NVRAM variable', NULL, NULL, 'SctLibGetVariable(PBA_STATUS_VAR_NAME, &PbaStatusVarGuid, &Attributes, &VarSize, (VOID**)&PbaStatusVar);
+if (EFI_ERROR(Status) || VarSize == 0) { return SCT_STATUS_INVALID_DATA; }
+if (PbaStatusVar->IdentifyOnBoot != 0) { UPDATE_HOTKEY_STATES(mTextInEx); }', 'Checks VarSize != 0 but doesn''t verify VarSize >= sizeof(PBA_STATUS_VAR) before dereferencing', 'BootManagerDxe/BootManager.c:1791', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (3, '215_osindications', 'REAL', 'Missing UINT64 size check', 'BootManagerDxe/BootManager.c:1972', 'SctLibGetVariable(L"OsIndications", &gEfiGlobalVariableGuid, NULL, &DataSize, (VOID **)&OsIndications);
 if (!EFI_ERROR(Status)) {
   if (*OsIndications & EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED) {
     *OsIndications &= ~EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED;
   }
-}', 'Assumes OsIndications is UINT64 but never verifies DataSize == sizeof(UINT64)', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (4, '211_bootnext', 'REAL', NULL, 'Missing BootNext variable size validation', 'BootManagerDxe/BootManager.c:1279', 'Status = GetBootOption(*BootNextValue, &Option);
-if (EFI_ERROR(Status) || Option == NULL) { /* error */ }', 'Assumes BootNext contains UINT16 without size confirmation', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (5, '216_null_deref', 'REAL', NULL, 'Null pointer dereference in array sorting', 'BootManagerDxe/BootManager.c:4138', 'for (i = HandleCount - 1; i > 0; i--) {
+}', 'Assumes OsIndications is UINT64 but never verifies DataSize == sizeof(UINT64)', '2025-12-10 14:33:45.287349', NULL, NULL, 'Missing UINT64 size check', 'Missing UINT64 size check', NULL, NULL, 'SctLibGetVariable(L"OsIndications", &gEfiGlobalVariableGuid, NULL, &DataSize, (VOID **)&OsIndications);
+if (!EFI_ERROR(Status)) {
+  if (*OsIndications & EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED) {
+    *OsIndications &= ~EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED;
+  }
+}', 'Assumes OsIndications is UINT64 but never verifies DataSize == sizeof(UINT64)', 'BootManagerDxe/BootManager.c:1972', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (4, '211_bootnext', 'REAL', 'Missing BootNext variable size validation', 'BootManagerDxe/BootManager.c:1279', 'Status = GetBootOption(*BootNextValue, &Option);
+if (EFI_ERROR(Status) || Option == NULL) { /* error */ }', 'Assumes BootNext contains UINT16 without size confirmation', '2025-12-10 14:33:45.287353', NULL, NULL, 'Missing BootNext variable size validation', 'Missing BootNext variable size validation', NULL, NULL, 'Status = GetBootOption(*BootNextValue, &Option);
+if (EFI_ERROR(Status) || Option == NULL) { /* error */ }', 'Assumes BootNext contains UINT16 without size confirmation', 'BootManagerDxe/BootManager.c:1279', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (5, '216_null_deref', 'REAL', 'Null pointer dereference in array sorting', 'BootManagerDxe/BootManager.c:4138', 'for (i = HandleCount - 1; i > 0; i--) {
   for (j = 0; j < i; j++) {
     if ((ImagePackage[j])->ZValue > (ImagePackage[j + 1])->ZValue) {
       Temp = ImagePackage[j]; ImagePackage[j] = ImagePackage[j + 1]; ImagePackage[j + 1] = Temp;
     }
   }
-}', 'ImagePackage[j] may be NULL if OpenProtocol failed; no null-check before dereference', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (6, '218_uninit_ptr', 'REAL', NULL, 'Uninitialized function pointer', 'BootManagerDxe/BootManager.c:192', 'return Item->mOldPciIoAttributes(This, Operation, Attributes, Result);', 'mOldPciIoAttributes only initialized conditionally; may be uninitialized when invoked', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (7, '220_ide_overflow', 'REAL', NULL, 'Array index overflow', 'BootManagerDxe/Legacy.c:1366', 'IbvBbs->IdeDiskInfo[IdeInfo].DiskInfoDeviceType = BBS_IDE_HDD_DEVICE_TYPE;', 'IdeInfo incremented without bounds check against IdeDiskInfo array size', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (8, '223_hdd_oob', 'REAL', NULL, 'Out-of-bounds array access', 'BootManagerDxe/Legacy.c:1665', 'if (((HddInfo[HddInfoIndex].Status & HDD_PRIMARY) != 0) ...) { ... }', 'HddInfoIndex from BbsOrder without bounds checking', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (9, '230_smi_null', 'REAL', NULL, 'NULL pointer dereference', 'BootManagerDxe/Legacy.c:4193', 'Status = SwSmiAllocator->QuerySwSmi(&mCsmSwSmiGuidArray[SCT_CSM_LEGACY_USB_BY_IRQ], &CsmSwSmiInputValue);', 'SwSmiAllocator may be NULL if protocol lookup fails', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (10, '232_bbs_overflow', 'REAL', NULL, 'Out-of-bounds write to BbsTable', 'BootManagerDxe/Legacy.c:5338', 'BbsTableDevicePaths[i] = DuplicateDevicePath(DevicePath);
-BbsTable[i].BootPriority = BBS_UNPRIORITIZED_ENTRY;', 'Index i equals BbsCount, allowing writes past allocated tables', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (11, '233_buffer_index', 'REAL', NULL, 'Unchecked buffer indexing', 'BootManagerDxe/Legacy.c:5486', 'if (BbsTableDevicePaths[Buffer[Index]] != NULL) { ... }', 'Buffer[Index] used without bounds verification', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (12, '234_int_overflow', 'REAL', NULL, 'Integer overflow in size calculation', 'BootManagerDxe/BootManager.c:5939', '*OptionalDataLength += (UINT32)GetDevicePathSize(*DevicePath);', 'Adding large value without overflow check may wrap size', '2025-12-11 21:42:59', NULL);
-INSERT INTO tuning_test_cases (id, name, verdict, draft_finding_id, issue, file, code, claim, created_at, updated_at) VALUES (13, '235_loop_overflow', 'REAL', NULL, 'Loop counter overflow / infinite loop', 'BootManagerDxe/BootManager.c:1049', 'for (j = 0; j < (mProtectedBootOptionsSize / sizeof(UINT16)); j++) { ... }', 'Loop counter j is UINT16; if size > 0xFFFF*2, comparison wraps causing infinite loop', '2025-12-11 21:42:59', NULL);
+}', 'ImagePackage[j] may be NULL if OpenProtocol failed; no null-check before dereference', '2025-12-10 14:33:45.287356', NULL, NULL, 'Null pointer dereference in array sorting', 'Null pointer dereference in array sorting', NULL, NULL, 'for (i = HandleCount - 1; i > 0; i--) {
+  for (j = 0; j < i; j++) {
+    if ((ImagePackage[j])->ZValue > (ImagePackage[j + 1])->ZValue) {
+      Temp = ImagePackage[j]; ImagePackage[j] = ImagePackage[j + 1]; ImagePackage[j + 1] = Temp;
+    }
+  }
+}', 'ImagePackage[j] may be NULL if OpenProtocol failed; no null-check before dereference', 'BootManagerDxe/BootManager.c:4138', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (6, '218_uninit_ptr', 'REAL', 'Uninitialized function pointer', 'BootManagerDxe/BootManager.c:192', 'return Item->mOldPciIoAttributes(This, Operation, Attributes, Result);', 'mOldPciIoAttributes only initialized conditionally; may be uninitialized when invoked', '2025-12-10 14:33:45.287358', NULL, NULL, 'Uninitialized function pointer', 'Uninitialized function pointer', NULL, NULL, 'return Item->mOldPciIoAttributes(This, Operation, Attributes, Result);', 'mOldPciIoAttributes only initialized conditionally; may be uninitialized when invoked', 'BootManagerDxe/BootManager.c:192', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (7, '220_ide_overflow', 'REAL', 'Array index overflow', 'BootManagerDxe/Legacy.c:1366', 'IbvBbs->IdeDiskInfo[IdeInfo].DiskInfoDeviceType = BBS_IDE_HDD_DEVICE_TYPE;', 'IdeInfo incremented without bounds check against IdeDiskInfo array size', '2025-12-10 14:33:45.287361', NULL, NULL, 'Array index overflow', 'Array index overflow', NULL, NULL, 'IbvBbs->IdeDiskInfo[IdeInfo].DiskInfoDeviceType = BBS_IDE_HDD_DEVICE_TYPE;', 'IdeInfo incremented without bounds check against IdeDiskInfo array size', 'BootManagerDxe/Legacy.c:1366', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (8, '223_hdd_oob', 'REAL', 'Out-of-bounds array access', 'BootManagerDxe/Legacy.c:1665', 'if (((HddInfo[HddInfoIndex].Status & HDD_PRIMARY) != 0) ...) { ... }', 'HddInfoIndex from BbsOrder without bounds checking', '2025-12-10 14:33:45.287364', NULL, NULL, 'Out-of-bounds array access', 'Out-of-bounds array access', NULL, NULL, 'if (((HddInfo[HddInfoIndex].Status & HDD_PRIMARY) != 0) ...) { ... }', 'HddInfoIndex from BbsOrder without bounds checking', 'BootManagerDxe/Legacy.c:1665', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (9, '230_smi_null', 'REAL', 'NULL pointer dereference', 'BootManagerDxe/Legacy.c:4193', 'Status = SwSmiAllocator->QuerySwSmi(&mCsmSwSmiGuidArray[SCT_CSM_LEGACY_USB_BY_IRQ], &CsmSwSmiInputValue);', 'SwSmiAllocator may be NULL if protocol lookup fails', '2025-12-10 14:33:45.287367', NULL, NULL, 'NULL pointer dereference', 'NULL pointer dereference', NULL, NULL, 'Status = SwSmiAllocator->QuerySwSmi(&mCsmSwSmiGuidArray[SCT_CSM_LEGACY_USB_BY_IRQ], &CsmSwSmiInputValue);', 'SwSmiAllocator may be NULL if protocol lookup fails', 'BootManagerDxe/Legacy.c:4193', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (10, '232_bbs_overflow', 'REAL', 'Out-of-bounds write to BbsTable', 'BootManagerDxe/Legacy.c:5338', 'BbsTableDevicePaths[i] = DuplicateDevicePath(DevicePath);
+BbsTable[i].BootPriority = BBS_UNPRIORITIZED_ENTRY;', 'Index i equals BbsCount, allowing writes past allocated tables', '2025-12-10 14:33:45.287371', NULL, NULL, 'Out-of-bounds write to BbsTable', 'Out-of-bounds write to BbsTable', NULL, NULL, 'BbsTableDevicePaths[i] = DuplicateDevicePath(DevicePath);
+BbsTable[i].BootPriority = BBS_UNPRIORITIZED_ENTRY;', 'Index i equals BbsCount, allowing writes past allocated tables', 'BootManagerDxe/Legacy.c:5338', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (11, '233_buffer_index', 'REAL', 'Unchecked buffer indexing', 'BootManagerDxe/Legacy.c:5486', 'if (BbsTableDevicePaths[Buffer[Index]] != NULL) { ... }', 'Buffer[Index] used without bounds verification', '2025-12-10 14:33:45.287374', NULL, NULL, 'Unchecked buffer indexing', 'Unchecked buffer indexing', NULL, NULL, 'if (BbsTableDevicePaths[Buffer[Index]] != NULL) { ... }', 'Buffer[Index] used without bounds verification', 'BootManagerDxe/Legacy.c:5486', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (12, '234_int_overflow', 'REAL', 'Integer overflow in size calculation', 'BootManagerDxe/BootManager.c:5939', '*OptionalDataLength += (UINT32)GetDevicePathSize(*DevicePath);', 'Adding large value without overflow check may wrap size', '2025-12-10 14:33:45.287376', NULL, NULL, 'Integer overflow in size calculation', 'Integer overflow in size calculation', NULL, NULL, '*OptionalDataLength += (UINT32)GetDevicePathSize(*DevicePath);', 'Adding large value without overflow check may wrap size', 'BootManagerDxe/BootManager.c:5939', NULL);
+INSERT INTO tuning_test_cases (id, name, verdict, issue, file, code, claim, created_at, updated_at, draft_finding_id, title, vulnerability_type, severity, line_number, snippet, reason, file_path, language) VALUES (13, '235_loop_overflow', 'REAL', 'Loop counter overflow / infinite loop', 'BootManagerDxe/BootManager.c:1049', 'for (j = 0; j < (mProtectedBootOptionsSize / sizeof(UINT16)); j++) { ... }', 'Loop counter j is UINT16; if size > 0xFFFF*2, comparison wraps causing infinite loop', '2025-12-10 14:33:45.287379', NULL, NULL, 'Loop counter overflow / infinite loop', 'Loop counter overflow / infinite loop', NULL, NULL, 'for (j = 0; j < (mProtectedBootOptionsSize / sizeof(UINT16)); j++) { ... }', 'Loop counter j is UINT16; if size > 0xFFFF*2, comparison wraps causing infinite loop', 'BootManagerDxe/BootManager.c:1049', NULL);
 
--- Table: users (1 rows)
-INSERT INTO users (id, email, display_name, hashed_password, role, status, created_at, approved_at, approved_by_id, last_login) VALUES (1, 'admin', 'Administrator', '$argon2id$v=19$m=65536,t=2,p=1$zqXAqbjSgeYIdmVe8qInmw$FKFHWzZDtK6/r8eV0oyXUp3LBs5InsZEBzJqNajigBI', 'admin', 'active', '2025-12-12 12:23:23.288910', NULL, NULL, NULL);
+-- Table: users (4 rows)
+INSERT INTO users (id, email, display_name, hashed_password, role, status, created_at, approved_at, approved_by_id, last_login) VALUES (1, 'admin', 'Administrator', '$argon2id$v=19$m=65536,t=2,p=1$gDUS6nb78HtlfFbF70E62Q$Xk3oRlk07YFuv9CmZqUlkeTOatc1eRwNagFMklCHTpo', 'admin', 'active', '2025-12-09 11:08:16.233180', NULL, NULL, '2025-12-12 20:57:18.956371');
+INSERT INTO users (id, email, display_name, hashed_password, role, status, created_at, approved_at, approved_by_id, last_login) VALUES (2, 'sharsany@lenovo.com', 'Scott Harsany', '$argon2id$v=19$m=65536,t=2,p=1$17NgA6CzrjcglvQkMf+GRA$9HuP4i96Lca5EpMqEAR5Oqh2weCnlI0OuNoj4q10ixM', 'admin', 'active', '2025-12-09 15:15:56.241200', '2025-12-09 20:52:07.893717', 1, NULL);
+INSERT INTO users (id, email, display_name, hashed_password, role, status, created_at, approved_at, approved_by_id, last_login) VALUES (3, 'cwood2@lenovo.com', 'Chris Wood', '$argon2id$v=19$m=65536,t=2,p=1$fH8da+Pd3j0vKqN3HjjOFQ$pxNzGgfiWTnLfJJU8WqPsJZsS/70DvFx/NOPxvuZRmo', 'admin', 'active', '2025-12-10 21:16:10.957317', '2025-12-11 02:16:41.350646', 1, NULL);
+INSERT INTO users (id, email, display_name, hashed_password, role, status, created_at, approved_at, approved_by_id, last_login) VALUES (4, 'yli32@lenovo.com', 'Alex Li 32', '$argon2id$v=19$m=65536,t=2,p=1$LMhpU6OG58TDlqmu37tp4A$nh5w8MsBPhsfgv6FRRFLICqvfLKh+TZFR2ML5dyykhM', 'admin', 'active', '2025-12-11 21:59:43.258994', '2025-12-12 03:00:16.755116', 1, '2025-12-12 03:01:00.047193');
 
