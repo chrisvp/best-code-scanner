@@ -2210,19 +2210,13 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
     if not verified:
         return {"error": "Verified finding not found"}
 
-    # Get the enrichment model from global settings
-    enrichment_model_setting = db.query(GlobalSetting).filter(
-        GlobalSetting.key == "enrichment_model_id"
-    ).first()
-
-    if not enrichment_model_setting or not enrichment_model_setting.value:
-        return {"error": "No enrichment model configured. Go to Config > Global Settings to set one."}
-
+    # Get an analyzer model (any analyzer will work for enrichment)
     enrichment_model = db.query(ModelConfig).filter(
-        ModelConfig.id == int(enrichment_model_setting.value)
+        ModelConfig.is_analyzer == True
     ).first()
+
     if not enrichment_model:
-        return {"error": "Configured enrichment model not found"}
+        return {"error": "No analyzer model found. Configure at least one analyzer model."}
 
     try:
         # Get output mode from model config (response_format column)

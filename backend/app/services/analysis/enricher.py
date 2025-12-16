@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.scanner_models import VerifiedFinding, VulnerabilityCategory, DraftFinding, ScanFileChunk, ScanFile, GlobalSetting, ModelConfig
 from app.services.analysis.parsers import EnrichmentParser
 from app.services.orchestration.model_orchestrator import ModelPool
+from app.services.analysis.output_formats import get_output_format
 import json
 
 # Required fields for a complete enrichment - all findings should have these filled
@@ -160,7 +161,7 @@ class CategoryMatcher:
 class FindingEnricher:
     """Generates full detailed reports for verified findings"""
 
-    ENRICH_PROMPT = """Generate a detailed security vulnerability report in JSON format.
+    ENRICH_PROMPT = """Generate a detailed security vulnerability report.
 
 === VERIFIED FINDING ===
 Title: {title}
@@ -187,25 +188,10 @@ Confidence: {confidence}%
 {callers}
 
 === INSTRUCTIONS ===
-Using the pre-fetched context above, generate a complete security report as a JSON object with the following fields:
-
-- finding: Detailed vulnerability title
-- category: CWE category (e.g., "CWE-78 OS Command Injection")
-- severity: Must be one of: "Critical", "High", "Medium", "Low"
-- cvss: CVSS score as a string (e.g., "9.8")
-- impacted_code: Paste the exact vulnerable code lines from the full file content
-- vulnerability_details: Detailed explanation including:
-  * What the vulnerability is
-  * Why it's dangerous
-  * Specific attack scenario with data flow from entry point to sink
-  * Potential impact
-- proof_of_concept: Example attack, exploitation steps, or curl command showing how to exploit
-- corrected_code: Fixed version of the vulnerable code (if applicable)
-- remediation_steps: Step-by-step instructions on how to fix (use \\n for line breaks)
-- references: Relevant CWE, OWASP, and other security documentation links
-
+Using the pre-fetched context above, generate a complete security report.
 You have all the code you need - do NOT ask for more context.
-Output ONLY valid JSON matching the required schema."""
+
+{output_format}"""
 
     def __init__(self, model_pool: ModelPool, db: Session = None, output_mode: str = "guided_json", json_schema: str = None):
         self.model_pool = model_pool
@@ -290,6 +276,9 @@ The fix should address the security issue while maintaining the original functio
                         # Read file directly for Joern findings without chunks
                         full_file = self._get_full_file_content_by_path(file_path_full, line_number)
 
+            # Inject output format instructions based on output_mode
+            output_format = get_output_format("enricher", self.output_mode)
+
             prompt = self.ENRICH_PROMPT.format(
                 title=v.title,
                 vuln_type=vuln_type,
@@ -302,7 +291,8 @@ The fix should address the security issue while maintaining the original functio
                 confidence=v.confidence or 50,
                 full_file=full_file,
                 file_list=file_list,
-                callers=callers
+                callers=callers,
+                output_format=output_format
             )
             prompts.append(prompt)
 
