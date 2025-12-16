@@ -1228,16 +1228,15 @@ class ScanPipeline:
         if not enricher_pool:
             return
 
-        # Get enricher output mode settings from profile
-        output_mode = "guided_json"  # Default
-        json_schema = None
-        if self.profile_id:
-            profile = self.db.query(ScanProfile).filter(ScanProfile.id == self.profile_id).first()
-            if profile:
-                output_mode = profile.enricher_output_mode or "guided_json"
-                json_schema = profile.enricher_json_schema
+        # Get output mode from model config (response_format column)
+        # Maps: "markers" -> "markers", "json_schema" -> "guided_json", None -> "markers"
+        model_response_format = enricher_pool.config.response_format or "markers"
+        if model_response_format == "json_schema":
+            output_mode = "guided_json"
+        else:
+            output_mode = model_response_format  # "markers" or other formats
 
-        enricher = FindingEnricher(enricher_pool, self.db, output_mode=output_mode, json_schema=json_schema)
+        enricher = FindingEnricher(enricher_pool, self.db, output_mode=output_mode, json_schema=None)
         batch_size = 3
 
         # Track timing and tokens for enricher model
