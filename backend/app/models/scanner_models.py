@@ -305,6 +305,8 @@ class ScanProfile(Base):
     # Enricher configuration (single model per profile)
     enricher_model_id = Column(Integer, ForeignKey("model_configs.id"), nullable=True)
     enricher_prompt_template = Column(Text, nullable=True)
+    enricher_output_mode = Column(String, default="markers")  # "markers", "json", "guided_json"
+    enricher_json_schema = Column(Text, nullable=True)  # JSON schema for guided_json mode
 
     # Agentic verifier configuration
     agentic_verifier_mode = Column(String, default="skip")  # "skip", "hybrid", "full"

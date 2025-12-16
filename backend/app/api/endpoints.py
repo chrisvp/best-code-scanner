@@ -2225,6 +2225,18 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
         return {"error": "Configured enrichment model not found"}
 
     try:
+        # Get the scan's profile to use its enricher settings
+        from app.models.scanner_models import ScanProfile, Scan
+        scan = db.query(Scan).filter(Scan.id == finding.scan_id).first()
+        output_mode = "guided_json"  # Default
+        json_schema = None
+
+        if scan and scan.profile_id:
+            profile = db.query(ScanProfile).filter(ScanProfile.id == scan.profile_id).first()
+            if profile:
+                output_mode = profile.enricher_output_mode or "guided_json"
+                json_schema = profile.enricher_json_schema
+
         # Detach config from session to avoid refresh errors
         db.expunge(enrichment_model)
 
@@ -2232,8 +2244,8 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
         model_pool = ModelPool(enrichment_model)
         await model_pool.start()
 
-        # Create enricher and re-run enrichment
-        enricher = FindingEnricher(model_pool, db)
+        # Create enricher and re-run enrichment with profile settings
+        enricher = FindingEnricher(model_pool, db, output_mode=output_mode, json_schema=json_schema)
         enriched = await enricher.enrich_single(verified)
 
         await model_pool.stop()

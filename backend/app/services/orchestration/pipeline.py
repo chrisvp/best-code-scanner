@@ -1222,12 +1222,22 @@ class ScanPipeline:
     async def _run_enricher_phase(self):
         """Phase 3: Generate full reports for verified findings"""
         from app.services.analysis.enricher import FindingEnricher
+        from app.models.scanner_models import ScanProfile
 
         enricher_pool = self.model_orchestrator.get_primary_analyzer()
         if not enricher_pool:
             return
 
-        enricher = FindingEnricher(enricher_pool, self.db)
+        # Get enricher output mode settings from profile
+        output_mode = "guided_json"  # Default
+        json_schema = None
+        if self.profile_id:
+            profile = self.db.query(ScanProfile).filter(ScanProfile.id == self.profile_id).first()
+            if profile:
+                output_mode = profile.enricher_output_mode or "guided_json"
+                json_schema = profile.enricher_json_schema
+
+        enricher = FindingEnricher(enricher_pool, self.db, output_mode=output_mode, json_schema=json_schema)
         batch_size = 3
 
         # Track timing and tokens for enricher model

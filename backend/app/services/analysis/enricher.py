@@ -207,11 +207,13 @@ Using the pre-fetched context above, generate a complete security report as a JS
 You have all the code you need - do NOT ask for more context.
 Output ONLY valid JSON matching the required schema."""
 
-    def __init__(self, model_pool: ModelPool, db: Session = None):
+    def __init__(self, model_pool: ModelPool, db: Session = None, output_mode: str = "guided_json", json_schema: str = None):
         self.model_pool = model_pool
         self.db = db
         self.parser = EnrichmentParser()
         self.category_matcher = CategoryMatcher(db) if db else None
+        self.output_mode = output_mode or "guided_json"  # Default to guided_json for backwards compat
+        self.json_schema = json_schema or json.dumps(ENRICHMENT_SCHEMA)  # Use default schema if not provided
 
     FIX_PROMPT = """Generate ONLY the corrected code that fixes this security vulnerability.
 
@@ -312,12 +314,12 @@ The fix should address the security issue while maintaining the original functio
         )
 
         # Batch call for enrichment with validation, retry, and cleanup fallback
-        # Use guided JSON mode to enforce structured output
+        # Use configured output mode (defaults to guided_json for structured output)
         try:
             responses = await self.model_pool.call_batch(
                 prompts,
-                output_mode="guided_json",
-                json_schema=json.dumps(ENRICHMENT_SCHEMA)
+                output_mode=self.output_mode,
+                json_schema=self.json_schema if self.output_mode == "guided_json" else None
             )
             # Parse JSON responses instead of marker format
             results = []
@@ -349,8 +351,8 @@ The fix should address the security issue while maintaining the original functio
                 try:
                     retry_responses = await self.model_pool.call_batch(
                         retry_prompts,
-                        output_mode="guided_json",
-                        json_schema=json.dumps(ENRICHMENT_SCHEMA)
+                        output_mode=self.output_mode,
+                        json_schema=self.json_schema if self.output_mode == "guided_json" else None
                     )
                     for (i, verified, _, partial_result), retry_response in zip(incomplete_indices, retry_responses):
                         try:
