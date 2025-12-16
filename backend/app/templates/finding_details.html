@@ -944,8 +944,9 @@ async function rescanFile() {
 
         // Strip sandbox/{scan_id}/ prefix from file path for filter matching
         // e.g., "sandbox/10/BootManagerDxe/File.c" -> "BootManagerDxe/File.c"
+        // Also handle absolute paths: "/home/.../sandbox/10/File.c" -> "File.c"
         let filterPath = filePath;
-        const sandboxMatch = filePath.match(/^sandbox\/\d+\/(.+)$/);
+        const sandboxMatch = filePath.match(/\/sandbox\/\d+\/(.+)$/);
         if (sandboxMatch) {
             filterPath = sandboxMatch[1];
         }
