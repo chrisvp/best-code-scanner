@@ -1,0 +1,28 @@
+--- a/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox/3/BootManagerDxe/Multiboot3/Common.c
++++ b/mnt/c/Users/acrvp/code/code-scanner/backend/sandbox/3/BootManagerDxe/Multiboot3/Common.c
+@@ -250,12 +250,20 @@
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)(Dp.Scsi->Pun & 0xff);
+-    UsbLayerCount++;
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)((Dp.Scsi->Pun >> 8) & 0xff);
+-    UsbLayerCount++;
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)(Dp.Scsi->Lun & 0xff);
+-    UsbLayerCount++;
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)((Dp.Scsi->Lun >> 8) & 0xff);
+-    UsbLayerCount++;
++    // Safely copy USB port and LUN information, ensuring we do not exceed the UsbPortNumber buffer.
++    if (UsbLayerCount < ARRAY_SIZE(Record->UsbPortNumber)) {
++        Record->UsbPortNumber[UsbLayerCount] = (UINT8)(Dp.Scsi->Pun & 0xff);
++        UsbLayerCount++;
++    }
++    if (UsbLayerCount < ARRAY_SIZE(Record->UsbPortNumber)) {
++        Record->UsbPortNumber[UsbLayerCount] = (UINT8)((Dp.Scsi->Pun >> 8) & 0xff);
++        UsbLayerCount++;
++    }
++    if (UsbLayerCount < ARRAY_SIZE(Record->UsbPortNumber)) {
++        Record->UsbPortNumber[UsbLayerCount] = (UINT8)(Dp.Scsi->Lun & 0xff);
++        UsbLayerCount++;
++    }
++    if (UsbLayerCount < ARRAY_SIZE(Record->UsbPortNumber)) {
++        Record->UsbPortNumber[UsbLayerCount] = (UINT8)((Dp.Scsi->Lun >> 8) & 0xff);
++        UsbLayerCount++;
++    }

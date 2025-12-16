@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models.scanner_models import VerifiedFinding, VulnerabilityCategory, DraftFinding, ScanFileChunk, ScanFile, GlobalSetting, ModelConfig
 from app.services.analysis.parsers import EnrichmentParser
 from app.services.orchestration.model_orchestrator import ModelPool
+import json
 
 # Required fields for a complete enrichment - all findings should have these filled
 REQUIRED_ENRICHMENT_FIELDS = [
@@ -24,6 +25,56 @@ OPTIONAL_ENRICHMENT_FIELDS = [
     'corrected_code',
     'references',
 ]
+
+# JSON schema for guided enrichment output
+ENRICHMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "finding": {
+            "type": "string",
+            "description": "Detailed vulnerability title"
+        },
+        "category": {
+            "type": "string",
+            "description": "CWE category (e.g., CWE-78 OS Command Injection)"
+        },
+        "severity": {
+            "type": "string",
+            "enum": ["Critical", "High", "Medium", "Low"],
+            "description": "Severity level"
+        },
+        "cvss": {
+            "type": "string",
+            "description": "CVSS score (0.0-10.0)"
+        },
+        "impacted_code": {
+            "type": "string",
+            "description": "The exact vulnerable code lines from the full file content"
+        },
+        "vulnerability_details": {
+            "type": "string",
+            "description": "Detailed explanation including what it is, why dangerous, attack scenario with data flow, and potential impact"
+        },
+        "proof_of_concept": {
+            "type": "string",
+            "description": "Example attack or curl command showing exploitation"
+        },
+        "corrected_code": {
+            "type": "string",
+            "description": "Fixed version of the vulnerable code"
+        },
+        "remediation_steps": {
+            "type": "string",
+            "description": "Step-by-step instructions on how to fix"
+        },
+        "references": {
+            "type": "string",
+            "description": "Relevant links or documentation (CWE, OWASP, etc.)"
+        }
+    },
+    "required": ["finding", "category", "severity", "vulnerability_details", "proof_of_concept", "remediation_steps"],
+    "additionalProperties": False
+}
 
 
 class CategoryMatcher:
@@ -109,7 +160,7 @@ class CategoryMatcher:
 class FindingEnricher:
     """Generates full detailed reports for verified findings"""
 
-    ENRICH_PROMPT = """Generate a detailed security vulnerability report.
+    ENRICH_PROMPT = """Generate a detailed security vulnerability report in JSON format.
 
 === VERIFIED FINDING ===
 Title: {title}
@@ -136,31 +187,25 @@ Confidence: {confidence}%
 {callers}
 
 === INSTRUCTIONS ===
-Using the pre-fetched context above, generate a complete security report.
-You have all the code you need - do NOT ask for more context.
+Using the pre-fetched context above, generate a complete security report as a JSON object with the following fields:
 
-*FINDING: detailed vulnerability title
-*CATEGORY: CWE category (e.g., CWE-78 OS Command Injection)
-*SEVERITY: {severity}
-*CVSS: score 0.0-10.0
-*IMPACTED_CODE:
-(paste the exact vulnerable code lines from the full file content)
-*VULNERABILITY_DETAILS:
-Detailed explanation including:
-- What the vulnerability is
-- Why it's dangerous
-- Specific attack scenario with data flow from entry point to sink
-- Potential impact
-*PROOF_OF_CONCEPT:
-Example attack or curl command showing exploitation
-*REMEDIATION_STEPS:
-1. First step
-2. Second step
-...
-*REFERENCES:
-- https://cwe.mitre.org/...
-- https://owasp.org/...
-*END_FINDING"""
+- finding: Detailed vulnerability title
+- category: CWE category (e.g., "CWE-78 OS Command Injection")
+- severity: Must be one of: "Critical", "High", "Medium", "Low"
+- cvss: CVSS score as a string (e.g., "9.8")
+- impacted_code: Paste the exact vulnerable code lines from the full file content
+- vulnerability_details: Detailed explanation including:
+  * What the vulnerability is
+  * Why it's dangerous
+  * Specific attack scenario with data flow from entry point to sink
+  * Potential impact
+- proof_of_concept: Example attack, exploitation steps, or curl command showing how to exploit
+- corrected_code: Fixed version of the vulnerable code (if applicable)
+- remediation_steps: Step-by-step instructions on how to fix (use \\n for line breaks)
+- references: Relevant CWE, OWASP, and other security documentation links
+
+You have all the code you need - do NOT ask for more context.
+Output ONLY valid JSON matching the required schema."""
 
     def __init__(self, model_pool: ModelPool, db: Session = None):
         self.model_pool = model_pool
@@ -267,9 +312,22 @@ The fix should address the security issue while maintaining the original functio
         )
 
         # Batch call for enrichment with validation, retry, and cleanup fallback
+        # Use guided JSON mode to enforce structured output
         try:
-            responses = await self.model_pool.call_batch(prompts)
-            results = [self.parser.parse(r) for r in responses]
+            responses = await self.model_pool.call_batch(
+                prompts,
+                output_mode="guided_json",
+                json_schema=json.dumps(ENRICHMENT_SCHEMA)
+            )
+            # Parse JSON responses instead of marker format
+            results = []
+            for r in responses:
+                try:
+                    parsed = json.loads(r) if r.strip() else {}
+                    results.append(parsed)
+                except json.JSONDecodeError:
+                    # Fallback to marker parser if JSON fails
+                    results.append(self.parser.parse(r))
 
             # Check for incomplete results and collect indices for retry
             incomplete_indices = []
@@ -289,9 +347,16 @@ The fix should address the security issue while maintaining the original functio
                     retry_prompts.append(retry_prompt)
 
                 try:
-                    retry_responses = await self.model_pool.call_batch(retry_prompts)
+                    retry_responses = await self.model_pool.call_batch(
+                        retry_prompts,
+                        output_mode="guided_json",
+                        json_schema=json.dumps(ENRICHMENT_SCHEMA)
+                    )
                     for (i, verified, _, partial_result), retry_response in zip(incomplete_indices, retry_responses):
-                        retry_result = self.parser.parse(retry_response)
+                        try:
+                            retry_result = json.loads(retry_response) if retry_response.strip() else {}
+                        except json.JSONDecodeError:
+                            retry_result = self.parser.parse(retry_response)
                         # Merge retry result with original (retry takes precedence for filled fields)
                         merged = self._merge_results(partial_result, retry_result)
                         results[i] = merged

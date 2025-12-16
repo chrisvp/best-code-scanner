@@ -1,0 +1,111 @@
+#
+# FILENAME.
+#       SystemMultiBootIiiDxe.inf - SecureCore Technology(TM) MultiBoot3 BOP Driver Description File.
+#
+# FUNCTIONAL DESCRIPTION.
+#       This file describes the build of the System Boot Manager DXE Driver.
+#
+#       This file defines the type of component and unique GUID identifier,
+#       along with all source files, definition files, and libraries that
+#       comprise the component build. It also defines the dependency
+#       expression file, component entry point, and other build-specific
+#       parameters.
+#
+#       The driver's GUID is defined herein; this is different than the
+#       protocol GUID which it implements.
+#
+# NOTICE.
+#       Copyright (C) 2009-2024 Phoenix Technologies.  All Rights Reserved.
+#
+
+[Defines]
+  BASE_NAME                    = SystemMultiBoot3Dxe
+  FILE_GUID                    = 5724D97F-CA64-4BE2-9F96-022F28DB4AFF
+  MODULE_TYPE                  = DXE_DRIVER
+  ENTRY_POINT                  = EntryPoint
+  INF_VERSION                  = 0x00010005
+  VERSION_STRING               = 1.0
+
+[Sources.common]
+  Config.c
+  Common.c
+  MultiBoot3.c
+  BopMb3FixedDisk.c
+  BopOpticalDrive.c
+  BopRemovableDisk.c
+  BopPciLanMb3.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  $(SCT_MODULE_SYSTEM)/PhSystemPkg/PhSystemPkg.dec
+  $(SCT_MODULE_SYSTEM)/PhMdeLibPkg/PhMdeLibPkg.dec
+  $(SCT_MODULE_SYSTEM)/PhBootManagerPkg/PhBootManagerPkg.dec
+!ifdef $(SCT_MODULE_CSMMODULE)
+  $(SCT_MODULE_CSMMODULE)/IntelFrameworkPkg/IntelFrameworkPkg.dec
+  $(SCT_MODULE_CSMMODULE)/IntelFrameworkModulePkg/IntelFrameworkModulePkg.dec
+  $(SCT_MODULE_CSMMODULE)/PhCsmPkg/PhCsmPkg.dec
+!endif # $(SCT_MODULE_CSMMODULE)
+
+[LibraryClasses.common]
+  SctDxeLib
+  SctBdsLib
+  MemoryAllocationLib
+  BaseLib
+  BaseMemoryLib
+  DevicePathLib
+  PrintLib
+  ReportStatusCodeLib
+  UefiBootServicesTableLib
+  DxeServicesTableLib
+  UefiDriverEntryPoint
+  UefiLib
+  DebugLib
+  SctBmDevicePathLib
+  SctBmDebugLib
+
+[Guids]
+  gMb3RemovableDiskBootOptionProtocolGuid
+  gMb3FixedDiskBootOptionProtocolGuid
+  gMb3OpticalDriveBootOptionProtocolGuid
+  gMb3PciLanBootOptionProtocolGuid
+  gEfiDiskInfoIdeInterfaceGuid
+  gEfiDiskInfoAhciInterfaceGuid
+  gEfiDiskInfoUsbInterfaceGuid
+  gEfiDiskInfoNvmeInterfaceGuid
+
+[Protocols]
+  gEfiDevicePathProtocolGuid
+  gSctBbsBcvHddDescProtocolGuid
+  gSctBdsServicesProtocolGuid
+  gEfiDiskInfoProtocolGuid
+  gEfiPxeBaseCodeProtocolGuid
+  gEfiPciIoProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiLoadFileProtocolGuid
+  gEfiBlockIoProtocolGuid
+  gEfiNvmExpressPassThruProtocolGuid
+  gSctNvmeDeviceServiceProtocolGuid
+!ifdef $(SCT_MODULE_CSMMODULE)
+  gEfiLegacyBiosProtocolGuid
+  gBbsTableDevicePathsTableGuid
+!endif # $(SCT_MODULE_CSMMODULE)
+
+[Depex]
+  gEfiVariableArchProtocolGuid AND
+  gEfiVariableWriteArchProtocolGuid AND
+  gSctBdsServicesProtocolGuid
+
+[BuildOptions]
+  MSFT:*_*_*_CC_FLAGS    = /D MODULE_STR_DEFS_FILE="<$(MODULE_NAME)StrDefs.h>"
+  MSFT:*_*_*_CC_FLAGS    = /D MODULE_STRING_ARRAY=$(MODULE_NAME)Strings
+  MSFT:*_*_*_CC_FLAGS    = /D MODULE_IMG_DEFS_FILE="<$(MODULE_NAME)ImgDefs.h>"
+  MSFT:*_*_*_CC_FLAGS    = /D MODULE_IMAGE_ARRAY=$(MODULE_NAME)Images
+  MSFT:*_*_*_CC_FLAGS    = /D __DRIVER__="\"$(MODULE_NAME)\""
+# MSFT:*_*_*_CC_FLAGS    = /Od
+
+  GCC:*_*_*_CC_FLAGS    = -D MODULE_STR_DEFS_FILE="<$(MODULE_NAME)StrDefs.h>"
+  GCC:*_*_*_CC_FLAGS    = -D MODULE_STRING_ARRAY=$(MODULE_NAME)Strings
+  GCC:*_*_*_CC_FLAGS    = -D MODULE_IMG_DEFS_FILE="<$(MODULE_NAME)ImgDefs.h>"
+  GCC:*_*_*_CC_FLAGS    = -D MODULE_IMAGE_ARRAY=$(MODULE_NAME)Images
+# GCC:*_*_*_CC_FLAGS    = -O0

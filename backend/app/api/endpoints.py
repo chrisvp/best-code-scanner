@@ -2219,31 +2219,22 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
     if not cleanup_model:
         return {"error": "Configured cleanup model not found"}
 
-    # Build the expected format template (enrichment format)
-    format_template = """*FINDING: [vulnerability title]
-*CATEGORY: [CWE category]
-*SEVERITY: [Critical/High/Medium/Low]
-*CVSS: [score 0.0-10.0]
-*IMPACTED_CODE:
-[vulnerable code snippet]
-*VULNERABILITY_DETAILS:
-[detailed explanation]
-*PROOF_OF_CONCEPT:
-[example attack or exploit]
-*REMEDIATION_STEPS:
-1. [first step]
-2. [second step]
-*REFERENCES:
-- [reference URLs]
-*END_FINDING"""
-
-    # Build the cleanup prompt
+    # Build the cleanup prompt for JSON output
     cleanup_prompt = cleanup_prompt_setting.value if cleanup_prompt_setting else (
-        "The following LLM response is malformed and needs to be reformatted. "
-        "Please extract the relevant information and output it in the correct format.\n\n"
+        "The following LLM response is malformed and needs to be reformatted into proper JSON. "
+        "Please extract the relevant information and output it as a valid JSON object.\n\n"
         "Original response:\n{response}\n\n"
-        "Expected format:\n{format_template}\n\n"
-        "Output only the corrected response, nothing else."
+        "Required JSON fields:\n"
+        "- finding: Vulnerability title\n"
+        "- category: CWE category (e.g., 'CWE-78 OS Command Injection')\n"
+        "- severity: Must be 'Critical', 'High', 'Medium', or 'Low'\n"
+        "- cvss: CVSS score as string (e.g., '9.8')\n"
+        "- impacted_code: Vulnerable code snippet\n"
+        "- vulnerability_details: Detailed explanation\n"
+        "- proof_of_concept: Example attack or exploit\n"
+        "- remediation_steps: How to fix (use \\n for line breaks)\n"
+        "- references: Reference URLs\n\n"
+        "Output ONLY valid JSON matching this schema. Do not include markdown formatting."
     )
 
     # The malformed data is likely in the description field
@@ -2257,27 +2248,34 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
     if finding.remediation_steps:
         malformed_response += "\n\nREMEDIATION_STEPS:\n" + finding.remediation_steps
 
-    prompt = cleanup_prompt.format(
-        response=malformed_response,
-        format_template=format_template
-    )
+    prompt = cleanup_prompt.format(response=malformed_response)
 
     try:
-        # Call the cleanup model
-        from app.services.llm_provider import llm_provider
+        # Call the cleanup model with guided JSON
+        from app.services.orchestration.model_orchestrator import ModelPool
+        from app.services.analysis.enricher import ENRICHMENT_SCHEMA
+        import json
 
-        result = await llm_provider.chat_completion(
+        result = await ModelPool.simple_chat_completion(
             messages=[{"role": "user", "content": prompt}],
-            model=cleanup_model.name
+            model=cleanup_model.name,
+            base_url=cleanup_model.base_url,
+            api_key=cleanup_model.api_key,
+            output_mode="guided_json",
+            json_schema=json.dumps(ENRICHMENT_SCHEMA)
         )
         response = result.get("content", "")
 
         if not response:
             return {"error": "Cleanup model returned empty response"}
 
-        # Parse the cleaned response
-        parser = EnrichmentParser()
-        parsed = parser.parse(response)
+        # Parse the JSON response
+        try:
+            parsed = json.loads(response) if response.strip() else {}
+        except json.JSONDecodeError:
+            # Fallback to marker parser if JSON fails
+            parser = EnrichmentParser()
+            parsed = parser.parse(response)
 
         if not parsed:
             return {"error": "Failed to parse cleaned response", "raw_response": response[:500]}

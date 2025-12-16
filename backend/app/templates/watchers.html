@@ -427,7 +427,7 @@
 
 <script>
 // Saved GitLab repos data for auto-fill
-const savedGitLabRepos = {
+var savedGitLabRepos = {
     {% for repo in gitlab_repos %}
     {{ repo.id }}: {
         gitlab_url: "{{ repo.gitlab_url }}",
@@ -437,7 +437,7 @@ const savedGitLabRepos = {
 };
 
 // Saved GitHub repos data for auto-fill
-const savedGitHubRepos = {
+var savedGitHubRepos = {
     {% for repo in github_repos %}
     {{ repo.id }}: {
         github_url: "{{ repo.github_url }}",
@@ -448,10 +448,10 @@ const savedGitHubRepos = {
 };
 
 // Alias for backwards compatibility
-const savedRepos = savedGitLabRepos;
+var savedRepos = savedGitLabRepos;
 
 // Store watcher data for editing
-const watchersData = {
+var watchersData = {
     {% for watcher in watchers %}
     {{ watcher.id }}: {
         name: "{{ watcher.name }}",

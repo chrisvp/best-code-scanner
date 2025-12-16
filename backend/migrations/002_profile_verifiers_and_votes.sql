@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS verification_votes (
     draft_finding_id INTEGER REFERENCES draft_findings(id),
     model_name VARCHAR,
     verifier_id INTEGER REFERENCES profile_verifiers(id),
-    decision VARCHAR,  -- VERIFY, WEAKNESS, REJECT, ABSTAIN
+    decision VARCHAR,  -- REAL, WEAKNESS, FALSE_POSITIVE, NEEDS_VERIFIED, ABSTAIN
     confidence INTEGER,
     reasoning TEXT,
     attack_scenario TEXT,

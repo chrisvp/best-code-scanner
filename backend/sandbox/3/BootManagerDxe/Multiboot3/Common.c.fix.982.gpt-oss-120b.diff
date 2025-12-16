@@ -1,0 +1,22 @@
+--- a/BootManagerDxe/Multiboot3/Common.c
++++ b/BootManagerDxe/Multiboot3/Common.c
+@@ -252,9 +252,15 @@
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)(Dp.Scsi->Pun & 0xff);
+-    UsbLayerCount++;
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)((Dp.Scsi->Pun >> 8) & 0xff);
+-    UsbLayerCount++;
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)(Dp.Scsi->Lun & 0xff);
+-    UsbLayerCount++;
+-    Record->UsbPortNumber[UsbLayerCount] = (UINT8)((Dp.Scsi->Lun >> 8) & 0xff);
+-    UsbLayerCount++;
++    // Safely copy USB port and LUN information with bounds checking
++    const UINTNUsbPortNumber = sizeof(Record->UsbPortNumber) / sizeof(Record->UsbPortNumber[0]);
++    if (UsbLayerCount + 4 <= maxUsbPortNumber) {
++        Record->UsbPortNumber[UsbLayerCount++] = (UINT8)(Dp.Scsi->Pun & 0xff);
++        Record->UsbPortNumber[UsbLayerCount++] = (UINT8)((Dp.Scsi->Pun >> 8) & 0xff);
++        Record->UsbPortNumber[UsbLayerCount++] = (UINT8)(Dp.Scsi->Lun & 0xff);
++        Record->UsbPortNumber[UsbLayerCount++] = (UINT8)((Dp.Scsi->Lun >> 8) & 0xff);
++    } else {
++        // Truncate excess data to prevent overflow
++        // Optionally log an error or handle as needed
++    }

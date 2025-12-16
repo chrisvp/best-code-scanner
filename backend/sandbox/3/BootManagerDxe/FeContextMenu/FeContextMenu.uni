@@ -1,0 +1,21 @@
+//
+// FILENAME.
+//      FeContextMenu.uni - File Explorer Context Menu token ID definition.
+//
+// FUNCTIONAL DESCRIPTION.
+//      This file describes the configurable strings for File Explorer.
+//
+// NOTICE.
+//      Copyright (C) 2013-2024 Phoenix Technologies.  All Rights Reserved.
+//
+
+/=#
+
+#include "Languages.uni"
+
+#string SYSTEM_BOOT_OPTION_MAKER_TITLE            #language en-US "Create Boot Option"
+#string SYSTEM_BOOT_OPTION_MAKER_HELP             #language en-US "Create Boot Option"
+#string SYSTEM_FILE_NULL_STR                      #language en-US ""
+#string SYSTEM_FILE_DESCRIPTION_STR               #language en-US "Description:"
+#string SYSTEM_BOOT_OPTION_CREATE_STR             #language en-US "[Create]"
+#string SYSTEM_FILE_EXPLORER_FILE_PATH            #language en-US ""

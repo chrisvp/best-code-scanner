@@ -283,7 +283,7 @@ Look for:
 *END_DRAFT
 """ + MARKER_FORMAT_INSTRUCTIONS
 
-# Verification prompt - uses *VERIFIED/*REJECTED markers
+# Verification prompt - uses *VOTE markers with 4 vote types
 VERIFICATION_PROMPT = """You are verifying a potential security vulnerability.
 
 File: {file_path}
@@ -300,7 +300,7 @@ Reported vulnerability:
 - Line: {finding_line}
 - Reason: {finding_reason}
 
-Analyze whether this is a TRUE POSITIVE or FALSE POSITIVE.
+Analyze this finding and vote on its validity.
 
 Consider:
 1. Is the vulnerable pattern actually present?
@@ -309,18 +309,16 @@ Consider:
 4. Are there mitigating factors (sandboxing, permissions)?
 
 === OUTPUT FORMAT ===
-If TRUE POSITIVE:
-*VERIFIED: finding title
+*VOTE: REAL/WEAKNESS/FALSE_POSITIVE/NEEDS_VERIFIED
 *CONFIDENCE: 0-100
-*ATTACK_VECTOR: how an attacker could exploit this
-*DATA_FLOW: trace from input to vulnerable sink
-*ADJUSTED_SEVERITY: Critical/High/Medium/Low (if different from reported)
+*REASONING: your explanation
 *END_VERIFIED
 
-If FALSE POSITIVE:
-*REJECTED: finding title
-*REASON: why this is not actually vulnerable
-*END_REJECTED
+Vote meanings:
+- REAL: Confirmed exploitable vulnerability
+- WEAKNESS: Poor coding practice but not directly exploitable
+- FALSE_POSITIVE: Scanner is wrong, code is safe
+- NEEDS_VERIFIED: Uncertain, requires deeper analysis (agentic verification)
 """
 
 # All prompts indexed by name for easy lookup

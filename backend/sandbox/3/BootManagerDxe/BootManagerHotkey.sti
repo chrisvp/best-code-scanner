@@ -1,0 +1,28 @@
+//
+// FILENAME.
+//      BootManagerHotkey.sti - SecureCore Technology(TM) Hotkey image token ID definition.
+//
+// FUNCTIONAL DESCRIPTION.
+//      This file describes the configurable images for the Hot key.
+//
+// NOTICE.
+//      Copyright (C) 2013-2024 Phoenix Technologies.  All Rights Reserved.
+//
+
+#image HOTKEY_BOOT_STATE   "Images/Boot.gif"
+#image HOTKEY_ACTIVE_STATE "Images/Active.gif"
+#image HOTKEY_IMAGE_RESERVE_0 ""
+#image HOTKEY_IMAGE_RESERVE_1 ""
+#image HOTKEY_IMAGE_RESERVE_2 ""
+#image HOTKEY_IMAGE_RESERVE_3 ""
+#image HOTKEY_IMAGE_RESERVE_4 ""
+#image HOTKEY_IMAGE_RESERVE_5 ""
+#image HOTKEY_IMAGE_RESERVE_6 ""
+#image HOTKEY_IMAGE_RESERVE_7 ""
+#image HOTKEY_IMAGE_RESERVE_8 ""
+#image HOTKEY_IMAGE_RESERVE_9 ""
+#image HOTKEY_IMAGE_RESERVE_10 ""
+#image HOTKEY_IMAGE_RESERVE_11 ""
+#image HOTKEY_IMAGE_RESERVE_12 ""
+#image HOTKEY_IMAGE_RESERVE_13 ""
+#image HOTKEY_IMAGE_RESERVE_14 ""

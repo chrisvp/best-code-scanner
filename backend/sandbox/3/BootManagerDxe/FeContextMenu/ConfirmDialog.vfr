@@ -1,0 +1,38 @@
+//
+// FILENAME.
+//      ConfirmDialog.vfr - SecureCore Technology(TM) File Explorer Form.
+//
+// FUNCTIONAL DESCRIPTION.
+//      This file describes the File Explorer page.
+//
+// NOTICE.
+//      Copyright (C) 2013-2024 Phoenix Technologies.  All Rights Reserved.
+//
+
+#include "FeContextMenu.h"
+#include "SystemBootManagerDxeStrDefs.h"
+
+formset
+  guid     = SYSTEM_BOOT_OPTION_CREATE_FORMSET_GUID,
+  title    = STRING_TOKEN(SYSTEM_BOOT_OPTION_MAKER_TITLE),
+  help     = STRING_TOKEN(SYSTEM_BOOT_OPTION_MAKER_HELP),
+  class    = 1,
+  subclass = GENERAL_APPLICATION,
+
+  form formid = BOOT_OPTION_MAKER_FORM_ID,
+
+    title    = STRING_TOKEN(SYSTEM_BOOT_OPTION_MAKER_TITLE);
+
+    string
+      prompt   = STRING_TOKEN(SYSTEM_FILE_DESCRIPTION_STR),
+      help     = STRING_TOKEN(SYSTEM_FILE_NULL_STR),
+      flags    = INTERACTIVE,
+      key      = QUESTION_BOOT_OPTION_DESCRIPTION,
+      minsize  = 3,
+      maxsize  = 0x14,
+    endstring;
+
+  endform;
+
+endformset;                // end of file
+

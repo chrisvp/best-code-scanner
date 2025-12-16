@@ -5,8 +5,8 @@ Handles JSON and marker syntax formats with fuzzy matching.
 When parsing fails, returns a result indicating cleanup is needed.
 
 Supported formats:
-- JSON: {"vote": "VERIFY", "confidence": 90}
-- Marker: *VOTE: VERIFY / **VOTE:** VERIFY / VOTE: VERIFY
+- JSON: {"vote": "REAL", "confidence": 90}
+- Marker: *VOTE: REAL / **VOTE:** REAL / VOTE: REAL
 """
 
 import re
@@ -466,12 +466,14 @@ class VoteParser(UniversalParser):
         if isinstance(vote_value, str):
             vote_upper = vote_value.upper().strip()
             # Check for decision keywords anywhere in the value
-            if 'REJECT' in vote_upper:
-                vote_result['decision'] = 'REJECT'
+            if 'FALSE_POSITIVE' in vote_upper or 'FALSE POSITIVE' in vote_upper:
+                vote_result['decision'] = 'FALSE_POSITIVE'
+            elif 'REAL' in vote_upper:
+                vote_result['decision'] = 'REAL'
+            elif 'NEEDS_VERIFIED' in vote_upper or 'NEEDS VERIFIED' in vote_upper:
+                vote_result['decision'] = 'NEEDS_VERIFIED'
             elif 'WEAKNESS' in vote_upper:
                 vote_result['decision'] = 'WEAKNESS'
-            elif 'VERIFY' in vote_upper or 'CONFIRM' in vote_upper or 'VALID' in vote_upper:
-                vote_result['decision'] = 'VERIFY'
 
         # Extract confidence
         confidence = result.get('confidence', 50)

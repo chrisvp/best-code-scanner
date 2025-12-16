@@ -1,0 +1,41 @@
+{
+  "v1_code_first": "```c\n{code}\n```\n\nClaim: {claim}\n\nVote: FALSE_POSITIVE | REAL | NEEDS_VERIFIED | WEAKNESS\nConfidence: 0-100\nReasoning:",
+
+  "v2_verdict_first": "Vote on this claim.\n\nOptions: FALSE_POSITIVE (safe) | REAL (exploitable) | NEEDS_VERIFIED (unclear) | WEAKNESS (not exploitable)\n\nClaim: {claim}\n\nCode:\n```c\n{code}\n```\n\nVote:\nConfidence:\nReasoning:",
+
+  "v3_numbered": "1. CLAIM\n{claim}\n\n2. CODE\n```c\n{code}\n```\n\n3. VERDICT\nVote: [FALSE_POSITIVE|REAL|NEEDS_VERIFIED|WEAKNESS]\nConfidence: [0-100]\nReasoning:",
+
+  "v4_question": "Is this a vulnerability?\n\nClaim: {claim}\n\nCode:\n```c\n{code}\n```\n\nVote: FALSE_POSITIVE | REAL | NEEDS_VERIFIED | WEAKNESS\nConfidence: 0-100\nReasoning:",
+
+  "v5_checklist": "Code:\n```c\n{code}\n```\n\nClaim: {claim}\n\nChecklist:\n□ Vulnerability exists?\n□ Exploitable?\n□ Mitigations?\n\nVote:\nConfidence:\nReasoning:",
+
+  "v6_expert": "You are a UEFI security expert.\n\nCode:\n```c\n{code}\n```\n\nClaim: {claim}\n\nExpert assessment:\nVote:\nConfidence:\nReasoning:",
+
+  "v7_minimal": "Code:\n```c\n{code}\n```\n\nClaim: {claim}\n\nVote:\nConfidence:\nReasoning:",
+
+  "v8_context_last": "Review this code.\n\nVote options: FALSE_POSITIVE | REAL | NEEDS_VERIFIED | WEAKNESS\n\n```c\n{code}\n```\n\nClaim: {claim}\n\nVote:\nConfidence:\nReasoning:",
+
+  "v9_bullets": "Vulnerability Report:\n\n• Issue: {issue}\n• File: {file}\n• Claim: {claim}\n\nCode:\n```c\n{code}\n```\n\nAnalysis:\n• Vote: [FALSE_POSITIVE|REAL|NEEDS_VERIFIED|WEAKNESS]\n• Confidence: [0-100]\n• Reasoning:",
+
+  "v10_table": "| Field | Value |\n|-------|-------|\n| Issue | {issue} |\n| File | {file} |\n| Claim | {claim} |\n\nCode:\n```c\n{code}\n```\n\nVerdict:\n| Vote | |\n| Confidence | |\n| Reasoning | |",
+
+  "v11_socratic": "Code:\n```c\n{code}\n```\n\nClaim: {claim}\n\nQuestions:\n1. Where is the issue?\n2. What triggers it?\n3. Can attacker control it?\n4. What's the impact?\n5. Any protections?\n\nVote:\nConfidence:\nReasoning:",
+
+  "v12_redteam": "RED TEAM: Try to exploit this.\n\n```c\n{code}\n```\n\nClaim: {claim}\n\nIf exploitable → REAL\nIf safe → FALSE_POSITIVE\nIf unclear → NEEDS_VERIFIED\nIf bad code but safe → WEAKNESS\n\nVote:\nConfidence:\nAttack:",
+
+  "v13_diff": "--- Scanner View ---\nVULNERABLE: {claim}\n\n--- Actual Code ---\n```c\n{code}\n```\n\n--- Analysis ---\nVote:\nConfidence:\nReasoning:",
+
+  "v14_emoji": "🔍 SECURITY ANALYSIS\n\n📄 Code:\n```c\n{code}\n```\n\n⚠️ Alert: {claim}\n\n🤔 Assessment:\n• Vote:\n• Confidence:\n• Reasoning:",
+
+  "v15_json": "{{\n  \"code\": \"{code}\",\n  \"claim\": \"{claim}\",\n  \"analysis\": {{\n    \"vote\": \"\",\n    \"confidence\": 0,\n    \"reasoning\": \"\"\n  }}\n}}",
+
+  "v16_markdown": "# Vulnerability Assessment\n\n## Code\n```c\n{code}\n```\n\n## Claim\n{claim}\n\n## Analysis\n\n### Vote\n[FALSE_POSITIVE|REAL|NEEDS_VERIFIED|WEAKNESS]\n\n### Confidence\n[0-100]\n\n### Reasoning\n",
+
+  "v17_xml": "<analysis>\n  <code>{code}</code>\n  <claim>{claim}</claim>\n  <verdict>\n    <vote></vote>\n    <confidence></confidence>\n    <reasoning></reasoning>\n  </verdict>\n</analysis>",
+
+  "v18_prose": "Review this code and claim.\n\nCode: {code}\n\nClaim: {claim}\n\nProvide your assessment with vote (FALSE_POSITIVE/REAL/NEEDS_VERIFIED/WEAKNESS), confidence (0-100), and detailed reasoning.",
+
+  "v19_skeptic": "SKEPTICAL REVIEW: Assume scanner is wrong.\n\nCode:\n```c\n{code}\n```\n\nClaim: {claim}\n\nFind reasons this is FALSE_POSITIVE. Only vote REAL if you can't dismiss it.\n\nVote:\nConfidence:\nReasoning:",
+
+  "v20_stepwise": "Step-by-step analysis.\n\nCode:\n```c\n{code}\n```\n\nClaim: {claim}\n\nStep 1: What does code do?\nStep 2: Where is alleged vulnerability?\nStep 3: Is it exploitable?\nStep 4: Mitigations?\n\nConclusion:\nVote:\nConfidence:\nReasoning:"
+}

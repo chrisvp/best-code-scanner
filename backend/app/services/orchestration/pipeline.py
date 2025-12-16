@@ -1156,12 +1156,21 @@ class ScanPipeline:
                 for draft, result in zip(drafts, results):
                     # Calculate total votes
                     votes = result.get('votes', [])
-                    verify_count = sum(1 for v in votes if v.get('decision') == 'VERIFY')
+                    real_count = sum(1 for v in votes if v.get('decision') == 'REAL')
                     weakness_count = sum(1 for v in votes if v.get('decision') == 'WEAKNESS')
-                    reject_count = sum(1 for v in votes if v.get('decision') == 'REJECT')
+                    false_positive_count = sum(1 for v in votes if v.get('decision') == 'FALSE_POSITIVE')
+                    needs_verified_count = sum(1 for v in votes if v.get('decision') == 'NEEDS_VERIFIED')
 
-                    if result.get('verified'):
-                        # VERIFY: Real vulnerability, proceed to enrichment
+                    if result.get('needs_agentic'):
+                        # NEEDS_VERIFIED: Majority voted for agentic verification
+                        # Mark as pending for agentic verification (can be handled in future iteration)
+                        draft.status = "needs_agentic"
+                        draft.verification_votes = needs_verified_count
+                        draft.verification_notes = result.get('reason', 'Requires agentic verification')[:500]
+                        # Note: Actual agentic verification can be triggered separately
+
+                    elif result.get('verified'):
+                        # REAL: Real vulnerability, proceed to enrichment
                         adj_sev = result.get('adjusted_severity')
                         verified = VerifiedFinding(
                             draft_id=draft.id,
@@ -1175,7 +1184,7 @@ class ScanPipeline:
                         )
                         self.db.add(verified)
                         draft.status = "verified"
-                        draft.verification_votes = verify_count
+                        draft.verification_votes = real_count
                         draft.verification_notes = result.get('reasoning', '')[:500]
 
                     elif result.get('is_weakness'):
@@ -1186,9 +1195,9 @@ class ScanPipeline:
                         draft.verification_notes = result.get('reasoning', result.get('reason', ''))[:500]
 
                     else:
-                        # REJECT: False positive, discarded
+                        # FALSE_POSITIVE: Scanner mistake, discarded
                         draft.status = "rejected"
-                        draft.verification_votes = reject_count
+                        draft.verification_votes = false_positive_count
                         draft.verification_notes = result.get('reason', '')[:500]
 
                 self.db.commit()

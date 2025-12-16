@@ -139,10 +139,10 @@ You have access to tools to explore the codebase. Use them to trace data flow an
 
 When you have enough information, provide your final answer in this format:
 *FINAL_ANSWER*
-VERDICT: VERIFIED or REJECTED
+VERDICT: REAL or FALSE_POSITIVE
 CONFIDENCE: 0-100
 REASONING: Your explanation
-ATTACK_PATH: (if verified) How an attacker would exploit this
+ATTACK_PATH: (if REAL) How an attacker would exploit this
 *END_FINAL_ANSWER*
 
 Think step by step. Use tools to gather evidence before concluding."""
@@ -167,7 +167,7 @@ For tool calls:
 {"thinking": "your analysis...", "action": {"type": "tool_call", "tool_name": "read_file", "tool_params": {"path": "file.c", "start_line": 100}}}
 
 For final answer:
-{"thinking": "your reasoning...", "action": {"type": "final_answer", "answer": "VERDICT: VERIFIED\\nCONFIDENCE: 85\\nREASONING: ...\\nATTACK_PATH: ..."}}
+{"thinking": "your reasoning...", "action": {"type": "final_answer", "answer": "VERDICT: REAL\\nCONFIDENCE: 85\\nREASONING: ...\\nATTACK_PATH: ..."}}
 
 Always output ONLY valid JSON with no additional text before or after.
 """
@@ -297,10 +297,10 @@ Always output ONLY valid JSON with no additional text before or after.
 You have access to tools to explore the codebase. Use them to trace data flow and prove whether a vulnerability is real.
 
 When you have enough information, provide your final verdict in this format:
-VERDICT: VERIFIED or REJECTED
+VERDICT: REAL or FALSE_POSITIVE
 CONFIDENCE: 0-100
 REASONING: Your explanation
-ATTACK_PATH: (if verified) How an attacker would exploit this
+ATTACK_PATH: (if REAL) How an attacker would exploit this
 
 Think step by step. Use tools to gather evidence before concluding.
 You must use at least {self.min_tool_uses} tools before providing a final answer."""
@@ -695,18 +695,18 @@ Step 3: Use `get_call_graph` or `find_entry_points` if needed
 
 ## Verdict Guidelines
 
-**VERIFY** (True Positive) if ANY apply:
+**REAL** (Confirmed Vulnerability) if ANY apply:
 - Dangerous pattern exists (system(), sprintf to fixed buffer, use-after-free, format string)
 - User input could reach this code path
 - Function is exported/public
 - No validation or bypassable validation
 
-**REJECT** (False Positive) ONLY if you PROVE ALL:
+**FALSE_POSITIVE** (Scanner Mistake) ONLY if you PROVE ALL:
 - Pattern does NOT exist in actual code
 - Mathematically proven bounds checking
 - Code is 100% unreachable
 
-When in doubt, VERIFY. Missing a real vulnerability is worse than a false positive.
+When in doubt, vote REAL. Missing a real vulnerability is worse than a false positive.
 
 ## START NOW
 
@@ -830,7 +830,7 @@ Begin by using the `read_file` tool to examine the code. Do NOT provide your fin
                 ).first()
                 if session:
                     session.status = result.state.value
-                    session.verdict = "VERIFIED" if verification['verified'] else "REJECTED"
+                    session.verdict = "REAL" if verification['verified'] else "FALSE_POSITIVE"
                     session.confidence = verification['confidence']
                     session.reasoning = verification.get('reasoning', '')[:5000]
                     session.attack_path = verification.get('attack_path', '')[:2000]
@@ -876,9 +876,9 @@ Begin by using the `read_file` tool to examine the code. Do NOT provide your fin
         answer = result.final_answer.upper()
 
         # Extract verdict
-        if 'VERIFIED' in answer or 'TRUE POSITIVE' in answer:
+        if 'REAL' in answer:
             default['verified'] = True
-        elif 'REJECTED' in answer or 'FALSE POSITIVE' in answer:
+        elif 'FALSE_POSITIVE' in answer or 'FALSE POSITIVE' in answer:
             default['verified'] = False
 
         # Extract confidence

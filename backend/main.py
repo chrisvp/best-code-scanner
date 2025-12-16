@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -116,6 +117,9 @@ from app.api.auth import router as auth_router
 app.include_router(router)
 app.include_router(tuning_router, prefix="/api/v1/tuning", tags=["tuning"])
 app.include_router(auth_router, tags=["auth"])
+
+# Mount static files for CSS/JS
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.get("/health")
 def health():

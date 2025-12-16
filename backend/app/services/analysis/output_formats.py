@@ -144,54 +144,74 @@ Example finding structure: title, vulnerability_type (CWE-XXX), severity (Critic
         "markers": """=== OUTPUT FORMAT ===
 Respond with your vote using this EXACT format:
 
-*VOTE: VERIFY/WEAKNESS/REJECT
+*VOTE: REAL/WEAKNESS/FALSE_POSITIVE/NEEDS_VERIFIED
 *CONFIDENCE: [0-100]
 *REASONING: [your explanation]
 *END_VERIFIED
 
 Vote meanings:
-- VERIFY: Real, exploitable security vulnerability
-- WEAKNESS: Code quality issue but not directly exploitable
-- REJECT: False positive, not a real issue
+- FALSE_POSITIVE: Scanner is wrong, code is safe
+- REAL: Confirmed exploitable vulnerability
+- NEEDS_VERIFIED: Can't confirm from visible code, needs agent verification
+- WEAKNESS: Poor practice but not directly exploitable
 
 === EXAMPLES ===
 
+Example for a false positive (safe code):
+*VOTE: FALSE_POSITIVE
+*CONFIDENCE: 88
+*REASONING: Input is validated on line 25 before reaching this code path
+*END_VERIFIED
+
 Example for a real vulnerability:
-*VOTE: VERIFY
+*VOTE: REAL
 *CONFIDENCE: 92
 *REASONING: User input flows directly to strcpy without bounds checking, classic buffer overflow
+*END_VERIFIED
+
+Example for uncertain case needing deeper analysis:
+*VOTE: NEEDS_VERIFIED
+*CONFIDENCE: 60
+*REASONING: Complex data flow requires deeper analysis to confirm exploitability
 *END_VERIFIED
 
 Example for a code quality issue:
 *VOTE: WEAKNESS
 *CONFIDENCE: 75
 *REASONING: Missing null check is bad practice but not directly exploitable in this context
-*END_VERIFIED
-
-Example for a false positive:
-*VOTE: REJECT
-*CONFIDENCE: 88
-*REASONING: Input is validated on line 25 before reaching this code path
 *END_VERIFIED""",
 
         "json": """=== OUTPUT FORMAT ===
 Respond with a JSON object:
-- vote: "VERIFY", "WEAKNESS", or "REJECT"
+- vote: "REAL", "WEAKNESS", "FALSE_POSITIVE", or "NEEDS_VERIFIED"
 - confidence: Number 0-100
 - reasoning: Your explanation
 
+Vote meanings:
+- FALSE_POSITIVE: Scanner is wrong, code is safe
+- REAL: Confirmed exploitable vulnerability
+- NEEDS_VERIFIED: Can't confirm from visible code, needs agent verification
+- WEAKNESS: Poor practice but not directly exploitable
+
 === EXAMPLES ===
 
-For a real vulnerability: {"vote": "VERIFY", "confidence": 92, "reasoning": "User input flows directly to strcpy without bounds checking"}
-For a code quality issue: {"vote": "WEAKNESS", "confidence": 75, "reasoning": "Missing null check is bad practice but not directly exploitable"}
-For a false positive: {"vote": "REJECT", "confidence": 88, "reasoning": "Input is validated on line 25 before reaching this code path"}""",
+For a false positive: {"vote": "FALSE_POSITIVE", "confidence": 88, "reasoning": "Input is validated on line 25 before reaching this code path"}
+For a real vulnerability: {"vote": "REAL", "confidence": 92, "reasoning": "User input flows directly to strcpy without bounds checking"}
+For uncertain case: {"vote": "NEEDS_VERIFIED", "confidence": 60, "reasoning": "Complex data flow requires deeper analysis to confirm exploitability"}
+For a code quality issue: {"vote": "WEAKNESS", "confidence": 75, "reasoning": "Missing null check is bad practice but not directly exploitable"}""",
 
         "guided_json": """=== OUTPUT FORMAT ===
 Respond with JSON matching the required schema.
-Vote must be one of: VERIFY, WEAKNESS, REJECT
+Vote must be one of: REAL, WEAKNESS, FALSE_POSITIVE, NEEDS_VERIFIED
 Confidence is 0-100. Include your reasoning.
 
-Follow the JSON schema. Vote must be VERIFY, WEAKNESS, or REJECT. Confidence 0-100. Include detailed reasoning."""
+Vote meanings:
+- FALSE_POSITIVE: Scanner is wrong, code is safe
+- REAL: Confirmed exploitable vulnerability
+- NEEDS_VERIFIED: Can't confirm from visible code, needs agent verification
+- WEAKNESS: Poor practice but not directly exploitable
+
+Follow the JSON schema. Vote must be REAL, WEAKNESS, FALSE_POSITIVE, or NEEDS_VERIFIED. Confidence 0-100. Include detailed reasoning."""
     },
 
     # For enrichers (full reports)

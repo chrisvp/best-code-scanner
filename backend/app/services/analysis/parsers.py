@@ -357,7 +357,7 @@ class VerificationParser:
         vote_match = re.search(r'\*?VOTE\s*:\s*(\w+)', response, re.IGNORECASE)
         if vote_match:
             decision = vote_match.group(1).upper()
-            if decision == 'VERIFY':
+            if decision == 'REAL':
                 result['verified'] = True
             elif decision == 'WEAKNESS':
                 result['verified'] = True

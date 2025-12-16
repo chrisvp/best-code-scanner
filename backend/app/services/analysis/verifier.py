@@ -45,7 +45,7 @@ Your goal is to identify EXPLOITABLE vulnerabilities while filtering out safe pa
 
 === SAFE PATTERNS TO REJECT ===
 
-These are FALSE POSITIVES - REJECT them:
+These are FALSE_POSITIVE - vote FALSE_POSITIVE for:
 - `(size + 7) & ~7` or similar alignment - standard idiom, unexploitable
 - `strncpy(dst, src, sizeof(dst) - 1)` - bounded copy, safe even without explicit null-term
 - `strncpy(dst, src, sizeof(dst)); dst[sizeof(dst)-1] = '\\0';` - bounded with null-term
@@ -58,15 +58,15 @@ These are FALSE POSITIVES - REJECT them:
 
 === WEAKNESS PATTERNS ===
 
-These are real but low-priority - mark as WEAKNESS:
+These are real but low-priority - vote WEAKNESS for:
 - Theoretical overflow with no realistic attack path
 - Missing null-termination where buffer is always overwritten
 - Bad practice in non-security-critical code path
 - DoS-only impact (no RCE, no data leak)
 
-=== VERIFY PATTERNS ===
+=== REAL VULNERABILITY PATTERNS ===
 
-These are TRUE POSITIVES - VERIFY them:
+These are exploitable - vote REAL for:
 - `system(user_input)` or `popen(user_input)` - command injection
 - `strcpy(fixed_buf, user_input)` - unbounded copy
 - `sprintf(buf, user_fmt)` where user controls format - format string
@@ -76,19 +76,24 @@ These are TRUE POSITIVES - VERIFY them:
 
 === DECISION GUIDE ===
 
-VERIFY if:
+Vote REAL if:
 1. Dangerous sink function (system, strcpy, printf with user format)
 2. AND attacker data can reach it (trace the data flow)
 3. AND security impact exists (RCE, memory corruption, data leak)
 
-WEAKNESS if:
+Vote WEAKNESS if:
 - Pattern is risky but impact is limited (DoS, info leak of non-sensitive data)
 - OR requires unlikely conditions to exploit
 
-REJECT if:
+Vote FALSE_POSITIVE if:
 - Safe variant used (strncpy with limit, snprintf)
 - OR standard safe idiom (alignment, bounded copy)
 - OR no attacker-controlled input reaches the sink
+
+Vote NEEDS_VERIFIED if:
+- Complex data flow that requires deeper analysis
+- Can't determine exploitability from visible code
+- Needs agentic verification to trace through codebase
 
 {output_format}"""
 
@@ -326,48 +331,57 @@ REJECT if:
         Aggregate votes from multiple models.
 
         Voting logic:
-        - VERIFY: Majority voted VERIFY -> verified vulnerability, proceed to enrichment
+        - REAL: Majority voted REAL -> verified vulnerability, proceed to enrichment
         - WEAKNESS: Majority voted WEAKNESS -> accepted as code quality issue, skip enrichment
-        - REJECT: Majority voted REJECT (or no majority) -> false positive, discarded
+        - FALSE_POSITIVE: Majority voted FALSE_POSITIVE -> scanner mistake, discarded
+        - NEEDS_VERIFIED: Majority voted NEEDS_VERIFIED -> trigger agentic verification
 
-        WEAKNESS does NOT count toward VERIFY. They are separate categories.
+        WEAKNESS does NOT count toward REAL. They are separate categories.
         """
-        verify_count = 0
+        real_count = 0
         weakness_count = 0
-        reject_count = 0
+        false_positive_count = 0
+        needs_verified_count = 0
         abstain_count = 0
-        verify_score = 0
+        real_score = 0
         weakness_score = 0
-        reject_score = 0
+        false_positive_score = 0
+        needs_verified_score = 0
 
         for vote in votes:
             weight = vote.get('weight', 1.0) * (vote['confidence'] / 100.0 if vote['confidence'] > 0 else 0.5)
+            decision = vote['decision']
 
-            if vote['decision'] == 'VERIFY':
-                verify_count += 1
-                verify_score += weight
-            elif vote['decision'] == 'WEAKNESS':
+            if decision == 'REAL':
+                real_count += 1
+                real_score += weight
+            elif decision == 'WEAKNESS':
                 weakness_count += 1
                 weakness_score += weight
-            elif vote['decision'] == 'REJECT':
-                reject_count += 1
-                reject_score += weight
+            elif decision == 'FALSE_POSITIVE':
+                false_positive_count += 1
+                false_positive_score += weight
+            elif decision == 'NEEDS_VERIFIED':
+                needs_verified_count += 1
+                needs_verified_score += weight
             else:  # ABSTAIN
                 abstain_count += 1
 
         # Only count actual votes (not abstentions)
-        total_votes = verify_count + weakness_count + reject_count
+        total_votes = real_count + weakness_count + false_positive_count + needs_verified_count
 
         if total_votes == 0:
             # All abstained - needs cleanup or reject
             return {
                 'verified': False,
                 'is_weakness': False,
+                'needs_agentic': False,
                 'confidence': 0,
                 'votes': votes,
-                'verify_count': 0,
+                'real_count': 0,
                 'weakness_count': 0,
-                'reject_count': 0,
+                'false_positive_count': 0,
+                'needs_verified_count': 0,
                 'reason': 'All models abstained (parsing failures)'
             }
 
@@ -377,44 +391,51 @@ REJECT if:
             majority_threshold = 2  # Need 2/3 for 3+ models
 
         # Determine outcome - each category needs majority independently
-        # VERIFY wins if it has majority of VERIFY votes
-        # WEAKNESS wins if it has majority AND more than VERIFY
-        # Otherwise REJECT
+        # REAL wins if it has majority of REAL votes
+        # WEAKNESS wins if it has majority AND more than REAL
+        # NEEDS_VERIFIED wins if it has majority (triggers agentic verification)
+        # Otherwise FALSE_POSITIVE
 
-        is_verified = verify_count >= majority_threshold
-        is_weakness = weakness_count >= majority_threshold and weakness_count > verify_count
-        is_rejected = reject_count >= majority_threshold or (not is_verified and not is_weakness)
+        is_real = real_count >= majority_threshold
+        is_weakness = weakness_count >= majority_threshold and weakness_count > real_count
+        is_needs_verified = needs_verified_count >= majority_threshold
+        is_false_positive = false_positive_count >= majority_threshold or (not is_real and not is_weakness and not is_needs_verified)
 
         # Calculate confidence based on agreement
-        if is_verified:
-            confidence = int((verify_count / total_votes) * 100)
+        if is_real:
+            confidence = int((real_count / total_votes) * 100)
         elif is_weakness:
             confidence = int((weakness_count / total_votes) * 100)
-        elif is_rejected:
-            confidence = int((reject_count / total_votes) * 100)
+        elif is_needs_verified:
+            confidence = int((needs_verified_count / total_votes) * 100)
+        elif is_false_positive:
+            confidence = int((false_positive_count / total_votes) * 100)
         else:
             confidence = 0
 
         # Build result
         result = {
-            'verified': is_verified,
+            'verified': is_real,
             'is_weakness': is_weakness,
-            'rejected': is_rejected,
+            'needs_agentic': is_needs_verified,  # Flag for agentic verification
+            'rejected': is_false_positive,
             'confidence': confidence,
             'votes': votes,
-            'verify_count': verify_count,
+            'real_count': real_count,
             'weakness_count': weakness_count,
-            'reject_count': reject_count,
+            'false_positive_count': false_positive_count,
+            'needs_verified_count': needs_verified_count,
             'abstain_count': abstain_count,
-            'verify_score': round(verify_score, 2),
+            'real_score': round(real_score, 2),
             'weakness_score': round(weakness_score, 2),
-            'reject_score': round(reject_score, 2)
+            'false_positive_score': round(false_positive_score, 2),
+            'needs_verified_score': round(needs_verified_score, 2)
         }
 
-        if is_verified:
-            # Find best VERIFY vote for details
-            verify_votes = [v for v in votes if v['decision'] == 'VERIFY']
-            best_vote = max(verify_votes, key=lambda v: v['confidence']) if verify_votes else None
+        if is_real:
+            # Find best REAL vote for details
+            real_votes = [v for v in votes if v['decision'] == 'REAL']
+            best_vote = max(real_votes, key=lambda v: v['confidence']) if real_votes else None
 
             if best_vote:
                 result['title'] = draft.title
@@ -434,10 +455,20 @@ REJECT if:
                 result['reasoning'] = best_vote.get('reasoning', '')
                 result['reason'] = best_vote.get('reasoning', '')
 
+        elif is_needs_verified:
+            # Find best NEEDS_VERIFIED vote for details
+            needs_verified_votes = [v for v in votes if v['decision'] == 'NEEDS_VERIFIED']
+            best_vote = max(needs_verified_votes, key=lambda v: v['confidence']) if needs_verified_votes else None
+
+            if best_vote:
+                result['title'] = draft.title
+                result['reasoning'] = best_vote.get('reasoning', '')
+                result['reason'] = f"Needs agentic verification: {best_vote.get('reasoning', '')}"
+
         else:
-            # Rejected - find best reject vote for reason
-            reject_votes = [v for v in votes if v['decision'] == 'REJECT']
-            best_reject = max(reject_votes, key=lambda v: v['confidence']) if reject_votes else None
+            # False positive - find best FALSE_POSITIVE vote for reason
+            false_positive_votes = [v for v in votes if v['decision'] == 'FALSE_POSITIVE']
+            best_reject = max(false_positive_votes, key=lambda v: v['confidence']) if false_positive_votes else None
             if best_reject:
                 result['reason'] = best_reject['reasoning']
             else:
@@ -520,7 +551,7 @@ REJECT if:
                 'attack_vector': result.get('attack_path', ''),
                 'votes': [{
                     'model': 'agentic',
-                    'decision': 'VERIFY' if result['verified'] else 'REJECT',
+                    'decision': 'REAL' if result['verified'] else 'FALSE_POSITIVE',
                     'confidence': result['confidence'],
                     'reasoning': result['reasoning'],
                     'attack_scenario': result.get('attack_path', '')

@@ -1710,8 +1710,8 @@ File: {file_path}
 </style>
 
 <script>
-const modelsData = {
-    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens }}, max_concurrent: {{ model.max_concurrent }}, votes: {{ model.votes }}, response_format: "{{ model.response_format or 'markers' }}", tool_call_format: "{{ model.tool_call_format or 'none' }}" },{% endfor %}
+var modelsData = {
+    {% for model in models %}{{ model.id }}: { name: "{{ model.name }}", base_url: "{{ model.base_url or '' }}", max_tokens: {{ model.max_tokens or 4096 }}, max_concurrent: {{ model.max_concurrent or 1 }}, votes: {{ model.votes or 1 }}, response_format: "{{ model.response_format or 'markers' }}", tool_call_format: "{{ model.tool_call_format or 'none' }}" },{% endfor %}
 };
 
 function switchTab(tab) {

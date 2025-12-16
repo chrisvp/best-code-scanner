@@ -796,10 +796,16 @@ class ModelPool:
                 Uses streaming to keep connection alive during long inference.
                 """
                 log_id = pending_log_ids[idx] if idx < len(pending_log_ids) else None
+
+                # Log before acquiring semaphore
+                semaphore_wait_start = time.time()
+                semaphore_value = getattr(self.semaphore, '_value', 'unknown')
+                print(f"[SEMAPHORE] Waiting for semaphore - model={self.config.name}, task_idx={idx}, semaphore_value={semaphore_value}, log_id={log_id}")
+
                 async with self.semaphore:
-                    # Mark as running now that we have the semaphore
-                    if log_id:
-                        llm_logger.set_running(log_id)
+                    # Log after acquiring semaphore
+                    time_waited = (time.time() - semaphore_wait_start) * 1000  # in milliseconds
+                    print(f"[SEMAPHORE] Acquired semaphore - model={self.config.name}, task_idx={idx}, log_id={log_id}, time_waited={time_waited:.2f}ms")
 
                     start_time = time.time()
                     tokens_in = None
@@ -849,8 +855,20 @@ class ModelPool:
                                 # Invalid schema - fall back to regular json mode
                                 request_payload["response_format"] = {"type": "json_object"}
 
+                        # Mark as running now that HTTP request is about to start
+                        if log_id:
+                            llm_logger.set_running(log_id)
+
+                        # HTTP request starting
+                        http_start_time = time.time()
+                        print(f"[HTTP START] model={self.config.name}, log_id={log_id}, url={url}")
+
                         # Use streaming to avoid timeout issues
                         result = await _stream_chat_completion(client, url, request_payload, api_key)
+
+                        # HTTP request completed
+                        http_duration_ms = (time.time() - http_start_time) * 1000
+                        print(f"[HTTP COMPLETE] model={self.config.name}, log_id={log_id}, duration={http_duration_ms:.2f}ms")
 
                         # Check for errors
                         if "error" in result:
@@ -889,6 +907,9 @@ class ModelPool:
                         traceback.print_exc()
                         duration_ms = (time.time() - start_time) * 1000
                         return ("", prompt, duration_ms, None, None, error_msg, log_id)
+                    finally:
+                        # Log when releasing semaphore
+                        print(f"[SEMAPHORE] Released semaphore - model={self.config.name}, task_idx={idx}, log_id={log_id}")
 
             tasks = [send_one_streaming(prompt, i) for i, prompt in enumerate(prompts)]
             batch_results = await asyncio.gather(*tasks)

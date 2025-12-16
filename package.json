@@ -1,1 +1,12 @@
-{}
+{
+  "name": "davy-code-scanner",
+  "version": "1.0.0",
+  "description": "LLM-powered security vulnerability scanner",
+  "scripts": {
+    "build:css": "tailwindcss -i ./backend/app/static/input.css -o ./backend/app/static/output.css --minify",
+    "watch:css": "tailwindcss -i ./backend/app/static/input.css -o ./backend/app/static/output.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

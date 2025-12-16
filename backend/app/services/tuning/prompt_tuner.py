@@ -485,17 +485,20 @@ class PromptTuner:
             match = re.search(pattern, response, re.IGNORECASE)
             if match:
                 vote = match.group(1).upper().strip()
-                # Normalize vote values
-                if vote in ["REAL", "VERIFIED", "TRUE", "YES", "VERIFY"]:
+                # Normalize vote values to the 4 supported types
+                if vote in ["REAL"]:
                     result["vote"] = "REAL"
-                elif vote in ["FALSE_POSITIVE", "FP", "REJECTED", "FALSE", "NO", "REJECT"]:
+                elif vote in ["FALSE_POSITIVE", "FP"]:
                     result["vote"] = "FALSE_POSITIVE"
-                elif vote in ["WEAKNESS", "WEAK", "CODE_SMELL"]:
+                elif vote in ["WEAKNESS"]:
                     result["vote"] = "WEAKNESS"
-                elif vote in ["NEEDS_VERIFIED", "UNCLEAR", "UNCERTAIN", "UNSURE"]:
+                elif vote in ["NEEDS_VERIFIED"]:
                     result["vote"] = "NEEDS_VERIFIED"
                 else:
-                    result["vote"] = vote
+                    # Unknown vote type - don't recognize it
+                    result["vote"] = None
+                    result["parse_success"] = False
+                    result["parse_error"] = f"Unrecognized vote type: {vote}"
                 break
 
         # Extract confidence
@@ -567,19 +570,10 @@ class PromptTuner:
         if predicted == truth:
             return True
 
-        # Handle aliases
-        real_aliases = {"REAL", "VERIFIED", "TRUE", "VERIFY"}
-        fp_aliases = {"FALSE_POSITIVE", "FP", "REJECTED", "REJECT"}
-        weakness_aliases = {"WEAKNESS", "WEAK", "CODE_SMELL"}
-        unclear_aliases = {"NEEDS_VERIFIED", "UNCLEAR", "UNCERTAIN"}
+        # Handle minimal aliases (FP is common shorthand)
+        fp_aliases = {"FALSE_POSITIVE", "FP"}
 
-        if predicted in real_aliases and truth in real_aliases:
-            return True
         if predicted in fp_aliases and truth in fp_aliases:
-            return True
-        if predicted in weakness_aliases and truth in weakness_aliases:
-            return True
-        if predicted in unclear_aliases and truth in unclear_aliases:
             return True
 
         return False

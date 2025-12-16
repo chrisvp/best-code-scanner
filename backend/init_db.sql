@@ -2188,7 +2188,7 @@ Reported vulnerability:
 - Reason: {finding_reason}
 
 SKEPTICAL ANALYST INSTRUCTIONS:
-Assume the scanner is WRONG. Your job is to find reasons this is FALSE_POSITIVE. Only vote VERIFY if you absolutely cannot dismiss it.
+Assume the scanner is WRONG. Your job is to find reasons this is FALSE_POSITIVE. Only vote REAL if you absolutely cannot dismiss it.
 
 Look for:
 - Bounds checks the scanner missed
@@ -2197,7 +2197,7 @@ Look for:
 - Logic that makes the attack path impossible
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Your analysis focusing on why this is likely a false positive]
 *END_VERIFIED', '2025-12-10 14:33:45.272115', '2025-12-12 06:16:07');
@@ -2231,7 +2231,7 @@ Use structured thinking:
 </thinking>
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Summary of your step-by-step analysis]
 *END_VERIFIED', '2025-12-11 22:20:18', '2025-12-12 06:16:07');
@@ -2256,8 +2256,8 @@ ADVERSARIAL EXPERT INSTRUCTIONS:
 You are an offensive security expert. Your goal is to prove this code is EXPLOITABLE. Try to construct a valid attack scenario.
 
 MISSION:
-- If you can prove an exploit path exists -> VOTE VERIFY
-- If the code prevents exploitation (bounds checks, types, logic) -> VOTE REJECT
+- If you can prove an exploit path exists -> VOTE REAL
+- If the code prevents exploitation (bounds checks, types, logic) -> VOTE FALSE_POSITIVE
 
 Construct the attack:
 1. What input do you control?
@@ -2266,7 +2266,7 @@ Construct the attack:
 4. Can you bypass protections?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Describe your attack scenario or why exploitation failed]
 *END_VERIFIED', '2025-12-11 22:20:18', '2025-12-12 06:16:07');
@@ -2294,11 +2294,11 @@ Perform a systematic data flow analysis:
 2. Identify the Sink (dangerous function at line {finding_line})
 3. Check all intermediate steps for Sanitization or Validation
 
-If Source -> Sink exists without proper validation -> VERIFY
-Otherwise -> REJECT
+If Source -> Sink exists without proper validation -> REAL
+Otherwise -> FALSE_POSITIVE
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Describe the complete data path and validation checks]
 *END_VERIFIED', '2025-12-11 22:20:18', '2025-12-12 06:16:07');
@@ -2331,7 +2331,7 @@ Question everything:
 - Do they even know how this language works?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (if undeniably real) or REJECT (if bullshit)
+*VOTE: REAL (if undeniably real) or FALSE_POSITIVE (if bullshit)
 *CONFIDENCE: [0-100]
 *REASONING: [Your brutal assessment]
 *END_VERIFIED', '2025-12-11T21:30:54.647956', '2025-12-12 06:16:07');
@@ -2363,7 +2363,7 @@ Economic reality:
 Verify with extreme prejudice. Assume it''s wrong unless the evidence is undeniable. Your job is on the line if you waste more developer time on garbage.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Business-focused analysis of real vs theoretical risk]
 *END_VERIFIED', '2025-12-11T21:30:54.648014', '2025-12-12 06:16:07');
@@ -2396,7 +2396,7 @@ Can you ACTUALLY exploit this? Think through the concrete attack:
 If you can''t write the exploit code, it''s not real.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (with exploit path) or REJECT (can''t exploit)
+*VOTE: REAL (with exploit path) or FALSE_POSITIVE (can''t exploit)
 *CONFIDENCE: [0-100]
 *REASONING: [Concrete exploitation analysis with specific attack steps]
 *END_VERIFIED', '2025-12-11T21:30:54.648023', '2025-12-12 06:16:07');
@@ -2435,7 +2435,7 @@ They accept:
 Would you submit this? Would it get paid?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (would submit) or REJECT (would not submit)
+*VOTE: REAL (would submit) or FALSE_POSITIVE (would not submit)
 *CONFIDENCE: [0-100]
 *REASONING: [Bug bounty evaluation]
 *END_VERIFIED', '2025-12-11T21:30:54.648033', '2025-12-12 06:16:07');
@@ -2459,21 +2459,21 @@ Reported vulnerability:
 POC REQUIRED INSTRUCTIONS:
 You must either write WORKING exploit code that demonstrates exploitation, OR prove mathematically/logically why exploitation is IMPOSSIBLE.
 
-No middle ground. "Might be vulnerable" = REJECT.
+No middle ground. "Might be vulnerable" = FALSE_POSITIVE.
 
-If VERIFY, show:
+If REAL, show:
 1. Exact input that triggers the vulnerability
 2. Precise code path from input to vulnerable operation
 3. Working exploit or detailed exploitation steps
 4. Why existing protections don''t prevent this
 
-If REJECT, show:
+If FALSE_POSITIVE, show:
 1. Why the attack path is blocked
 2. What protections prevent exploitation
 3. Why the scanner''s analysis is wrong
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Concrete proof - code or logic]
 *END_VERIFIED', '2025-12-11T21:30:54.648040', '2025-12-12 06:16:07');
@@ -2504,10 +2504,10 @@ Build your defense:
 - Are there mitigations in place?
 - Is the attack scenario realistic?
 
-Only plead guilty (VERIFY) if you cannot mount a defense. If you have ANY reasonable doubt, fight it (REJECT).
+Only plead guilty (REAL) if you cannot mount a defense. If you have ANY reasonable doubt, fight it (FALSE_POSITIVE).
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (guilty) or REJECT (not guilty)
+*VOTE: REAL (guilty) or FALSE_POSITIVE (not guilty)
 *CONFIDENCE: [0-100]
 *REASONING: [Defense arguments]
 *END_VERIFIED', '2025-12-11T21:30:54.648047', '2025-12-12 06:16:07');
@@ -2541,7 +2541,7 @@ Pentest questions:
 Be realistic. Don''t report findings you couldn''t exploit in a real engagement.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (exploitable in pentest) or REJECT (not exploitable)
+*VOTE: REAL (exploitable in pentest) or FALSE_POSITIVE (not exploitable)
 *CONFIDENCE: [0-100]
 *REASONING: [Practical exploitation assessment]
 *END_VERIFIED', '2025-12-11T21:30:54.648054', '2025-12-12 06:16:07');
@@ -2577,7 +2577,7 @@ Calculate P(real|evidence):
 3. Posterior: P(real|evidence) = ?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (if P(real|evidence) > 0.7) or REJECT
+*VOTE: REAL (if P(real|evidence) > 0.7) or FALSE_POSITIVE
 *CONFIDENCE: [0-100 based on posterior probability]
 *REASONING: [Bayesian analysis with base rates]
 *END_VERIFIED', '2025-12-11T21:30:54.648062', '2025-12-12 06:16:07');
@@ -2608,12 +2608,12 @@ Task:
 If you can''t write a specific fix, you don''t understand the issue well enough.
 
 Rules:
-- No fix needed = REJECT
-- Fix is obvious and necessary = VERIFY
-- Can''t write concrete fix = REJECT (uncertain)
+- No fix needed = FALSE_POSITIVE
+- Fix is obvious and necessary = REAL
+- Can''t write concrete fix = FALSE_POSITIVE (uncertain)
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Analysis with proposed fix code]
 *END_VERIFIED', '2025-12-11T21:30:54.648070', '2025-12-12 06:16:07');
@@ -2647,7 +2647,7 @@ Compiler questions:
 Consider: Compilers assume no undefined behavior. If the vulnerability requires UB, the compiler might optimize it away.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Compiler analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648077', '2025-12-12 06:16:07');
@@ -2678,10 +2678,10 @@ Quick: What''s the attack?
 - What''s the impact?
 
 No time for theory - need concrete steps NOW.
-Can''t do it fast = REJECT.
+Can''t do it fast = FALSE_POSITIVE.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (found attack path) or REJECT (no clear path)
+*VOTE: REAL (found attack path) or FALSE_POSITIVE (no clear path)
 *CONFIDENCE: [0-100]
 *REASONING: [Quick exploitation analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648084', '2025-12-12 06:16:07');
@@ -2716,7 +2716,7 @@ Research methodology:
 Be thorough but rigorous. Don''t publish false claims.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Methodical research analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648091', '2025-12-12 06:16:07');
@@ -2751,7 +2751,7 @@ Red team considerations:
 You need reliable exploits, not maybes. Would you waste time on this?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (worth exploiting) or REJECT (not worth it)
+*VOTE: REAL (worth exploiting) or FALSE_POSITIVE (not worth it)
 *CONFIDENCE: [0-100]
 *REASONING: [Red team assessment]
 *END_VERIFIED', '2025-12-11T21:30:54.648098', '2025-12-12 06:16:07');
@@ -2784,7 +2784,7 @@ Review questions:
 Teach the junior: explain what''s real vs what looks scary but isn''t.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (real issue) or REJECT (false alarm)
+*VOTE: REAL (real issue) or FALSE_POSITIVE (false alarm)
 *CONFIDENCE: [0-100]
 *REASONING: [Code review feedback]
 *END_VERIFIED', '2025-12-11T21:30:54.648105', '2025-12-12 06:16:07');
@@ -2817,7 +2817,7 @@ Incident questions:
 You need concrete answers for the executive team.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (likely attack vector) or REJECT (unlikely)
+*VOTE: REAL (likely attack vector) or FALSE_POSITIVE (unlikely)
 *CONFIDENCE: [0-100]
 *REASONING: [Forensic analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648112', '2025-12-12 06:16:07');
@@ -2850,7 +2850,7 @@ Questions:
 Be security-minded but pragmatic. Don''t cry wolf.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (block release) or REJECT (ship it)
+*VOTE: REAL (block release) or FALSE_POSITIVE (ship it)
 *CONFIDENCE: [0-100]
 *REASONING: [Risk-based decision]
 *END_VERIFIED', '2025-12-11T21:30:54.648119', '2025-12-12 06:16:07');
@@ -2883,7 +2883,7 @@ Kernel developer perspective:
 You''ve seen thousands of false positives from scanners that don''t understand kernel internals.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Kernel internals analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648126', '2025-12-12 06:16:07');
@@ -2916,7 +2916,7 @@ Zero-day criteria:
 You only care about high-value findings. Is this actually exploitable in a way that matters?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (real 0-day potential) or REJECT (known issue/not exploitable)
+*VOTE: REAL (real 0-day potential) or FALSE_POSITIVE (known issue/not exploitable)
 *CONFIDENCE: [0-100]
 *REASONING: [Vulnerability research analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648133', '2025-12-12 06:16:07');
@@ -2949,7 +2949,7 @@ Firmware context:
 Desktop security scanners often misunderstand firmware threat models.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Firmware-specific analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648140', '2025-12-12 06:16:07');
@@ -2983,7 +2983,7 @@ AppSec triage:
 Prioritize based on real risk, not theoretical severity.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (add to backlog) or REJECT (close as false positive)
+*VOTE: REAL (add to backlog) or FALSE_POSITIVE (close as false positive)
 *CONFIDENCE: [0-100]
 *REASONING: [AppSec triage analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648147', '2025-12-12 06:16:07');
@@ -3013,10 +3013,10 @@ Bob (Domain Expert): Believes {finding_type} vulnerabilities are NEVER exploitab
 
 Carol (You): Try to be objective. Can you defend this finding against Alice and Bob''s attacks?
 
-If Alice and Bob make good points you can''t refute, vote REJECT.
+If Alice and Bob make good points you can''t refute, vote FALSE_POSITIVE.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (defended successfully) or REJECT (can''t defend)
+*VOTE: REAL (defended successfully) or FALSE_POSITIVE (can''t defend)
 *CONFIDENCE: [0-100]
 *REASONING: [Committee discussion summary]
 *END_VERIFIED', '2025-12-11T21:30:54.648153', '2025-12-12 06:16:07');
@@ -3051,7 +3051,7 @@ STRIDE analysis:
 Which threats apply? What''s the attack path? What mitigations exist?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [STRIDE-based threat analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648161', '2025-12-12 06:16:07');
@@ -3084,7 +3084,7 @@ Forensic questions:
 If exploitation would be undetectable, it''s either not real or the impact is minimal.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Forensic analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648168', '2025-12-12 06:16:07');
@@ -3119,7 +3119,7 @@ In CTFs, the vulnerability is always real. In production, most flags are fake.
 Is this a real vuln or CTF-only?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (real exploit) or REJECT (CTF-only/not real)
+*VOTE: REAL (real exploit) or FALSE_POSITIVE (CTF-only/not real)
 *CONFIDENCE: [0-100]
 *REASONING: [CTF analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648175', '2025-12-12 06:16:07');
@@ -3155,7 +3155,7 @@ Distinguish between:
 - Code smells (nice to fix)
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (compliance violation) or REJECT (compliant)
+*VOTE: REAL (compliance violation) or FALSE_POSITIVE (compliant)
 *CONFIDENCE: [0-100]
 *REASONING: [Compliance analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648182', '2025-12-12 06:16:07');
@@ -3188,7 +3188,7 @@ GDB session plan:
 Write the GDB commands that would demonstrate the exploit. If you can''t write a concrete debug session showing exploitation, it''s not real.
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY (can demonstrate in GDB) or REJECT (cannot)
+*VOTE: REAL (can demonstrate in GDB) or FALSE_POSITIVE (cannot)
 *CONFIDENCE: [0-100]
 *REASONING: [GDB session walkthrough]
 *END_VERIFIED', '2025-12-11T21:30:54.648189', '2025-12-12 06:16:07');
@@ -3227,7 +3227,7 @@ Common true positive patterns:
 Which pattern does this match?
 
 === OUTPUT FORMAT ===
-*VOTE: VERIFY or REJECT
+*VOTE: REAL or FALSE_POSITIVE
 *CONFIDENCE: [0-100]
 *REASONING: [Pattern recognition analysis]
 *END_VERIFIED', '2025-12-11T21:30:54.648196', '2025-12-12 06:16:07');

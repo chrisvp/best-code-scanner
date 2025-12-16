@@ -41,3 +41,5 @@ cookies.txt
 test_outputs/
 temp/
 tmp/
+backend/app/static/output.css
+node_modules/

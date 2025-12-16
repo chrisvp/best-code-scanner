@@ -1,0 +1,31 @@
+//
+// FILENAME.
+//      BootManagerUi.uni - UI Strings token ID definition.
+//
+// FUNCTIONAL DESCRIPTION.
+//      This file describes the configurable strings for the UI.
+//
+// NOTICE.
+//      Copyright (C) 2013-2024 Phoenix Technologies.  All Rights Reserved.
+//
+
+/=#
+
+#include "Languages.uni"
+
+//
+// UI strings.
+//
+
+#string SYSTEM_BOOT_MANAGER_TITLE_STR             #language en-US "Boot Manager"
+                                                  #language ko-KR "부트 매니저"
+                                                  #language ja-JP "ブート マネージャー"
+                                                  #language zh-CHT "啟動管理員"
+                                                  #language zh-CHS "启动管理员"
+
+#string SYSTEM_BOOT_MANAGER_CSM_SUPPORT_QUERY_STR #language en-US "Current setting only supports UEFI OS.\r\n Load CSM modules in next boot?"
+                                                  #language ko-KR "현재의 셋팅은 UEFI OS만을 지원합니다.\r\n 다음 부팅시에 CSM module을 로드하시겠습니까?"
+                                                  #language ja-JP "現在の設定はUEFI OSのみをサポートします。\r\n次回ブート時にCSMモジュールをロードしますか？"
+                                                  #language zh-CHT "目前的設定僅支援UEFI OS.\r\n 在下次開機時載入CSM模組?"
+                                                  #language zh-CHS "目前的设定仅支持UEFI OS.\r\n 在下次开机时加载CSM模块?"
+

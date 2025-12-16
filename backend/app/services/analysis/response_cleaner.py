@@ -47,22 +47,21 @@ VERIFICATION_CLEANUP_PROMPT = """You are a formatting assistant. The following t
 
 Reformat it using EXACTLY this marker format:
 
-For TRUE POSITIVE:
-*VERIFIED: finding title
+*VOTE: REAL/WEAKNESS/FALSE_POSITIVE/NEEDS_VERIFIED
 *CONFIDENCE: 0-100
-*ATTACK_VECTOR: how an attacker could exploit
-*DATA_FLOW: trace from input to vulnerable sink
-*ADJUSTED_SEVERITY: Critical/High/Medium/Low (or omit if same)
+*REASONING: brief explanation
 *END_VERIFIED
 
-For FALSE POSITIVE:
-*REJECTED: finding title
-*REASON: why this is not actually vulnerable
-*END_REJECTED
+Vote meanings:
+- FALSE_POSITIVE: Scanner is wrong, code is safe
+- REAL: Confirmed exploitable vulnerability
+- NEEDS_VERIFIED: Can't confirm from visible code, needs agent verification
+- WEAKNESS: Poor practice but not directly exploitable
 
 Rules:
-- Determine if the response indicates TRUE POSITIVE or FALSE POSITIVE
-- Extract all relevant details
+- Determine the appropriate vote type based on the content
+- Extract confidence if mentioned, otherwise estimate based on language certainty
+- Summarize the reasoning
 - Do NOT add explanations, just output the formatted result
 
 Original response to reformat:
@@ -77,13 +76,19 @@ VOTE_CLEANUP_PROMPT = """You are a formatting assistant. The following text is a
 
 Reformat it using EXACTLY this marker format:
 
-*VOTE: TRUE_POSITIVE or FALSE_POSITIVE
+*VOTE: REAL/WEAKNESS/FALSE_POSITIVE/NEEDS_VERIFIED
 *CONFIDENCE: 0-100
 *REASONING: brief explanation
-*END_VOTE
+*END_VERIFIED
+
+Vote meanings:
+- FALSE_POSITIVE: Scanner is wrong, code is safe
+- REAL: Confirmed exploitable vulnerability
+- NEEDS_VERIFIED: Can't confirm from visible code, needs agent verification
+- WEAKNESS: Poor practice but not directly exploitable
 
 Rules:
-- Determine if the vote is TRUE_POSITIVE or FALSE_POSITIVE based on the text
+- Determine the appropriate vote type based on the text
 - Extract confidence if mentioned, otherwise estimate based on language certainty
 - Summarize the reasoning
 - Do NOT add explanations, just output the formatted result

@@ -124,7 +124,7 @@
 
 <script>
 // Saved repos data for auto-fill
-const savedRepos = {
+var savedRepos = {
     {% for repo in gitlab_repos %}
     {{ repo.id }}: {
         gitlab_url: "{{ repo.gitlab_url }}",

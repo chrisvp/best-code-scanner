@@ -1,0 +1,13 @@
+//
+// FILENAME.
+//      StatusBarMessage.sti - SecureCore Technology(TM) Status Bar Message Images.
+//
+// FUNCTIONAL DESCRIPTION.
+//      This file defines image token for status bar hotkey messages.
+//
+// NOTICE.
+//      Copyright (C) 2013-2024 Phoenix Technologies.  All Rights Reserved.
+//
+
+#image STATUS_BAR_HOTKEY        "Images/SbHotkeyMsg1.gif"
+#image STATUS_BAR_HOTKEY_WAIT   "Images/SbHotkeyMsg2.gif"
