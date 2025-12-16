@@ -2190,127 +2190,93 @@ async def get_diff_file_content(finding_id: int, model: str, db: Session = Depen
 @router.post("/finding/{finding_id}/reparse")
 async def reparse_finding(finding_id: int, request: Request, db: Session = Depends(get_db)):
     """
-    Reparse a finding using the cleanup model to fix malformed data.
-    This is useful when the enricher produced a response in the wrong format
-    and all data ended up in the description field.
+    Re-run the enrichment step for a finding.
+    This re-generates the full security report from the verified finding using the enricher.
     """
-    from app.services.analysis.parsers import EnrichmentParser
+    from app.services.analysis.enricher import FindingEnricher
+    from app.services.orchestration.model_orchestrator import ModelPool
+    from app.models.scanner_models import VerifiedFinding
 
     # Get the finding
     finding = db.query(Finding).filter(Finding.id == finding_id).first()
     if not finding:
         return {"error": "Finding not found"}
 
-    # Get global settings for cleanup model
-    cleanup_model_setting = db.query(GlobalSetting).filter(
-        GlobalSetting.key == "cleanup_model_id"
+    if not finding.verified_id:
+        return {"error": "This finding has no verified_id, cannot re-enrich"}
+
+    # Get the verified finding
+    verified = db.query(VerifiedFinding).filter(VerifiedFinding.id == finding.verified_id).first()
+    if not verified:
+        return {"error": "Verified finding not found"}
+
+    # Get the enrichment model from global settings
+    enrichment_model_setting = db.query(GlobalSetting).filter(
+        GlobalSetting.key == "enrichment_model_id"
     ).first()
-    cleanup_prompt_setting = db.query(GlobalSetting).filter(
-        GlobalSetting.key == "cleanup_prompt_template"
+
+    if not enrichment_model_setting or not enrichment_model_setting.value:
+        return {"error": "No enrichment model configured. Go to Config > Global Settings to set one."}
+
+    enrichment_model = db.query(ModelConfig).filter(
+        ModelConfig.id == int(enrichment_model_setting.value)
     ).first()
-
-    if not cleanup_model_setting or not cleanup_model_setting.value:
-        return {"error": "No cleanup model configured. Go to Config > Global Settings to set one."}
-
-    # Get the cleanup model
-    cleanup_model = db.query(ModelConfig).filter(
-        ModelConfig.id == int(cleanup_model_setting.value)
-    ).first()
-    if not cleanup_model:
-        return {"error": "Configured cleanup model not found"}
-
-    # Build the cleanup prompt for JSON output
-    cleanup_prompt = cleanup_prompt_setting.value if cleanup_prompt_setting else (
-        "The following LLM response is malformed and needs to be reformatted into proper JSON. "
-        "Please extract the relevant information and output it as a valid JSON object.\n\n"
-        "Original response:\n{response}\n\n"
-        "Required JSON fields:\n"
-        "- finding: Vulnerability title\n"
-        "- category: CWE category (e.g., 'CWE-78 OS Command Injection')\n"
-        "- severity: Must be 'Critical', 'High', 'Medium', or 'Low'\n"
-        "- cvss: CVSS score as string (e.g., '9.8')\n"
-        "- impacted_code: Vulnerable code snippet\n"
-        "- vulnerability_details: Detailed explanation\n"
-        "- proof_of_concept: Example attack or exploit\n"
-        "- remediation_steps: How to fix (use \\n for line breaks)\n"
-        "- references: Reference URLs\n\n"
-        "Output ONLY valid JSON matching this schema. Do not include markdown formatting."
-    )
-
-    # The malformed data is likely in the description field
-    malformed_response = finding.description or ""
-
-    # Also check if there's data in other fields that should be combined
-    if finding.vulnerability_details:
-        malformed_response += "\n\nVULNERABILITY_DETAILS:\n" + finding.vulnerability_details
-    if finding.proof_of_concept:
-        malformed_response += "\n\nPROOF_OF_CONCEPT:\n" + finding.proof_of_concept
-    if finding.remediation_steps:
-        malformed_response += "\n\nREMEDIATION_STEPS:\n" + finding.remediation_steps
-
-    prompt = cleanup_prompt.format(response=malformed_response)
+    if not enrichment_model:
+        return {"error": "Configured enrichment model not found"}
 
     try:
-        # Call the cleanup model with guided JSON
-        from app.services.orchestration.model_orchestrator import ModelPool
-        from app.services.analysis.enricher import ENRICHMENT_SCHEMA
-        import json
+        # Detach config from session to avoid refresh errors
+        db.expunge(enrichment_model)
 
-        result = await ModelPool.simple_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=cleanup_model.name,
-            base_url=cleanup_model.base_url,
-            api_key=cleanup_model.api_key,
-            output_mode="guided_json",
-            json_schema=json.dumps(ENRICHMENT_SCHEMA)
-        )
-        response = result.get("content", "")
+        # Create a model pool for the enrichment model
+        model_pool = ModelPool(enrichment_model)
+        await model_pool.start()
 
-        if not response:
-            return {"error": "Cleanup model returned empty response"}
+        # Create enricher and re-run enrichment
+        enricher = FindingEnricher(model_pool, db)
+        enriched = await enricher.enrich_single(verified)
 
-        # Parse the JSON response
-        try:
-            parsed = json.loads(response) if response.strip() else {}
-        except json.JSONDecodeError:
-            # Fallback to marker parser if JSON fails
-            parser = EnrichmentParser()
-            parsed = parser.parse(response)
+        await model_pool.stop()
 
-        if not parsed:
-            return {"error": "Failed to parse cleaned response", "raw_response": response[:500]}
+        if not enriched:
+            return {"error": "Enrichment returned empty result"}
 
-        # Update the finding with parsed data
+        # Update the finding with new enriched data
+        import re
         updates = {}
-        if parsed.get('finding'):
-            finding.description = parsed['finding']
-            updates['description'] = parsed['finding'][:50] + "..."
-        if parsed.get('category'):
-            finding.category = parsed['category']
-            updates['category'] = parsed['category']
-        if parsed.get('severity'):
-            finding.severity = parsed['severity']
-            updates['severity'] = parsed['severity']
-        if parsed.get('cvss'):
+        if enriched.get('finding'):
+            finding.description = enriched['finding']
+            updates['description'] = enriched['finding'][:50] + "..."
+        if enriched.get('category'):
+            finding.category = enriched['category']
+            updates['category'] = enriched['category']
+        if enriched.get('severity'):
+            finding.severity = enriched['severity']
+            updates['severity'] = enriched['severity']
+        if enriched.get('cvss'):
             try:
-                finding.cvss_score = float(parsed['cvss'].split()[0])
-                updates['cvss_score'] = finding.cvss_score
+                cvss_str = enriched['cvss']
+                # Extract numeric part
+                match = re.search(r'(\d+\.?\d*)', cvss_str)
+                if match:
+                    finding.cvss_score = float(match.group(1))
+                    updates['cvss_score'] = finding.cvss_score
             except:
                 pass
-        if parsed.get('impacted_code'):
-            finding.snippet = parsed['impacted_code']
+        if enriched.get('impacted_code'):
+            finding.snippet = enriched['impacted_code']
             updates['snippet'] = "updated"
-        if parsed.get('vulnerability_details'):
-            finding.vulnerability_details = parsed['vulnerability_details']
+        if enriched.get('vulnerability_details'):
+            finding.vulnerability_details = enriched['vulnerability_details']
             updates['vulnerability_details'] = "updated"
-        if parsed.get('proof_of_concept'):
-            finding.proof_of_concept = parsed['proof_of_concept']
+        if enriched.get('proof_of_concept'):
+            finding.proof_of_concept = enriched['proof_of_concept']
             updates['proof_of_concept'] = "updated"
-        if parsed.get('remediation_steps'):
-            finding.remediation_steps = parsed['remediation_steps']
+        if enriched.get('remediation_steps'):
+            finding.remediation_steps = enriched['remediation_steps']
             updates['remediation_steps'] = "updated"
-        if parsed.get('references'):
-            finding.references = parsed['references']
+        if enriched.get('references'):
+            finding.references = enriched['references']
             updates['references'] = "updated"
 
         db.commit()
@@ -2318,7 +2284,7 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
         return {
             "success": True,
             "updates": updates,
-            "message": f"Successfully reparsed finding with {len(updates)} fields updated"
+            "message": f"Successfully re-enriched finding with {len(updates)} fields updated"
         }
 
     except Exception as e:
