@@ -311,14 +311,19 @@ The fix should address the security issue while maintaining the original functio
                 output_mode=self.output_mode,
                 json_schema=self.json_schema if self.output_mode == "guided_json" else None
             )
-            # Parse JSON responses instead of marker format
+            # Parse responses based on output mode
             results = []
             for r in responses:
-                try:
-                    parsed = json.loads(r) if r.strip() else {}
-                    results.append(parsed)
-                except json.JSONDecodeError:
-                    # Fallback to marker parser if JSON fails
+                if self.output_mode == "guided_json" or self.output_mode == "json":
+                    # Try JSON parsing first for JSON modes
+                    try:
+                        parsed = json.loads(r) if r.strip() else {}
+                        results.append(parsed)
+                    except json.JSONDecodeError:
+                        # Fallback to marker parser if JSON fails
+                        results.append(self.parser.parse(r))
+                else:
+                    # Use marker parser for markers mode
                     results.append(self.parser.parse(r))
 
             # Check for incomplete results and collect indices for retry
@@ -345,9 +350,13 @@ The fix should address the security issue while maintaining the original functio
                         json_schema=self.json_schema if self.output_mode == "guided_json" else None
                     )
                     for (i, verified, _, partial_result), retry_response in zip(incomplete_indices, retry_responses):
-                        try:
-                            retry_result = json.loads(retry_response) if retry_response.strip() else {}
-                        except json.JSONDecodeError:
+                        # Parse retry response based on output mode
+                        if self.output_mode == "guided_json" or self.output_mode == "json":
+                            try:
+                                retry_result = json.loads(retry_response) if retry_response.strip() else {}
+                            except json.JSONDecodeError:
+                                retry_result = self.parser.parse(retry_response)
+                        else:
                             retry_result = self.parser.parse(retry_response)
                         # Merge retry result with original (retry takes precedence for filled fields)
                         merged = self._merge_results(partial_result, retry_result)
