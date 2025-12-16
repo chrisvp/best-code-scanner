@@ -1228,14 +1228,10 @@ class ScanPipeline:
         if not enricher_pool:
             return
 
-        # Get enricher output mode settings from profile
-        output_mode = "guided_json"  # Default
+        # Use guided_json as default for best results
+        # TODO: When scans get associated with profiles, read from profile settings
+        output_mode = "guided_json"
         json_schema = None
-        if self.profile_id:
-            profile = self.db.query(ScanProfile).filter(ScanProfile.id == self.profile_id).first()
-            if profile:
-                output_mode = profile.enricher_output_mode or "guided_json"
-                json_schema = profile.enricher_json_schema
 
         enricher = FindingEnricher(enricher_pool, self.db, output_mode=output_mode, json_schema=json_schema)
         batch_size = 3
