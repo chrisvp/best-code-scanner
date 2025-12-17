@@ -563,7 +563,6 @@ def get_models(db: Session = Depends(get_db)):
         {
             "id": m.id,
             "name": m.name,
-            "is_verifier": m.is_verifier,
         }
         for m in models
     ]

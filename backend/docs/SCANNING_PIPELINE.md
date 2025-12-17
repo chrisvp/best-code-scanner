@@ -420,8 +420,7 @@ ProfileAnalyzer:
 |------|---------|
 | `is_analyzer` | Can scan for vulnerabilities |
 | `is_verifier` | Can vote on findings |
-| `is_cleanup` | Reformats malformed responses |
-| `is_chat` | Default for chat interface |
+| `is_chat` | Default for chat interface and cleanup tasks |
 
 ---
 

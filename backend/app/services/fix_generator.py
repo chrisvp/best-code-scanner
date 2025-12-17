@@ -613,12 +613,17 @@ When ready, output your fix wrapped in ```fix``` code blocks."""
             return f"Error saving fix: {str(e)}"
 
     async def _cleanup_diff_format(self, content: str, file_path: str) -> Optional[str]:
-        """Use cleanup model to convert malformed diff into proper unified diff format."""
+        """Use cleanup model to convert malformed diff into proper unified diff format.
+
+        Uses chat models as they're generally better at following formatting instructions.
+        """
         try:
             from app.models.scanner_models import ModelConfig
 
-            # Get cleanup model
-            cleanup_model = self.db.query(ModelConfig).filter(ModelConfig.is_cleanup == True).first()
+            # Use first chat model for cleanup, or first model if no chat models
+            cleanup_model = self.db.query(ModelConfig).filter(ModelConfig.is_chat == True).first()
+            if not cleanup_model:
+                cleanup_model = self.db.query(ModelConfig).first()
             if not cleanup_model:
                 return None
 

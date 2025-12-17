@@ -24,10 +24,8 @@ class ModelConfig(Base):
     votes = Column(Integer, default=1)  # Voting weight for consensus
     chunk_size = Column(Integer, default=3000)  # Average tokens per chunk for this model
 
-    is_analyzer = Column(Boolean, default=False)
-    is_verifier = Column(Boolean, default=False)
-    is_cleanup = Column(Boolean, default=False)  # Model for cleaning up malformed LLM responses
-    is_chat = Column(Boolean, default=False)  # Default model for chat interface
+    # Chat model flag - used for user-selectable default in chat UI and cleanup fallback
+    is_chat = Column(Boolean, default=False)
 
     # Response format: 'markers' (text-based), 'json' (structured JSON), 'json_schema' (JSON with schema enforcement)
     response_format = Column(String, default='markers')

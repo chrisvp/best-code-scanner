@@ -110,17 +110,24 @@ class ResponseCleaner:
         self._initialized = False
 
     def _get_cleanup_model(self) -> Optional[ModelConfig]:
-        """Get the configured cleanup model from database"""
+        """Get the configured cleanup model from database
+
+        Uses chat models as they're generally better at following formatting instructions.
+        Falls back to first available model if no chat models configured.
+        """
         if not self._initialized:
+            # Use first chat model for cleanup, or first model if no chat models
             self._cleanup_model = self.db.query(ModelConfig).filter(
-                ModelConfig.is_cleanup == True
+                ModelConfig.is_chat == True
             ).first()
+            if not self._cleanup_model:
+                self._cleanup_model = self.db.query(ModelConfig).first()
             self._initialized = True
 
             if self._cleanup_model:
                 logger.info(f"Using cleanup model: {self._cleanup_model.name}")
             else:
-                logger.warning("No cleanup model configured (is_cleanup=True)")
+                logger.warning("No models configured for cleanup")
 
         return self._cleanup_model
 

@@ -1075,16 +1075,16 @@ class ModelOrchestrator:
         return list(self.pools.values())
 
     def get_verifiers(self) -> List[ModelPool]:
-        """Get all verifier model pools.
+        """Get verifier model pools.
 
-        If a profile_id was specified, return only models from that profile's verifiers.
-        Otherwise, fall back to models with is_verifier=True.
+        If profile_id specified, uses profile's verifiers.
+        Otherwise returns all available models (no is_verifier filtering).
         """
         if self._profile_verifier_model_ids:
             # Use profile-specific verifiers
             return [p for p in self.pools.values() if p.config.id in self._profile_verifier_model_ids]
-        # Fall back to global is_verifier flag
-        return [p for p in self.pools.values() if p.config.is_verifier]
+        # Fallback: return all models
+        return list(self.pools.values())
 
     def get_pool(self, name: str) -> Optional[ModelPool]:
         """Get a specific model pool by name"""

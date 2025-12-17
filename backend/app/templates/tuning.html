@@ -432,10 +432,8 @@ async function loadModels() {
 
         container.innerHTML = availableModels.map(model => `
             <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer hover:text-white">
-                <input type="checkbox" class="model-checkbox" value="${model.id}" data-name="${model.name}"
-                    ${model.is_analyzer ? 'checked' : ''}>
+                <input type="checkbox" class="model-checkbox" value="${model.id}" data-name="${model.name}">
                 ${model.name}
-                ${model.is_analyzer ? '<span class="text-xs text-blue-400">(analyzer)</span>' : ''}
             </label>
         `).join('');
     } catch (e) {

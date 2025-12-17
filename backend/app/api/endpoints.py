@@ -1320,8 +1320,6 @@ async def list_models(db: Session = Depends(get_db)):
             "max_context_length": getattr(m, 'max_context_length', 0) or 0,
             "max_concurrent": m.max_concurrent,
             "votes": m.votes,
-            "is_analyzer": m.is_analyzer,
-            "is_verifier": m.is_verifier,
             "is_chat": m.is_chat
         }
         for m in models
@@ -1531,8 +1529,6 @@ async def create_model(
     max_concurrent: int = Form(2),
     votes: int = Form(1),
     chunk_size: int = Form(3000),
-    is_analyzer: bool = Form(False),
-    is_verifier: bool = Form(False),
     db: Session = Depends(get_db)
 ):
     """Create a new model configuration"""
@@ -1543,9 +1539,7 @@ async def create_model(
         max_tokens=max_tokens,
         max_concurrent=max_concurrent,
         votes=votes,
-        chunk_size=chunk_size,
-        is_analyzer=is_analyzer,
-        is_verifier=is_verifier
+        chunk_size=chunk_size
     )
     db.add(model)
     db.commit()
@@ -1560,8 +1554,6 @@ async def update_model(
     api_key: str = Form(None),
     max_concurrent: int = Form(None),
     votes: int = Form(None),
-    is_analyzer: bool = Form(None),
-    is_verifier: bool = Form(None),
     db: Session = Depends(get_db)
 ):
     """Update a model configuration"""
@@ -1577,10 +1569,6 @@ async def update_model(
         model.max_concurrent = max_concurrent
     if votes is not None:
         model.votes = votes
-    if is_analyzer is not None:
-        model.is_analyzer = is_analyzer
-    if is_verifier is not None:
-        model.is_verifier = is_verifier
 
     db.commit()
     return {"id": model.id, "name": model.name, "status": "updated"}
@@ -5971,8 +5959,6 @@ async def import_discovered_models(request: Request, db: Session = Depends(get_d
             chunk_size=model_data.get("chunk_size", 3000),
             response_format=model_data.get("response_format", "markers"),
             tool_call_format=model_data.get("tool_call_format", "none"),
-            is_analyzer=model_data.get("is_analyzer", False),
-            is_verifier=model_data.get("is_verifier", False),
             is_chat=model_data.get("is_chat", False),
         )
         db.add(model)
