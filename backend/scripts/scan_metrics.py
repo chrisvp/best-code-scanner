@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.database import SessionLocal
 from app.models.scanner_models import (
     ScanConfig, ScanFile, ScanFileChunk, DraftFinding,
-    VerifiedFinding, LLMCallMetric, ModelConfig, ScanMetrics
+    VerifiedFinding, LLMCallMetric, ModelConfig, ScanMetrics,
+    ScanProfile, ProfileAnalyzer, ProfileVerifier
 )
 from app.models.models import Scan
 from sqlalchemy import func
@@ -90,10 +91,30 @@ def get_scan_metrics(scan_id: int = None):
             print(f"  - {status}: {count}")
         print(f"Verified findings: {verified}")
 
-        # Get model configs
-        models = db.query(ModelConfig).all()
-        analyzer_count = len([m for m in models if m.is_analyzer])
-        verifier_count = len([m for m in models if m.is_verifier])
+        # Get model counts from profile if available, otherwise use all models
+        if config and config.profile_id:
+            profile = db.query(ScanProfile).filter(ScanProfile.id == config.profile_id).first()
+            if profile:
+                analyzer_count = db.query(ProfileAnalyzer).filter(
+                    ProfileAnalyzer.profile_id == config.profile_id,
+                    ProfileAnalyzer.enabled == True,
+                    ProfileAnalyzer.role == 'analyzer'
+                ).count()
+                verifier_count = db.query(ProfileVerifier).filter(
+                    ProfileVerifier.profile_id == config.profile_id,
+                    ProfileVerifier.enabled == True
+                ).count()
+                print(f"\nProfile: {profile.name}")
+            else:
+                # Profile missing, fall back to all models
+                models = db.query(ModelConfig).all()
+                analyzer_count = len(models)
+                verifier_count = len([m for m in models if m.is_verifier])
+        else:
+            # No profile - use all models for analyzers
+            models = db.query(ModelConfig).all()
+            analyzer_count = len(models)
+            verifier_count = len([m for m in models if m.is_verifier])
 
         print(f"\n{'='*60}")
         print("LLM CALL ESTIMATES")

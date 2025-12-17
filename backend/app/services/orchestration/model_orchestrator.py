@@ -970,6 +970,7 @@ class ModelOrchestrator:
         self.profile_id = profile_id
         self.scan_id = scan_id
         self.pools: Dict[str, ModelPool] = {}
+        self._profile_analyzer_model_ids: set = set()  # Model IDs from profile analyzers
         self._profile_verifier_model_ids: set = set()  # Model IDs from profile verifiers
         self._total_consecutive_failures = 0
         self._should_pause = False
@@ -1027,12 +1028,22 @@ class ModelOrchestrator:
 
     async def initialize(self):
         """Load model configs and create pools"""
-        from app.models.scanner_models import ProfileVerifier
+        from app.models.scanner_models import ProfileVerifier, ProfileAnalyzer
 
         configs = self.db.query(ModelConfig).all()
 
-        # If profile_id is specified, get the verifier model IDs from that profile
+        # If profile_id is specified, get the analyzer and verifier model IDs from that profile
         if self.profile_id:
+            # Load analyzer models from profile
+            profile_analyzers = self.db.query(ProfileAnalyzer).filter(
+                ProfileAnalyzer.profile_id == self.profile_id,
+                ProfileAnalyzer.enabled == True,
+                ProfileAnalyzer.role == 'analyzer'
+            ).all()
+            self._profile_analyzer_model_ids = {pa.model_id for pa in profile_analyzers}
+            print(f"[ModelOrchestrator] Profile {self.profile_id} has {len(self._profile_analyzer_model_ids)} analyzer models")
+
+            # Load verifier models from profile
             profile_verifiers = self.db.query(ProfileVerifier).filter(
                 ProfileVerifier.profile_id == self.profile_id,
                 ProfileVerifier.enabled == True
@@ -1053,8 +1064,15 @@ class ModelOrchestrator:
             await pool.stop()
 
     def get_analyzers(self) -> List[ModelPool]:
-        """Get all analyzer model pools"""
-        return [p for p in self.pools.values() if p.config.is_analyzer]
+        """Get analyzer model pools.
+
+        If profile_id specified, uses profile's analyzers.
+        Otherwise returns all available models (no is_analyzer filtering).
+        """
+        if self._profile_analyzer_model_ids:
+            return [p for p in self.pools.values() if p.config.id in self._profile_analyzer_model_ids]
+        # Fallback: return all models
+        return list(self.pools.values())
 
     def get_verifiers(self) -> List[ModelPool]:
         """Get all verifier model pools.

@@ -1322,7 +1322,6 @@ async def list_models(db: Session = Depends(get_db)):
             "votes": m.votes,
             "is_analyzer": m.is_analyzer,
             "is_verifier": m.is_verifier,
-            "is_cleanup": m.is_cleanup,
             "is_chat": m.is_chat
         }
         for m in models
@@ -2210,13 +2209,11 @@ async def reparse_finding(finding_id: int, request: Request, db: Session = Depen
     if not verified:
         return {"error": "Verified finding not found"}
 
-    # Get an analyzer model (any analyzer will work for enrichment)
-    enrichment_model = db.query(ModelConfig).filter(
-        ModelConfig.is_analyzer == True
-    ).first()
+    # Get any available model for enrichment
+    enrichment_model = db.query(ModelConfig).first()
 
     if not enrichment_model:
-        return {"error": "No analyzer model found. Configure at least one analyzer model."}
+        return {"error": "No models found. Configure at least one model."}
 
     try:
         # Get output mode from model config (response_format column)
@@ -2730,11 +2727,11 @@ def seed_default_profiles(db: Session):
     if existing > 0:
         return
 
-    # Get default analyzer model - required for creating profiles
-    default_model = db.query(ModelConfig).filter(ModelConfig.is_analyzer == True).first()
+    # Get default model - required for creating profiles
+    default_model = db.query(ModelConfig).first()
     if not default_model:
-        # Can't create profiles without at least one analyzer model
-        print("Skipping profile seeding - no analyzer models configured yet")
+        # Can't create profiles without at least one model
+        print("Skipping profile seeding - no models configured yet")
         return
 
     # Profile 1: Quick Scan (single general pass)
@@ -5976,7 +5973,6 @@ async def import_discovered_models(request: Request, db: Session = Depends(get_d
             tool_call_format=model_data.get("tool_call_format", "none"),
             is_analyzer=model_data.get("is_analyzer", False),
             is_verifier=model_data.get("is_verifier", False),
-            is_cleanup=model_data.get("is_cleanup", False),
             is_chat=model_data.get("is_chat", False),
         )
         db.add(model)
