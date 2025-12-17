@@ -32,6 +32,9 @@ class ModelConfig(Base):
     # Response format: 'markers' (text-based), 'json' (structured JSON), 'json_schema' (JSON with schema enforcement)
     response_format = Column(String, default='markers')
 
+    # JSON schema for guided_json mode (optional, only used when response_format='json_schema')
+    json_schema = Column(Text, nullable=True)
+
     # Tool calling format for agents: 'none' (text-based), 'openai' (OpenAI function calling), 'hermes' (Hermes format)
     # When set, agents will use native tool calling API instead of text-based tool parsing
     tool_call_format = Column(String, default='none')
@@ -348,12 +351,7 @@ class ProfileAnalyzer(Base):
     # Prompt template - supports {code}, {language}, {file_path} placeholders
     prompt_template = Column(Text)
 
-    # Output mode: how to parse LLM responses
-    # - "markers": Use *DRAFT:, *VOTE:, etc. markers (default, works everywhere)
-    # - "json": Use response_format: json_object (wider model support)
-    # - "guided_json": Use vLLM guided_json with schema (strictest, limited model support)
-    output_mode = Column(String, default="markers")
-    json_schema = Column(Text, nullable=True)  # JSON schema for guided_json mode
+    # Output mode is now controlled by model_configs.response_format (removed from analyzer level)
 
     # Filtering
     file_filter = Column(String, nullable=True)  # Glob pattern: "*.c,*.h" or null for all
@@ -739,12 +737,7 @@ class ProfileVerifier(Base):
     # Prompt template - supports {title}, {vuln_type}, {severity}, {snippet}, {reason}, {context}
     prompt_template = Column(Text)
 
-    # Output mode: how to parse LLM responses
-    # - "markers": Use *VOTE:, *CONFIDENCE:, etc. markers (default, works everywhere)
-    # - "json": Use response_format: json_object (wider model support)
-    # - "guided_json": Use vLLM guided_json with schema (strictest, limited model support)
-    output_mode = Column(String, default="markers")
-    json_schema = Column(Text, nullable=True)  # JSON schema for guided_json mode
+    # Output mode is now controlled by model_configs.response_format (removed from verifier level)
 
     # Voting configuration
     vote_weight = Column(Float, default=1.0)  # Weight in voting (e.g., 1.5 for expert models)

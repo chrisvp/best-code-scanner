@@ -2883,8 +2883,6 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
                 "enabled": a.enabled,
                 "stop_on_findings": a.stop_on_findings,
                 "min_severity_to_report": a.min_severity_to_report,
-                "output_mode": a.output_mode,
-                "json_schema": a.json_schema,
             }
             for a in profile.analyzers
         ],
@@ -2900,8 +2898,6 @@ async def get_profile(profile_id: int, db: Session = Depends(get_db)):
                 "min_confidence": v.min_confidence,
                 "run_order": v.run_order,
                 "enabled": v.enabled,
-                "output_mode": v.output_mode,
-                "json_schema": v.json_schema,
             }
             for v in profile.verifiers
         ]
@@ -3085,8 +3081,6 @@ def duplicate_profile(profile_id: int, db: Session = Depends(get_db)):
             model_id=analyzer.model_id,
             chunk_size=analyzer.chunk_size,
             prompt_template=analyzer.prompt_template,
-            output_mode=analyzer.output_mode,
-            json_schema=analyzer.json_schema,
             file_filter=analyzer.file_filter,
             language_filter=analyzer.language_filter,
             role=analyzer.role,
@@ -3105,8 +3099,6 @@ def duplicate_profile(profile_id: int, db: Session = Depends(get_db)):
             description=verifier.description,
             model_id=verifier.model_id,
             prompt_template=verifier.prompt_template,
-            output_mode=verifier.output_mode,
-            json_schema=verifier.json_schema,
             run_order=verifier.run_order,
             enabled=verifier.enabled,
         )
@@ -3137,8 +3129,6 @@ def add_analyzer(
     run_order: int = Form(1),
     stop_on_findings: bool = Form(False),
     min_severity_to_report: str = Form(None),
-    output_mode: str = Form("markers"),  # markers, json, or guided_json
-    json_schema: str = Form(None),  # JSON schema for guided_json mode
     db: Session = Depends(get_db)
 ):
     """Add an analyzer to a profile"""
@@ -3165,8 +3155,6 @@ def add_analyzer(
         enabled=True,
         stop_on_findings=stop_on_findings,
         min_severity_to_report=min_severity_to_report,
-        output_mode=output_mode,
-        json_schema=json_schema
     )
     db.add(analyzer)
     db.commit()
@@ -3191,8 +3179,6 @@ def update_analyzer(
     enabled: bool = Form(None),
     stop_on_findings: bool = Form(None),
     min_severity_to_report: str = Form(None),
-    output_mode: str = Form(None),
-    json_schema: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """Update an analyzer"""
@@ -3230,10 +3216,6 @@ def update_analyzer(
         analyzer.stop_on_findings = stop_on_findings
     if min_severity_to_report is not None:
         analyzer.min_severity_to_report = min_severity_to_report if min_severity_to_report else None
-    if output_mode is not None:
-        analyzer.output_mode = output_mode
-    if json_schema is not None:
-        analyzer.json_schema = json_schema if json_schema else None
 
     db.commit()
     return {"id": analyzer.id, "name": analyzer.name, "status": "updated"}
@@ -3284,8 +3266,6 @@ def add_verifier(
     min_confidence: int = Form(0),
     run_order: int = Form(1),
     description: str = Form(None),
-    output_mode: str = Form("markers"),
-    json_schema: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """Add a verifier to a profile"""
@@ -3303,8 +3283,6 @@ def add_verifier(
         run_order=run_order,
         description=description,
         enabled=True,
-        output_mode=output_mode,
-        json_schema=json_schema
     )
     db.add(verifier)
     db.commit()
@@ -3324,8 +3302,6 @@ def update_verifier(
     run_order: int = Form(None),
     description: str = Form(None),
     enabled: bool = Form(None),
-    output_mode: str = Form(None),
-    json_schema: str = Form(None),
     db: Session = Depends(get_db)
 ):
     """Update a verifier"""
@@ -3352,10 +3328,6 @@ def update_verifier(
         verifier.description = description
     if enabled is not None:
         verifier.enabled = enabled
-    if output_mode is not None:
-        verifier.output_mode = output_mode
-    if json_schema is not None:
-        verifier.json_schema = json_schema if json_schema else None
 
     db.commit()
     return {"id": verifier.id, "name": verifier.name, "status": "updated"}

@@ -173,9 +173,17 @@ class ProfileAwareScanner:
                 prompts = []
                 prompt_chunk_ids = []
 
-                # Get output format instructions based on analyzer settings
-                # Only inject output_format if the template contains the placeholder
-                output_mode = analyzer.output_mode or "markers"
+                # Get output mode from model config's response_format, not analyzer override
+                # This ensures we use the model's actual output capability
+                model_response_format = pool.config.response_format or "markers"
+                if model_response_format == "json_schema":
+                    output_mode = "guided_json"
+                    json_schema = pool.config.json_schema if hasattr(pool.config, 'json_schema') else None
+                else:
+                    output_mode = model_response_format
+                    json_schema = None
+
+                # Only inject output_format instructions if the template contains the placeholder
                 has_output_format_placeholder = '{output_format}' in analyzer.prompt_template
 
                 if has_output_format_placeholder:
@@ -227,12 +235,12 @@ class ProfileAwareScanner:
                     analyzer_name=analyzer.name,
                 )
 
-                # Call model with output_mode settings from analyzer
+                # Call model with output_mode from model config (already computed above)
                 try:
                     responses = await pool.call_batch(
                         prompts,
-                        output_mode=analyzer.output_mode or "markers",
-                        json_schema=analyzer.json_schema
+                        output_mode=output_mode,
+                        json_schema=json_schema
                     )
 
                     for i, (chunk_id, info) in enumerate(matching_chunks):

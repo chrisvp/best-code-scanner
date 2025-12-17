@@ -213,14 +213,19 @@ Vote NEEDS_VERIFIED if:
                 profile_verifier = self._profile_verifiers.get(pool.config.id)
 
                 if profile_verifier and profile_verifier.prompt_template:
-                    # Use profile verifier's prompt and output settings
+                    # Use profile verifier's prompt template
                     template = profile_verifier.prompt_template
-                    output_mode = profile_verifier.output_mode or "markers"
-                    json_schema = profile_verifier.json_schema
                 else:
                     # Fall back to model config or default
                     template = pool.config.verification_prompt_template or self.VOTE_PROMPT
-                    output_mode = "markers"
+
+                # Get output mode from model config's response_format
+                model_response_format = pool.config.response_format or "markers"
+                if model_response_format == "json_schema":
+                    output_mode = "guided_json"
+                    json_schema = pool.config.json_schema if hasattr(pool.config, 'json_schema') else None
+                else:
+                    output_mode = model_response_format
                     json_schema = None
 
                 # Generate prompts with output_format injection
