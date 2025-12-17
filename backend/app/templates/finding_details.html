@@ -226,32 +226,98 @@
                     Detection Info
                 </h3>
                 <div class="grid grid-cols-2 gap-3 text-sm">
+                    <!-- Finding ID -->
                     <div>
-                        <span class="text-gray-500">Source Model:</span>
-                        <span class="text-gray-300 ml-2">{{ finding.source_model or 'Unknown' }}</span>
+                        <span class="text-gray-500">Finding ID:</span>
+                        <span class="text-gray-300 ml-2 font-mono">#{{ finding.id }}</span>
                     </div>
+
+                    <!-- Detection Time -->
                     <div>
-                        <span class="text-gray-500">Detected:</span>
-                        <span class="text-gray-300 ml-2">{{ finding.detected_at.strftime('%Y-%m-%d %H:%M') if finding.detected_at else 'Unknown' }}</span>
+                        <span class="text-gray-500">Enriched:</span>
+                        <span class="text-gray-300 ml-2" title="When the finding completed the full scan pipeline">
+                            {{ finding.detected_at.strftime('%Y-%m-%d %H:%M') if finding.detected_at else 'N/A' }}
+                        </span>
                     </div>
-                    {% if scan %}
+
+                    <!-- Status -->
                     <div>
-                        <span class="text-gray-500">Scan Target:</span>
-                        <span class="text-gray-300 ml-2 truncate" title="{{ scan.target_url or 'N/A' }}">{{ (scan.target_url or 'N/A')[:40] }}{{ '...' if scan.target_url and scan.target_url|length > 40 else '' }}</span>
+                        <span class="text-gray-500">Status:</span>
+                        <span class="ml-2 text-xs px-2 py-0.5 rounded font-medium
+                            {% if finding.status == 'VERIFIED' %}bg-green-500/20 text-green-400
+                            {% elif finding.status == 'FP' %}bg-red-500/20 text-red-400
+                            {% elif finding.status == 'FIXED' %}bg-blue-500/20 text-blue-400
+                            {% elif finding.status == 'IGNORED' %}bg-gray-500/20 text-gray-400
+                            {% else %}bg-yellow-500/20 text-yellow-400{% endif %}">
+                            {{ finding.status }}
+                        </span>
                     </div>
+
+                    <!-- Confidence Score -->
+                    {% if finding.confidence_score %}
                     <div>
-                        <span class="text-gray-500">Scan Status:</span>
-                        <span class="text-gray-300 ml-2">{{ scan.status }}</span>
+                        <span class="text-gray-500">Confidence:</span>
+                        <span class="text-gray-300 ml-2">{{ "%.1f"|format(finding.confidence_score) }}%</span>
                     </div>
                     {% endif %}
-                    {% if mr_review %}
+
+                    <!-- CVSS Score -->
+                    {% if finding.cvss_score %}
                     <div>
-                        <span class="text-gray-500">MR IID:</span>
-                        <span class="text-gray-300 ml-2">{{ mr_review.mr_iid }}</span>
+                        <span class="text-gray-500">CVSS Score:</span>
+                        <span class="ml-2 text-xs px-2 py-0.5 rounded font-medium
+                            {% if finding.cvss_score >= 9.0 %}bg-red-500/20 text-red-400
+                            {% elif finding.cvss_score >= 7.0 %}bg-orange-500/20 text-orange-400
+                            {% elif finding.cvss_score >= 4.0 %}bg-yellow-500/20 text-yellow-400
+                            {% else %}bg-blue-500/20 text-blue-400{% endif %}">
+                            {{ "%.1f"|format(finding.cvss_score) }}
+                        </span>
                     </div>
-                    <div>
-                        <span class="text-gray-500">MR Status:</span>
-                        <span class="text-gray-300 ml-2">{{ mr_review.status }}</span>
+                    {% endif %}
+
+                    <!-- Source (Scan or MR) -->
+                    {% if scan %}
+                    <div class="col-span-2">
+                        <span class="text-gray-500">Source:</span>
+                        <span class="text-blue-400 ml-2">
+                            <a href="/" class="hover:underline">Scan #{{ scan.id }}</a>
+                            <span class="text-gray-600 mx-2">•</span>
+                            <span class="text-gray-400">{{ scan.status }}</span>
+                        </span>
+                    </div>
+                    <div class="col-span-2">
+                        <span class="text-gray-500">Scan Target:</span>
+                        <span class="text-gray-300 ml-2 font-mono text-xs break-all">{{ scan.target_url or 'N/A' }}</span>
+                    </div>
+                    {% endif %}
+
+                    {% if mr_review %}
+                    <div class="col-span-2">
+                        <span class="text-gray-500">Source:</span>
+                        <span class="text-purple-400 ml-2">
+                            <a href="/mr-reviews" class="hover:underline">MR Review #{{ mr_review.id }}</a>
+                            <span class="text-gray-600 mx-2">•</span>
+                            <span class="text-gray-400">!{{ mr_review.mr_iid }}</span>
+                            <span class="text-gray-600 mx-2">•</span>
+                            <span class="text-gray-400">{{ mr_review.status }}</span>
+                        </span>
+                    </div>
+                    <div class="col-span-2">
+                        <span class="text-gray-500">MR Title:</span>
+                        <span class="text-gray-300 ml-2">{{ mr_review.mr_title or 'N/A' }}</span>
+                    </div>
+                    {% endif %}
+
+                    <!-- Status Change Info -->
+                    {% if finding.status_changed_at %}
+                    <div class="col-span-2 pt-2 border-t border-gray-700/50">
+                        <span class="text-gray-500 text-xs">Status changed:</span>
+                        <span class="text-gray-400 ml-2 text-xs">
+                            {{ finding.status_changed_at.strftime('%Y-%m-%d %H:%M') }}
+                            {% if finding.status_changed_by %}
+                            by {{ finding.status_changed_by.username }}
+                            {% endif %}
+                        </span>
                     </div>
                     {% endif %}
                 </div>

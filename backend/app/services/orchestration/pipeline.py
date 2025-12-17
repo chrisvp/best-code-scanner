@@ -1312,6 +1312,7 @@ class ScanPipeline:
                     elif scan_file:
                         file_path = scan_file.file_path
 
+                    from datetime import datetime
                     finding = Finding(
                         scan_id=self.scan_id,
                         verified_id=v.id,
@@ -1328,7 +1329,9 @@ class ScanPipeline:
                         proof_of_concept=result.get('proof_of_concept', ''),
                         corrected_code=result.get('corrected_code', ''),
                         remediation_steps=result.get('remediation_steps', ''),
-                        references=result.get('references', '')
+                        references=result.get('references', ''),
+                        detected_at=datetime.now().astimezone(),
+                        source_model=result.get('enricher_model', 'unknown')
                     )
                     self.db.add(finding)
                     v.status = "complete"
