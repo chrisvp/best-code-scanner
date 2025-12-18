@@ -157,6 +157,107 @@
     </div>
     {% endif %}
 
+    <!-- Model Breakdown -->
+    {% if report_data.get('model_breakdown') %}
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-5">
+        <h3 class="text-lg font-semibold text-white mb-4">🤖 Model Performance Breakdown</h3>
+
+        <!-- Scanner Models -->
+        {% if report_data.get('model_breakdown', {}).get('scanners') %}
+        <div class="mb-6">
+            <h4 class="text-sm font-medium text-gray-400 mb-3">Scanner Models</h4>
+            <div class="space-y-3">
+                {% for scanner in report_data.get('model_breakdown', {}).get('scanners', []) %}
+                <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-white font-medium">{{ scanner.get('model', 'Unknown') }}</span>
+                        <span class="text-sm px-2 py-1 rounded
+                            {% if scanner.get('precision', 0) > 0.5 %}bg-green-500/20 text-green-400
+                            {% elif scanner.get('precision', 0) > 0.2 %}bg-yellow-500/20 text-yellow-400
+                            {% else %}bg-red-500/20 text-red-400{% endif %}">
+                            {{ "%.1f"|format(scanner.get('precision', 0) * 100) }}% precision
+                        </span>
+                    </div>
+                    <div class="grid grid-cols-4 gap-2 text-xs text-gray-400">
+                        <div>
+                            <div class="text-white font-semibold">{{ scanner.get('drafts_found', 0) }}</div>
+                            <div>Drafts</div>
+                        </div>
+                        <div>
+                            <div class="text-green-400 font-semibold">{{ scanner.get('verified', 0) }}</div>
+                            <div>Verified</div>
+                        </div>
+                        <div>
+                            <div class="text-red-400 font-semibold">{{ scanner.get('rejected', 0) }}</div>
+                            <div>Rejected</div>
+                        </div>
+                        <div>
+                            <div class="text-yellow-400 font-semibold">{{ scanner.get('weakness', 0) }}</div>
+                            <div>Weakness</div>
+                        </div>
+                    </div>
+                    {% if scanner.get('top_cwes') %}
+                    <div class="mt-2 text-xs text-gray-500">
+                        Top CWEs: {{ scanner.get('top_cwes', [])[:3]|map('first')|join(', ') }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Verifier Models -->
+        {% if report_data.get('model_breakdown', {}).get('verifiers') %}
+        <div class="mb-6">
+            <h4 class="text-sm font-medium text-gray-400 mb-3">Verifier Models</h4>
+            <div class="space-y-3">
+                {% for verifier in report_data.get('model_breakdown', {}).get('verifiers', []) %}
+                <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-white font-medium">{{ verifier.get('model', 'Unknown') }}</span>
+                        <div class="text-xs space-x-2">
+                            <span class="text-gray-400">Confidence: {{ "%.0f"|format(verifier.get('avg_confidence', 0)) }}%</span>
+                            <span class="text-gray-400">Agreement: {{ "%.0f"|format(verifier.get('agreement_rate', 0) * 100) }}%</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 text-xs">
+                        {% set votes = verifier.get('votes', {}) %}
+                        <span class="px-2 py-1 rounded bg-green-500/20 text-green-400">
+                            ✓ {{ votes.get('VERIFY', 0) + votes.get('REAL', 0) }}
+                        </span>
+                        <span class="px-2 py-1 rounded bg-red-500/20 text-red-400">
+                            ✗ {{ votes.get('REJECT', 0) + votes.get('FALSE_POSITIVE', 0) }}
+                        </span>
+                        <span class="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400">
+                            ⚠ {{ votes.get('WEAKNESS', 0) }}
+                        </span>
+                        <span class="px-2 py-1 rounded bg-blue-500/20 text-blue-400">
+                            ? {{ votes.get('NEEDS_VERIFIED', 0) }}
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Enricher Model -->
+        {% if report_data.get('model_breakdown', {}).get('enricher') %}
+        {% set enricher = report_data.get('model_breakdown', {}).get('enricher', {}) %}
+        <div class="mb-4">
+            <h4 class="text-sm font-medium text-gray-400 mb-2">Enricher Model</h4>
+            <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-white font-medium">{{ enricher.get('model', 'Unknown') }}</span>
+                    <span class="text-sm text-gray-400">{{ enricher.get('findings_enriched', 0) }} findings enriched</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <!-- Performance Stats -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <!-- Scan Speed -->

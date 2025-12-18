@@ -12,7 +12,7 @@ import re
 from collections import Counter
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from app.models.scanner_models import (
     ScanReport, DraftFinding, VerifiedFinding, VerificationVote,
@@ -36,7 +36,13 @@ class ReportGenerator:
         - Verification voting patterns
         - CWE distribution and diversity
         - Performance metrics
+        - Model-specific breakdowns (scanner, verifier, enricher performance)
         - Overall quality grade (A-F)
+
+        Returns comprehensive report_data with model_breakdown showing:
+        - Scanner models: drafts found, verified/rejected counts, precision, top CWEs
+        - Verifier models: vote distribution, avg confidence, agreement rate
+        - Enricher model: which model enriched findings
         """
 
         # Check if scan exists
@@ -50,6 +56,7 @@ class ReportGenerator:
         findings_metrics = self._compute_findings_metrics(scan_id)
         cwe_metrics = self._compute_cwe_metrics(scan_id)
         performance_metrics = self._compute_performance_metrics(scan_id)
+        model_breakdown = self._compute_model_breakdown(scan_id)
 
         # Calculate overall grade
         grade, grade_score = self._calculate_grade({
@@ -90,6 +97,7 @@ class ReportGenerator:
             "findings_metrics": findings_metrics,
             "cwe_metrics": cwe_metrics,
             "performance_metrics": performance_metrics,
+            "model_breakdown": model_breakdown,
             "quality_issues": quality_issues,
             "grade": grade,
             "grade_score": grade_score
@@ -361,6 +369,155 @@ class ReportGenerator:
             "findings_per_minute": findings_per_minute,
             "avg_tokens_per_finding": avg_tokens_per_finding
         }
+
+    def _compute_model_breakdown(self, scan_id: int) -> Dict:
+        """
+        Compute per-model performance breakdown.
+
+        Shows which models scanned, verified, and enriched, with detailed stats
+        for each model's accuracy and contribution.
+        """
+
+        breakdown = {
+            "scanners": [],
+            "verifiers": [],
+            "enricher": {}
+        }
+
+        # Scanner model breakdown
+        # Group drafts by analyzer_name, compute stats per model
+        scanner_stats = self.db.query(
+            DraftFinding.analyzer_name,
+            func.count(DraftFinding.id).label('drafts_found'),
+            func.sum(case((DraftFinding.status == 'verified', 1), else_=0)).label('verified'),
+            func.sum(case((DraftFinding.status == 'rejected', 1), else_=0)).label('rejected'),
+            func.sum(case((DraftFinding.status == 'weakness', 1), else_=0)).label('weakness')
+        ).filter(
+            DraftFinding.scan_id == scan_id
+        ).group_by(DraftFinding.analyzer_name).all()
+
+        # Get CWE distribution per scanner
+        for analyzer_name, drafts_found, verified, rejected, weakness in scanner_stats:
+            if not analyzer_name:
+                continue
+
+            # Get CWE distribution for this analyzer
+            cwe_pattern = re.compile(r'CWE-(\d+)')
+            drafts_for_analyzer = self.db.query(DraftFinding.vulnerability_type).filter(
+                DraftFinding.scan_id == scan_id,
+                DraftFinding.analyzer_name == analyzer_name
+            ).all()
+
+            cwe_ids = []
+            for (vuln_type,) in drafts_for_analyzer:
+                if vuln_type:
+                    match = cwe_pattern.search(vuln_type)
+                    if match:
+                        cwe_ids.append(f"CWE-{match.group(1)}")
+
+            cwe_distribution = Counter(cwe_ids)
+            top_cwes = cwe_distribution.most_common(3)
+
+            precision = verified / drafts_found if drafts_found > 0 else 0.0
+
+            breakdown["scanners"].append({
+                "model": analyzer_name,
+                "drafts_found": drafts_found,
+                "verified": verified,
+                "rejected": rejected,
+                "weakness": weakness,
+                "precision": round(precision, 3),
+                "top_cwes": [[cwe, count] for cwe, count in top_cwes]
+            })
+
+        # Verifier model breakdown
+        # Group votes by model_name, compute vote distribution and confidence
+        verifier_stats = self.db.query(
+            VerificationVote.model_name,
+            VerificationVote.decision,
+            func.count(VerificationVote.id).label('vote_count'),
+            func.avg(VerificationVote.confidence).label('avg_confidence')
+        ).filter(
+            VerificationVote.scan_id == scan_id
+        ).group_by(
+            VerificationVote.model_name,
+            VerificationVote.decision
+        ).all()
+
+        # Organize votes by model
+        verifier_vote_map = {}
+        for model_name, decision, vote_count, avg_confidence in verifier_stats:
+            if model_name not in verifier_vote_map:
+                verifier_vote_map[model_name] = {
+                    "model": model_name,
+                    "votes": {},
+                    "avg_confidence": 0.0,
+                    "total_votes": 0,
+                    "agreement_rate": 0.0
+                }
+
+            verifier_vote_map[model_name]["votes"][decision] = vote_count
+            verifier_vote_map[model_name]["total_votes"] += vote_count
+
+        # Calculate avg confidence and agreement rate for each verifier
+        for model_name in verifier_vote_map:
+            # Get average confidence across all votes from this model
+            avg_conf = self.db.query(func.avg(VerificationVote.confidence)).filter(
+                VerificationVote.scan_id == scan_id,
+                VerificationVote.model_name == model_name
+            ).scalar() or 0.0
+
+            verifier_vote_map[model_name]["avg_confidence"] = round(float(avg_conf), 1)
+
+            # Calculate agreement rate: how often this model's vote matched the final verdict
+            # Get all votes from this model
+            model_votes = self.db.query(
+                VerificationVote.draft_finding_id,
+                VerificationVote.decision
+            ).filter(
+                VerificationVote.scan_id == scan_id,
+                VerificationVote.model_name == model_name
+            ).all()
+
+            agreements = 0
+            for draft_id, model_decision in model_votes:
+                # Get the final status of this draft
+                draft = self.db.query(DraftFinding.status).filter(
+                    DraftFinding.id == draft_id
+                ).first()
+
+                if draft:
+                    final_status = draft[0]
+                    # Map decision to status
+                    # VERIFY -> verified, REJECT -> rejected, WEAKNESS -> weakness
+                    if (model_decision == "VERIFY" and final_status == "verified") or \
+                       (model_decision == "REJECT" and final_status == "rejected") or \
+                       (model_decision == "WEAKNESS" and final_status == "weakness"):
+                        agreements += 1
+
+            total_votes = len(model_votes)
+            agreement_rate = agreements / total_votes if total_votes > 0 else 0.0
+            verifier_vote_map[model_name]["agreement_rate"] = round(agreement_rate, 3)
+
+        breakdown["verifiers"] = list(verifier_vote_map.values())
+
+        # Enricher breakdown
+        # Find which model did enrichment (look at findings)
+        enricher_info = self.db.query(
+            Finding.model_used,
+            func.count(Finding.id).label('findings_enriched')
+        ).filter(
+            Finding.scan_id == scan_id
+        ).group_by(Finding.model_used).first()
+
+        if enricher_info:
+            model_name, findings_enriched = enricher_info
+            breakdown["enricher"] = {
+                "model": model_name,
+                "findings_enriched": findings_enriched
+            }
+
+        return breakdown
 
     def _calculate_grade(self, stats: Dict) -> Tuple[str, float]:
         """

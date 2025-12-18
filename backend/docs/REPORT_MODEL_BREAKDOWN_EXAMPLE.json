@@ -1,0 +1,71 @@
+{
+  "model_breakdown": {
+    "scanners": [
+      {
+        "model": "gpt-oss-120b",
+        "drafts_found": 54,
+        "verified": 5,
+        "rejected": 26,
+        "weakness": 1,
+        "precision": 0.093,
+        "top_cwes": [
+          ["CWE-125", 9],
+          ["CWE-190", 7],
+          ["CWE-78", 6]
+        ]
+      },
+      {
+        "model": "qwen2.5-coder-32b",
+        "drafts_found": 42,
+        "verified": 12,
+        "rejected": 18,
+        "weakness": 2,
+        "precision": 0.286,
+        "top_cwes": [
+          ["CWE-120", 11],
+          ["CWE-78", 8],
+          ["CWE-416", 5]
+        ]
+      }
+    ],
+    "verifiers": [
+      {
+        "model": "devstral",
+        "votes": {
+          "VERIFY": 10,
+          "REJECT": 43,
+          "WEAKNESS": 1
+        },
+        "total_votes": 54,
+        "avg_confidence": 85.3,
+        "agreement_rate": 0.667
+      },
+      {
+        "model": "qwen2.5-coder-32b",
+        "votes": {
+          "VERIFY": 15,
+          "REJECT": 35,
+          "WEAKNESS": 4
+        },
+        "total_votes": 54,
+        "avg_confidence": 78.2,
+        "agreement_rate": 0.722
+      },
+      {
+        "model": "llama3.3-70b",
+        "votes": {
+          "VERIFY": 8,
+          "REJECT": 40,
+          "WEAKNESS": 6
+        },
+        "total_votes": 54,
+        "avg_confidence": 72.1,
+        "agreement_rate": 0.611
+      }
+    ],
+    "enricher": {
+      "model": "gpt-oss-120b",
+      "findings_enriched": 5
+    }
+  }
+}
