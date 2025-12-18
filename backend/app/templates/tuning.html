@@ -546,6 +546,12 @@
 <script>
 // Tab switching
 function switchTab(tabId) {
+    // Clean up benchmark tab interval when leaving
+    if (window.benchmarkRunsInterval && tabId !== 'benchmark') {
+        clearInterval(window.benchmarkRunsInterval);
+        window.benchmarkRunsInterval = null;
+    }
+
     // Update tab buttons
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.remove('active', 'text-white', 'border-blue-500');
@@ -1086,6 +1092,12 @@ function initBenchmarkTab() {
     loadPrompts();
     loadTestCases();
     loadTuningModels();
+    loadBenchmarkRuns();
+
+    // Auto-refresh runs every 5s
+    if (!window.benchmarkRunsInterval) {
+        window.benchmarkRunsInterval = setInterval(loadBenchmarkRuns, 5000);
+    }
 }
 
 async function loadBenchmarkDatasets() {
@@ -1166,7 +1178,7 @@ async function loadBenchmarkRuns() {
     try {
         const response = await fetch('/api/v1/tuning/runs');
         const runs = await response.json();
-        const container = document.getElementById('benchmark-runs-container');
+        const container = document.getElementById('results-panel');
         
         if (runs.length === 0) {
             container.innerHTML = '<div class="text-center text-gray-500 py-12">No benchmarks run yet</div>';
@@ -1745,37 +1757,71 @@ function openTestCaseDialog() {
     dialog.id = 'testcase-dialog-temp';
     dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
     dialog.innerHTML = `
-        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto">
             <h2 class="text-xl font-bold text-white mb-4">New Test Case</h2>
             <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
-                    <input type="text" id="testcase-name-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., 221_integer_overflow">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
+                        <input type="text" id="testcase-name-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., 221_integer_overflow">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Ground Truth Verdict</label>
+                        <select id="testcase-verdict-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                            <option value="REAL">REAL</option>
+                            <option value="FALSE_POSITIVE">FALSE_POSITIVE</option>
+                            <option value="WEAKNESS">WEAKNESS</option>
+                            <option value="NEEDS_VERIFIED">NEEDS_VERIFIED</option>
+                        </select>
+                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Ground Truth Verdict</label>
-                    <select id="testcase-verdict-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                        <option value="REAL">REAL</option>
-                        <option value="FALSE_POSITIVE">FALSE_POSITIVE</option>
-                        <option value="WEAKNESS">WEAKNESS</option>
-                        <option value="NEEDS_VERIFIED">NEEDS_VERIFIED</option>
-                    </select>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Title / Issue</label>
+                        <input type="text" id="testcase-title-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., Integer Overflow in ROM Size Calculation">
+                        <p class="text-xs text-gray-500 mt-1">Short description of the vulnerability</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">File Path</label>
+                        <input type="text" id="testcase-filepath-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., BootManagerDxe/Legacy.c">
+                        <p class="text-xs text-gray-500 mt-1">e.g., BootManagerDxe/Legacy.c</p>
+                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Issue</label>
-                    <input type="text" id="testcase-issue-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., Integer Overflow in ROM Size Calculation">
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Vulnerability Type</label>
+                        <input type="text" id="testcase-vulntype-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., CWE-120 Buffer Overflow">
+                        <p class="text-xs text-gray-500 mt-1">e.g., CWE-120 Buffer Overflow</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Severity</label>
+                        <input type="text" id="testcase-severity-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., High">
+                        <p class="text-xs text-gray-500 mt-1">Critical/High/Medium/Low</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Line Number</label>
+                        <input type="number" id="testcase-line-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., 4450">
+                    </div>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">File</label>
-                    <input type="text" id="testcase-file-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white" placeholder="e.g., BootManagerDxe/Legacy.c:4450">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Code Snippet</label>
+                    <textarea id="testcase-snippet-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm" placeholder="The vulnerable code fragment"></textarea>
+                    <p class="text-xs text-gray-500 mt-1">The vulnerable code fragment</p>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Code</label>
-                    <textarea id="testcase-code-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm"></textarea>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Vulnerability Reason / Claim</label>
+                    <textarea id="testcase-reason-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm" placeholder="Why this is vulnerable"></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Why this is vulnerable or what the claim is</p>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Claim</label>
-                    <textarea id="testcase-claim-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"></textarea>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Full Code Context (Optional)</label>
+                    <textarea id="testcase-fullcode-input" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs" placeholder="Complete code chunk with surrounding context"></textarea>
+                    <p class="text-xs text-gray-500 mt-1">Complete code chunk with surrounding context (what verifiers see)</p>
                 </div>
             </div>
             <div class="flex gap-3 mt-6">
@@ -1796,37 +1842,71 @@ function editTestCase(id) {
     dialog.id = 'testcase-dialog-temp';
     dialog.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
     dialog.innerHTML = `
-        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto">
             <h2 class="text-xl font-bold text-white mb-4">Edit Test Case</h2>
             <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
-                    <input type="text" id="testcase-name-input" value="${escapeHtml(tc.name)}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Name</label>
+                        <input type="text" id="testcase-name-input" value="${escapeHtml(tc.name)}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Ground Truth Verdict</label>
+                        <select id="testcase-verdict-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                            <option value="REAL" ${tc.verdict === 'REAL' ? 'selected' : ''}>REAL</option>
+                            <option value="FALSE_POSITIVE" ${tc.verdict === 'FALSE_POSITIVE' ? 'selected' : ''}>FALSE_POSITIVE</option>
+                            <option value="WEAKNESS" ${tc.verdict === 'WEAKNESS' ? 'selected' : ''}>WEAKNESS</option>
+                            <option value="NEEDS_VERIFIED" ${tc.verdict === 'NEEDS_VERIFIED' ? 'selected' : ''}>NEEDS_VERIFIED</option>
+                        </select>
+                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Ground Truth Verdict</label>
-                    <select id="testcase-verdict-input" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
-                        <option value="REAL" ${tc.verdict === 'REAL' ? 'selected' : ''}>REAL</option>
-                        <option value="FALSE_POSITIVE" ${tc.verdict === 'FALSE_POSITIVE' ? 'selected' : ''}>FALSE_POSITIVE</option>
-                        <option value="WEAKNESS" ${tc.verdict === 'WEAKNESS' ? 'selected' : ''}>WEAKNESS</option>
-                        <option value="NEEDS_VERIFIED" ${tc.verdict === 'NEEDS_VERIFIED' ? 'selected' : ''}>NEEDS_VERIFIED</option>
-                    </select>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Title / Issue</label>
+                        <input type="text" id="testcase-title-input" value="${escapeHtml(tc.title || tc.issue || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <p class="text-xs text-gray-500 mt-1">Short description of the vulnerability</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">File Path</label>
+                        <input type="text" id="testcase-filepath-input" value="${escapeHtml(tc.file_path || tc.file || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <p class="text-xs text-gray-500 mt-1">e.g., BootManagerDxe/Legacy.c</p>
+                    </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Issue</label>
-                    <input type="text" id="testcase-issue-input" value="${escapeHtml(tc.issue || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Vulnerability Type</label>
+                        <input type="text" id="testcase-vulntype-input" value="${escapeHtml(tc.vulnerability_type || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <p class="text-xs text-gray-500 mt-1">e.g., CWE-120 Buffer Overflow</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Severity</label>
+                        <input type="text" id="testcase-severity-input" value="${escapeHtml(tc.severity || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <p class="text-xs text-gray-500 mt-1">Critical/High/Medium/Low</p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Line Number</label>
+                        <input type="number" id="testcase-line-input" value="${tc.line_number || ''}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                    </div>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">File</label>
-                    <input type="text" id="testcase-file-input" value="${escapeHtml(tc.file || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Code Snippet</label>
+                    <textarea id="testcase-snippet-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm">${escapeHtml(tc.snippet || tc.code || '')}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">The vulnerable code fragment</p>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Code</label>
-                    <textarea id="testcase-code-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm">${escapeHtml(tc.code || '')}</textarea>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Vulnerability Reason / Claim</label>
+                    <textarea id="testcase-reason-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">${escapeHtml(tc.reason || tc.claim || '')}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">Why this is vulnerable or what the claim is</p>
                 </div>
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Claim</label>
-                    <textarea id="testcase-claim-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">${escapeHtml(tc.claim || '')}</textarea>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Full Code Context (Optional)</label>
+                    <textarea id="testcase-fullcode-input" rows="8" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-xs">${escapeHtml(tc.full_code_chunk || '')}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">Complete code chunk with surrounding context (what verifiers see)</p>
                 </div>
             </div>
             <div class="flex gap-3 mt-6">
@@ -1846,10 +1926,16 @@ function closeTestCaseDialog() {
 async function saveTestCase() {
     const name = document.getElementById('testcase-name-input').value.trim();
     const verdict = document.getElementById('testcase-verdict-input').value;
-    const issue = document.getElementById('testcase-issue-input').value.trim();
-    const file = document.getElementById('testcase-file-input').value.trim();
-    const code = document.getElementById('testcase-code-input').value.trim();
-    const claim = document.getElementById('testcase-claim-input').value.trim();
+
+    // New schema fields
+    const title = document.getElementById('testcase-title-input')?.value.trim() || '';
+    const file_path = document.getElementById('testcase-filepath-input')?.value.trim() || '';
+    const vulnerability_type = document.getElementById('testcase-vulntype-input')?.value.trim() || '';
+    const severity = document.getElementById('testcase-severity-input')?.value.trim() || '';
+    const line_number = document.getElementById('testcase-line-input')?.value || null;
+    const snippet = document.getElementById('testcase-snippet-input')?.value.trim() || '';
+    const reason = document.getElementById('testcase-reason-input')?.value.trim() || '';
+    const full_code_chunk = document.getElementById('testcase-fullcode-input')?.value.trim() || '';
 
     if (!name || !verdict) {
         alert('Name and verdict are required');
@@ -1859,10 +1945,30 @@ async function saveTestCase() {
     const method = currentTestCaseId ? 'PUT' : 'POST';
     const url = currentTestCaseId ? `/api/v1/tuning/test-cases/${currentTestCaseId}` : '/api/v1/tuning/test-cases';
 
+    // Send both old and new schema fields for backwards compatibility
+    const payload = {
+        name,
+        verdict,
+        // Old schema (backwards compat)
+        issue: title,  // Map title -> issue
+        file: file_path,  // Map file_path -> file
+        code: snippet,  // Map snippet -> code
+        claim: reason,  // Map reason -> claim
+        // New schema
+        title,
+        file_path,
+        vulnerability_type,
+        severity,
+        line_number: line_number ? parseInt(line_number) : null,
+        snippet,
+        reason,
+        full_code_chunk
+    };
+
     const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, verdict, issue, file, code, claim })
+        body: JSON.stringify(payload)
     });
 
     if (res.ok) {
