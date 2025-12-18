@@ -875,6 +875,42 @@ class BenchmarkResult(Base):
     case = relationship("BenchmarkCase", back_populates="results")
 
 
+class ScanReport(Base):
+    """Analysis reports for scans - quality analysis, comparative reports, summaries, etc."""
+    __tablename__ = "scan_reports"
+
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False, index=True)
+
+    # Report classification
+    report_type = Column(String, nullable=False, index=True)  # 'quality_analysis', 'comparative', 'summary', 'benchmark'
+
+    # Core data - flexible JSON structure for different report types
+    report_data = Column(JSON, nullable=False)
+
+    # Generation metadata
+    generated_by_model = Column(String, nullable=True)  # Which LLM generated this report
+    schema_version = Column(Integer, default=1)  # For handling report format evolution
+    generated_at = Column(DateTime(timezone=True), default=local_now, index=True)
+
+    # For comparative reports - store related scan IDs for cross-scan queries
+    related_scan_ids = Column(JSON, nullable=True)  # e.g., [30, 31, 32] for multi-scan comparisons
+
+    # Denormalized quick-access fields (extracted from report_data for efficient querying)
+    # These avoid parsing JSON for common queries like "show all scans with grade A"
+    overall_grade = Column(String, nullable=True, index=True)  # 'A', 'B', 'C', 'D', 'F'
+    draft_count = Column(Integer, nullable=True)
+    verified_count = Column(Integer, nullable=True)
+    false_positive_rate = Column(Float, nullable=True, index=True)  # 0.0 to 1.0
+
+    # Optional metadata
+    title = Column(String, nullable=True)  # Human-readable title
+    summary = Column(Text, nullable=True)  # Short text summary (extracted from report_data if available)
+
+    # Relationships
+    scan = relationship("Scan", backref="reports")
+
+
 class GlobalSetting(Base):
     """Global application settings - key-value store"""
     __tablename__ = "global_settings"
