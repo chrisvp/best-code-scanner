@@ -599,10 +599,18 @@ class PromptTuner:
                 if vote == "FP":
                     vote = "FALSE_POSITIVE"
 
+                # Extract reasoning - handle both string and object formats
+                reasoning = data.get("reasoning", "")
+                if isinstance(reasoning, dict):
+                    # If reasoning is a dict, convert to string
+                    reasoning = json.dumps(reasoning)
+                elif not isinstance(reasoning, str):
+                    reasoning = str(reasoning)
+
                 return {
                     "vote": vote,
                     "confidence": data.get("confidence"),
-                    "reasoning": data.get("reasoning", ""),
+                    "reasoning": reasoning,
                     "parse_success": True,
                     "parse_error": None,
                 }
