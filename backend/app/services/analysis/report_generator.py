@@ -491,9 +491,9 @@ class ReportGenerator:
                 if draft:
                     final_status = draft[0]
                     # Map decision to status
-                    # VERIFY -> verified, REJECT -> rejected, WEAKNESS -> weakness
-                    if (model_decision == "VERIFY" and final_status == "verified") or \
-                       (model_decision == "REJECT" and final_status == "rejected") or \
+                    # REAL -> verified, FALSE_POSITIVE -> rejected, WEAKNESS -> weakness
+                    if (model_decision == "REAL" and final_status == "verified") or \
+                       (model_decision == "FALSE_POSITIVE" and final_status == "rejected") or \
                        (model_decision == "WEAKNESS" and final_status == "weakness"):
                         agreements += 1
 

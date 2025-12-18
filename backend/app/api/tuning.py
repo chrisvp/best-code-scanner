@@ -274,8 +274,8 @@ def get_draft_findings(
     for d in drafts:
         # Get vote breakdown
         votes = d.votes  # Relationship
-        verify = sum(1 for v in votes if v.decision and v.decision.upper() in ['VERIFY', 'REAL'])
-        reject = sum(1 for v in votes if v.decision and v.decision.upper() in ['REJECT', 'FALSE_POSITIVE'])
+        verify = sum(1 for v in votes if v.decision and v.decision.upper() in ['REAL'])
+        reject = sum(1 for v in votes if v.decision and v.decision.upper() in ['FALSE_POSITIVE'])
         weakness = sum(1 for v in votes if v.decision and v.decision.upper() in ['WEAKNESS'])
         
         results.append({
@@ -606,8 +606,8 @@ def get_run_detail(run_id: int, db: Session = Depends(get_db)):
             prediction = (result.predicted_vote or "").upper()
 
             # Count true positives, false positives, false negatives, true negatives
-            is_vuln_truth = ground_truth in ["REAL", "VERIFY"]
-            is_vuln_pred = prediction in ["REAL", "VERIFY"]
+            is_vuln_truth = ground_truth in ["REAL"]
+            is_vuln_pred = prediction in ["REAL"]
 
             if is_vuln_truth and is_vuln_pred:
                 tp += 1

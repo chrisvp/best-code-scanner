@@ -746,7 +746,7 @@ class ScanPipeline:
                         draft_finding_id=draft.id,
                         model_name='joern-cpg',
                         verifier_id=None,
-                        decision='VERIFY',
+                        decision='REAL',
                         confidence=100,  # Joern pattern matching is deterministic
                         reasoning='Auto-verified by Joern CPG analysis (verification phase skipped)',
                         vote_weight=1.0

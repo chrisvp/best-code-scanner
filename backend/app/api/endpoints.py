@@ -276,9 +276,9 @@ async def get_scan_details(request: Request, scan_id: int, db: Session = Depends
         votes = db.query(VerificationVote).filter(
             VerificationVote.draft_finding_id == draft.id
         ).all()
-        verify_count = sum(1 for v in votes if v.decision == 'VERIFY')
+        verify_count = sum(1 for v in votes if v.decision == 'REAL')
         weakness_count = sum(1 for v in votes if v.decision == 'WEAKNESS')
-        reject_count = sum(1 for v in votes if v.decision == 'REJECT')
+        reject_count = sum(1 for v in votes if v.decision == 'FALSE_POSITIVE')
         abstain_count = sum(1 for v in votes if v.decision == 'ABSTAIN')
 
         # Check for agent session
