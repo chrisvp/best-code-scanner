@@ -47,6 +47,10 @@
                     class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
                     Benchmark
                 </button>
+                <button onclick="switchTab('import-wizard')" id="tab-import-wizard"
+                    class="tab-btn px-4 py-2.5 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent -mb-px transition-colors">
+                    Import Test Cases
+                </button>
             </nav>
         </div>
 
@@ -353,6 +357,176 @@
         </div>
     </div>
 </div>
+
+        <!-- Tab: Import Test Cases -->
+        <div id="panel-import-wizard" class="tab-panel hidden">
+            <div class="space-y-6">
+                <!-- Current Stats Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Current Test Case Library</h2>
+                    </div>
+                    <div class="p-4">
+                        <div id="test-case-stats-loading" class="text-center py-4 text-gray-500">
+                            Loading stats...
+                        </div>
+                        <div id="test-case-stats-content" class="hidden">
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                    <div class="text-gray-400 text-xs uppercase mb-1">Total</div>
+                                    <div class="text-white text-2xl font-bold" id="stat-total">0</div>
+                                </div>
+                                <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                    <div class="text-gray-400 text-xs uppercase mb-1">Real</div>
+                                    <div class="text-white text-2xl font-bold" id="stat-real">0</div>
+                                </div>
+                                <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                    <div class="text-gray-400 text-xs uppercase mb-1">Synthetic</div>
+                                    <div class="text-white text-2xl font-bold" id="stat-synthetic">0</div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                    <div class="text-gray-400 text-xs uppercase mb-2">By Verdict</div>
+                                    <div id="verdict-breakdown" class="space-y-1 text-sm">
+                                        <!-- Populated by JS -->
+                                    </div>
+                                </div>
+                                <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                                    <div class="text-gray-400 text-xs uppercase mb-2">By CWE (Top 5)</div>
+                                    <div id="cwe-breakdown" class="space-y-1 text-sm">
+                                        <!-- Populated by JS -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scan Selector Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="select-all-scans" onchange="toggleAllScans(this.checked)" class="w-4 h-4">
+                            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+                                Select Scans <span id="scans-count" class="text-blue-400">(0 selected)</span>
+                            </h2>
+                        </label>
+                    </div>
+                    <div class="p-4">
+                        <div id="scans-loading" class="text-center py-4 text-gray-500">
+                            Loading scans...
+                        </div>
+                        <div id="scans-list" class="hidden space-y-2 max-h-64 overflow-y-auto bg-gray-900 rounded-lg p-3 border border-gray-700 custom-scrollbar">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div class="flex gap-2 mt-3">
+                            <button onclick="selectAllScans()" class="text-xs text-blue-400 hover:text-blue-300">Select All</button>
+                            <span class="text-gray-600">|</span>
+                            <button onclick="deselectAllScans()" class="text-xs text-gray-400 hover:text-gray-300">Deselect All</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Configuration Options Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Import Configuration</h2>
+                    </div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Target Count: <span id="target-count-value" class="text-blue-400 font-bold">100</span>
+                            </label>
+                            <input type="range" id="target-count-slider" min="10" max="500" value="100"
+                                oninput="document.getElementById('target-count-value').textContent = this.value"
+                                class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>10</span>
+                                <span>500</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="balance-classes" checked class="w-4 h-4">
+                                <span class="text-sm text-gray-300">Balance classes (equal distribution of REAL/FALSE_POSITIVE/WEAKNESS)</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-300 mb-2">
+                                Minimum Confidence: <span id="min-confidence-value" class="text-blue-400 font-bold">0.7</span>
+                            </label>
+                            <input type="range" id="min-confidence-slider" min="0.5" max="1.0" step="0.05" value="0.7"
+                                oninput="document.getElementById('min-confidence-value').textContent = parseFloat(this.value).toFixed(2)"
+                                class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+                            <div class="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0.5</span>
+                                <span>1.0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Preview</h2>
+                    </div>
+                    <div class="p-4">
+                        <button onclick="loadImportPreview()" id="preview-btn"
+                            class="w-full px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 mb-4">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                            </svg>
+                            Load Preview
+                        </button>
+                        <div id="preview-loading" class="hidden text-center py-4 text-gray-500">
+                            Loading preview...
+                        </div>
+                        <div id="preview-content" class="hidden space-y-4 max-h-96 overflow-y-auto custom-scrollbar">
+                            <!-- Populated by JS -->
+                        </div>
+                        <div id="preview-empty" class="hidden text-center py-8 text-gray-500">
+                            <svg class="w-12 h-12 mx-auto mb-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            <p>Select scans and click "Load Preview" to see sample test cases</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Import Action Section -->
+                <div class="bg-gray-800 rounded-lg border border-gray-700">
+                    <div class="p-4">
+                        <button onclick="startImport()" id="import-btn"
+                            class="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                            </svg>
+                            Import Test Cases
+                        </button>
+                        <div id="import-progress" class="hidden mt-4">
+                            <div class="bg-gray-900 rounded-lg p-4 border border-gray-700">
+                                <div class="flex items-center gap-3 mb-3">
+                                    <svg class="animate-spin h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span class="text-white font-medium">Importing test cases...</span>
+                                </div>
+                                <div id="import-status" class="text-sm text-gray-400">
+                                    Initializing...
+                                </div>
+                            </div>
+                        </div>
+                        <div id="import-result" class="hidden mt-4">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
 <script>
 // Tab switching
@@ -876,6 +1050,8 @@ document.addEventListener('DOMContentLoaded', function() {
         loadStats();
     } else if (activeTab === 'benchmark') {
         initBenchmarkTab();
+    } else if (activeTab === 'import-wizard') {
+        initImportWizard();
     }
 });
 
@@ -885,6 +1061,8 @@ switchTab = function(tabId) {
     originalSwitchTab(tabId);
     if (tabId === 'benchmark') {
         initBenchmarkTab();
+    } else if (tabId === 'import-wizard') {
+        initImportWizard();
     }
 };
 
@@ -2429,6 +2607,326 @@ document.addEventListener('visibilitychange', () => {
         }
     }
 });
+
+// =====================
+// IMPORT WIZARD TAB
+// =====================
+let availableScans = [];
+
+function initImportWizard() {
+    loadTestCaseStats();
+    loadAvailableScans();
+    // Reset preview and result sections
+    document.getElementById('preview-content').classList.add('hidden');
+    document.getElementById('preview-empty').classList.remove('hidden');
+    document.getElementById('import-result').classList.add('hidden');
+}
+
+async function loadTestCaseStats() {
+    const loadingEl = document.getElementById('test-case-stats-loading');
+    const contentEl = document.getElementById('test-case-stats-content');
+
+    try {
+        const res = await fetch('/api/v1/tuning/test-cases/stats');
+        const stats = await res.json();
+
+        // Update main stats
+        document.getElementById('stat-total').textContent = stats.total || 0;
+        document.getElementById('stat-real').textContent = stats.real || 0;
+        document.getElementById('stat-synthetic').textContent = stats.synthetic || 0;
+
+        // Verdict breakdown
+        const verdictBreakdown = document.getElementById('verdict-breakdown');
+        verdictBreakdown.innerHTML = '';
+        const verdictColors = {
+            'REAL': 'text-green-400',
+            'FALSE_POSITIVE': 'text-red-400',
+            'WEAKNESS': 'text-yellow-400'
+        };
+
+        for (const [verdict, count] of Object.entries(stats.by_verdict || {})) {
+            const color = verdictColors[verdict] || 'text-gray-400';
+            verdictBreakdown.innerHTML += `
+                <div class="flex justify-between">
+                    <span class="${color}">${verdict}</span>
+                    <span class="text-white font-medium">${count}</span>
+                </div>
+            `;
+        }
+
+        // CWE breakdown (top 5)
+        const cweBreakdown = document.getElementById('cwe-breakdown');
+        cweBreakdown.innerHTML = '';
+        const sortedCwes = Object.entries(stats.by_cwe || {})
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5);
+
+        if (sortedCwes.length === 0) {
+            cweBreakdown.innerHTML = '<div class="text-gray-500 text-xs">No CWE data</div>';
+        } else {
+            for (const [cwe, count] of sortedCwes) {
+                cweBreakdown.innerHTML += `
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">${cwe || 'Unknown'}</span>
+                        <span class="text-white font-medium">${count}</span>
+                    </div>
+                `;
+            }
+        }
+
+        loadingEl.classList.add('hidden');
+        contentEl.classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed to load test case stats:', e);
+        loadingEl.innerHTML = '<div class="text-red-400">Failed to load stats</div>';
+    }
+}
+
+async function loadAvailableScans() {
+    const loadingEl = document.getElementById('scans-loading');
+    const listEl = document.getElementById('scans-list');
+
+    try {
+        const res = await fetch('/api/v1/tuning/scans/list');
+        const data = await res.json();
+        availableScans = data.scans || [];
+
+        if (availableScans.length === 0) {
+            loadingEl.innerHTML = '<div class="text-gray-500">No completed scans available</div>';
+            return;
+        }
+
+        listEl.innerHTML = availableScans.map(scan => `
+            <label class="flex items-center gap-3 p-2 hover:bg-gray-800 rounded cursor-pointer">
+                <input type="checkbox" class="import-scan-checkbox w-4 h-4" value="${scan.id}" onchange="updateScansCount()">
+                <div class="flex-1 min-w-0">
+                    <div class="text-white text-sm truncate">${escapeHtml(scan.name)}</div>
+                    <div class="text-gray-500 text-xs">
+                        ID: ${scan.id} • ${scan.status} • ${new Date(scan.created_at).toLocaleDateString()}
+                    </div>
+                </div>
+            </label>
+        `).join('');
+
+        loadingEl.classList.add('hidden');
+        listEl.classList.remove('hidden');
+        updateScansCount();
+    } catch (e) {
+        console.error('Failed to load scans:', e);
+        loadingEl.innerHTML = '<div class="text-red-400">Failed to load scans</div>';
+    }
+}
+
+function updateScansCount() {
+    const selected = document.querySelectorAll('.import-scan-checkbox:checked').length;
+    document.getElementById('scans-count').textContent = `(${selected} selected)`;
+}
+
+function selectAllScans() {
+    document.querySelectorAll('.import-scan-checkbox').forEach(cb => cb.checked = true);
+    updateScansCount();
+}
+
+function deselectAllScans() {
+    document.querySelectorAll('.import-scan-checkbox').forEach(cb => cb.checked = false);
+    updateScansCount();
+}
+
+function toggleAllScans(checked) {
+    document.querySelectorAll('.import-scan-checkbox').forEach(cb => cb.checked = checked);
+    updateScansCount();
+}
+
+async function loadImportPreview() {
+    const selectedScans = Array.from(document.querySelectorAll('.import-scan-checkbox:checked'))
+        .map(cb => parseInt(cb.value));
+
+    if (selectedScans.length === 0) {
+        showToast('Please select at least one scan', 'error');
+        return;
+    }
+
+    const loadingEl = document.getElementById('preview-loading');
+    const contentEl = document.getElementById('preview-content');
+    const emptyEl = document.getElementById('preview-empty');
+    const btn = document.getElementById('preview-btn');
+
+    loadingEl.classList.remove('hidden');
+    contentEl.classList.add('hidden');
+    emptyEl.classList.add('hidden');
+    btn.disabled = true;
+
+    try {
+        // Load preview for each selected scan (limit to first 3 for performance)
+        const previewScans = selectedScans.slice(0, 3);
+        const previews = await Promise.all(
+            previewScans.map(scanId =>
+                fetch(`/api/v1/tuning/scans/${scanId}/preview?limit=5`).then(r => r.json())
+            )
+        );
+
+        contentEl.innerHTML = '';
+
+        for (let i = 0; i < previews.length; i++) {
+            const preview = previews[i];
+            const scan = availableScans.find(s => s.id === previewScans[i]);
+
+            contentEl.innerHTML += `
+                <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                    <div class="font-medium text-white mb-2">${escapeHtml(scan.name)}</div>
+                    <div class="text-xs text-gray-500 mb-2">${preview.sample_count} sample(s)</div>
+                    <div class="space-y-1">
+                        ${preview.samples.map(s => `
+                            <div class="text-sm bg-gray-800 p-2 rounded border border-gray-700">
+                                <div class="text-white font-medium truncate">${escapeHtml(s.title)}</div>
+                                <div class="text-gray-400 text-xs mt-1">
+                                    ${s.type} • ${s.status} • Line ${s.line}
+                                </div>
+                                <div class="text-gray-500 text-xs truncate">${escapeHtml(s.file)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        if (selectedScans.length > 3) {
+            contentEl.innerHTML += `
+                <div class="text-center text-gray-500 text-sm">
+                    ... and ${selectedScans.length - 3} more scan(s)
+                </div>
+            `;
+        }
+
+        loadingEl.classList.add('hidden');
+        contentEl.classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed to load preview:', e);
+        loadingEl.classList.add('hidden');
+        emptyEl.classList.remove('hidden');
+        emptyEl.innerHTML = '<div class="text-center py-8 text-red-400">Failed to load preview</div>';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function startImport() {
+    const selectedScans = Array.from(document.querySelectorAll('.import-scan-checkbox:checked'))
+        .map(cb => parseInt(cb.value));
+
+    if (selectedScans.length === 0) {
+        showToast('Please select at least one scan', 'error');
+        return;
+    }
+
+    const targetCount = parseInt(document.getElementById('target-count-slider').value);
+    const balanceClasses = document.getElementById('balance-classes').checked;
+    const minConfidence = parseFloat(document.getElementById('min-confidence-slider').value);
+
+    const progressEl = document.getElementById('import-progress');
+    const resultEl = document.getElementById('import-result');
+    const statusEl = document.getElementById('import-status');
+    const btn = document.getElementById('import-btn');
+
+    progressEl.classList.remove('hidden');
+    resultEl.classList.add('hidden');
+    btn.disabled = true;
+
+    try {
+        statusEl.textContent = 'Sending request...';
+
+        const res = await fetch('/api/v1/tuning/test-cases/bulk-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                scan_ids: selectedScans,
+                target_count: targetCount,
+                balance_classes: balanceClasses,
+                min_confidence: minConfidence
+            })
+        });
+
+        const result = await res.json();
+
+        if (!res.ok) {
+            throw new Error(result.detail || 'Import failed');
+        }
+
+        // Show results
+        progressEl.classList.add('hidden');
+        resultEl.classList.remove('hidden');
+
+        const verdictColors = {
+            'REAL': 'text-green-400',
+            'FALSE_POSITIVE': 'text-red-400',
+            'WEAKNESS': 'text-yellow-400'
+        };
+
+        resultEl.innerHTML = `
+            <div class="bg-green-900/20 border border-green-700 rounded-lg p-4">
+                <div class="flex items-center gap-2 mb-3">
+                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    <span class="text-green-400 font-medium">Import Successful!</span>
+                </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex justify-between text-gray-300">
+                        <span>Total imported:</span>
+                        <span class="font-bold text-white">${result.imported_count || 0}</span>
+                    </div>
+                    <div class="flex justify-between text-gray-300">
+                        <span>Skipped (duplicates):</span>
+                        <span class="font-medium">${result.skipped_count || 0}</span>
+                    </div>
+                    ${result.by_verdict ? `
+                        <div class="mt-3 pt-3 border-t border-gray-700">
+                            <div class="text-gray-400 text-xs uppercase mb-2">By Verdict</div>
+                            ${Object.entries(result.by_verdict).map(([verdict, count]) => {
+                                const color = verdictColors[verdict] || 'text-gray-400';
+                                return `
+                                    <div class="flex justify-between">
+                                        <span class="${color}">${verdict}</span>
+                                        <span class="text-white font-medium">${count}</span>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
+        // Reload stats
+        loadTestCaseStats();
+        showToast('Import completed successfully!', 'success');
+
+    } catch (e) {
+        console.error('Import failed:', e);
+        progressEl.classList.add('hidden');
+        resultEl.classList.remove('hidden');
+        resultEl.innerHTML = `
+            <div class="bg-red-900/20 border border-red-700 rounded-lg p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                    <span class="text-red-400 font-medium">Import Failed</span>
+                </div>
+                <div class="text-sm text-gray-300">${escapeHtml(e.message)}</div>
+            </div>
+        `;
+        showToast('Import failed: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 </script>
 
 <!-- Result Inspector Panel (slides in from right) -->

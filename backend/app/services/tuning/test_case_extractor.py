@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 
 from app.models.scanner_models import (
-    DraftFinding, VerificationVote, ScanFileChunk, ScanFile, Scan
+    DraftFinding, VerificationVote, ScanFileChunk, ScanFile
 )
+from app.models.models import Scan
 from app.models.tuning_models import TuningTestCase
 
 
@@ -82,7 +83,8 @@ class TestCaseExtractor:
             DraftFinding.status,  # verified, rejected, weakness
             DraftFinding.chunk_id,
             DraftFinding.scan_id,
-            ScanFileChunk.code_chunk.label('full_code_chunk'),
+            ScanFileChunk.start_line,
+            ScanFileChunk.end_line,
             ScanFile.file_path.label('full_file_path'),
             Scan.target_url.label('scan_name')
         ).join(
@@ -150,6 +152,13 @@ class TestCaseExtractor:
                 if cwe_match:
                     cwe_type = cwe_match.group(0)
 
+            # Get full code chunk content from file system
+            full_code_chunk = None
+            if row.chunk_id and row.full_file_path and row.start_line and row.end_line:
+                full_code_chunk = self._get_chunk_content(
+                    row.full_file_path, row.start_line, row.end_line
+                )
+
             candidates.append({
                 'draft_id': row.draft_id,
                 'title': row.title,
@@ -161,7 +170,7 @@ class TestCaseExtractor:
                 'file_path': row.file_path or row.full_file_path,
                 'status': row.status,  # Ground truth
                 'chunk_id': row.chunk_id,
-                'full_code_chunk': row.full_code_chunk,
+                'full_code_chunk': full_code_chunk,
                 'scan_id': row.scan_id,
                 'scan_name': row.scan_name,
                 'verification_votes': votes_json,
@@ -315,6 +324,16 @@ class TestCaseExtractor:
             tags.append('medium-agreement')
 
         return tags
+
+    def _get_chunk_content(self, file_path: str, start_line: int, end_line: int) -> Optional[str]:
+        """Get the actual content of a code chunk from file system"""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            return ''.join(lines[start_line - 1:end_line])
+        except Exception as e:
+            print(f"[TestCaseExtractor] Error reading chunk from {file_path}:{start_line}-{end_line}: {e}")
+            return None
 
     def import_test_cases(self, test_cases: List[TuningTestCase]) -> Tuple[int, List[str]]:
         """
