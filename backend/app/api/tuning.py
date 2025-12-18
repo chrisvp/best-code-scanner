@@ -171,10 +171,20 @@ def get_test_cases(db: Session = Depends(get_db)):
             "id": c.id,
             "name": c.name,
             "verdict": c.verdict,
+            # Old format fields (backwards compat)
             "issue": c.issue,
             "file": c.file,
             "code": c.code,
             "claim": c.claim,
+            # New format fields
+            "title": c.title,
+            "vulnerability_type": c.vulnerability_type,
+            "severity": c.severity,
+            "line_number": c.line_number,
+            "snippet": c.snippet,
+            "reason": c.reason,
+            "file_path": c.file_path,
+            "language": c.language,
             "created_at": c.created_at.isoformat() if c.created_at else None,
         }
         for c in cases
