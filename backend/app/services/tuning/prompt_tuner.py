@@ -484,10 +484,8 @@ class PromptTuner:
         Parse verification response to extract vote, confidence, and reasoning.
 
         Supports multiple formats:
-        - Vote: [verdict]
-        - *VOTE: [verdict]
-        - Confidence: [0-100]
-        - Reasoning: [text]
+        - JSON: {"vote": "...", "confidence": ..., "reasoning": "..."}
+        - Markers: *VOTE: ... *CONFIDENCE: ... *REASONING: ...
         """
         result = {
             "vote": None,
@@ -504,6 +502,11 @@ class PromptTuner:
 
         # Strip thinking tags
         response = self._strip_thinking_tags(response)
+
+        # Try JSON parsing first (for guided JSON responses)
+        json_parsed = self._try_parse_json(response)
+        if json_parsed:
+            return json_parsed
 
         # Extract vote - handle multiple formats
         vote_patterns = [
@@ -570,6 +573,49 @@ class PromptTuner:
             result["parse_error"] = "Could not extract vote from response"
 
         return result
+
+    def _try_parse_json(self, response: str) -> Optional[Dict]:
+        """Try to parse response as JSON (for guided JSON output mode)"""
+        import json
+
+        # Try to extract JSON from ```json blocks
+        json_block_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response)
+        if json_block_match:
+            json_text = json_block_match.group(1)
+        else:
+            # Try to find raw JSON object
+            json_match = re.search(r'\{[\s\S]*"vote"[\s\S]*?\}', response)
+            if json_match:
+                json_text = json_match.group(0)
+            else:
+                return None
+
+        try:
+            data = json.loads(json_text)
+
+            # Extract and normalize vote
+            vote = data.get("vote", "").upper().strip()
+            if vote in ["REAL", "FALSE_POSITIVE", "FP", "WEAKNESS", "NEEDS_VERIFIED"]:
+                if vote == "FP":
+                    vote = "FALSE_POSITIVE"
+
+                return {
+                    "vote": vote,
+                    "confidence": data.get("confidence"),
+                    "reasoning": data.get("reasoning", ""),
+                    "parse_success": True,
+                    "parse_error": None,
+                }
+            else:
+                return {
+                    "vote": None,
+                    "confidence": None,
+                    "reasoning": None,
+                    "parse_success": False,
+                    "parse_error": f"Invalid vote in JSON: {vote}"
+                }
+        except json.JSONDecodeError as e:
+            return None
 
     def _strip_thinking_tags(self, text: str) -> str:
         """Remove thinking tags from reasoning models"""
