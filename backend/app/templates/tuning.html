@@ -1179,44 +1179,113 @@ async function loadBenchmarkRuns() {
         const response = await fetch('/api/v1/tuning/runs');
         const runs = await response.json();
         const container = document.getElementById('results-panel');
-        
+
+        // Clear existing content
+        container.innerHTML = '';
+
         if (runs.length === 0) {
-            container.innerHTML = '<div class="text-center text-gray-500 py-12">No benchmarks run yet</div>';
+            const emptyDiv = document.createElement('div');
+            emptyDiv.className = 'text-center text-gray-500 py-12';
+            emptyDiv.textContent = 'No benchmarks run yet';
+            container.appendChild(emptyDiv);
             return;
         }
-        
-        container.innerHTML = runs.map(run => {
-            const passRate = run.total_cases > 0 ? Math.round((run.passed_cases / run.total_cases) * 100) : 0;
-            const color = passRate >= 80 ? 'text-green-400' : passRate >= 50 ? 'text-yellow-400' : 'text-red-400';
-            
-            return `
-            <div class="mb-3 bg-gray-900/50 border border-gray-700 rounded-lg p-3 cursor-pointer hover:bg-gray-700/30 transition-colors"
-                 onclick="showRunDetails(${run.id})">
-                <div class="flex justify-between items-start mb-2">
-                    <div>
-                        <div class="font-medium text-gray-200">Run #${run.id}</div>
-                        <div class="text-xs text-gray-500">${new Date(run.created_at).toLocaleString()}</div>
-                    </div>
-                    <div class="text-right">
-                        <div class="text-xs uppercase font-bold tracking-wider ${run.status === 'completed' ? 'text-green-500' : 'text-blue-400'}">
-                            ${run.status}
-                        </div>
-                        ${run.status === 'completed' ? `
-                            <div class="text-lg font-bold ${color}">${passRate}%</div>
-                        ` : ''}
-                    </div>
-                </div>
-                <div class="grid grid-cols-3 gap-2 text-xs text-gray-400">
-                    <div>Total: <span class="text-gray-300">${run.total_cases}</span></div>
-                    <div>Passed: <span class="text-gray-300">${run.passed_cases}</span></div>
-                    <div>Failed: <span class="text-gray-300">${run.failed_cases}</span></div>
-                </div>
-            </div>
-            `;
-        }).join('');
-        
+
+        // Create DOM elements for each run
+        runs.forEach(run => {
+            // Main container div
+            const runDiv = document.createElement('div');
+            runDiv.className = 'mb-3 bg-gray-900/50 border border-gray-700 rounded-lg p-3 cursor-pointer hover:bg-gray-700/30 transition-colors';
+            runDiv.onclick = () => showRunDetails(run.id);
+
+            // Header flex container
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'flex justify-between items-start mb-2';
+
+            // Left side (name/timestamp)
+            const leftDiv = document.createElement('div');
+
+            const nameDiv = document.createElement('div');
+            nameDiv.className = 'font-medium text-gray-200';
+            nameDiv.textContent = run.name ? run.name : `Run #${run.id}`;
+
+            const timestampDiv = document.createElement('div');
+            timestampDiv.className = 'text-xs text-gray-500';
+            timestampDiv.textContent = new Date(run.created_at).toLocaleString();
+
+            leftDiv.appendChild(nameDiv);
+            leftDiv.appendChild(timestampDiv);
+
+            // Right side (status/metric)
+            const rightDiv = document.createElement('div');
+            rightDiv.className = 'text-right';
+
+            // Status badge
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'text-xs uppercase font-bold tracking-wider';
+            statusDiv.className += run.status === 'completed' ? ' text-green-500' :
+                                   run.status === 'failed' ? ' text-red-500' : ' text-blue-400';
+            statusDiv.textContent = run.status;
+            rightDiv.appendChild(statusDiv);
+
+            // Show metric based on status
+            if (run.status === 'completed' && run.total_duration_ms) {
+                const durationDiv = document.createElement('div');
+                durationDiv.className = 'text-sm font-medium text-gray-300';
+                const durationSec = (run.total_duration_ms / 1000).toFixed(1);
+                durationDiv.textContent = `${durationSec}s`;
+                rightDiv.appendChild(durationDiv);
+            } else if (run.status === 'running' && run.total_tests > 0) {
+                const progressDiv = document.createElement('div');
+                const percentage = Math.round((run.completed_tests / run.total_tests) * 100);
+                progressDiv.className = 'text-lg font-bold text-blue-400';
+                progressDiv.textContent = `${percentage}%`;
+                rightDiv.appendChild(progressDiv);
+            }
+
+            headerDiv.appendChild(leftDiv);
+            headerDiv.appendChild(rightDiv);
+
+            // Bottom grid with test counts
+            const gridDiv = document.createElement('div');
+            gridDiv.className = 'grid grid-cols-2 gap-2 text-xs text-gray-400';
+
+            // Total tests
+            const totalDiv = document.createElement('div');
+            const totalSpan = document.createElement('span');
+            totalSpan.className = 'text-gray-300';
+            totalSpan.textContent = run.total_tests || 0;
+            totalDiv.textContent = 'Total: ';
+            totalDiv.appendChild(totalSpan);
+
+            // Completed tests
+            const completedDiv = document.createElement('div');
+            const completedSpan = document.createElement('span');
+            completedSpan.className = 'text-gray-300';
+            completedSpan.textContent = run.completed_tests || 0;
+            completedDiv.textContent = 'Completed: ';
+            completedDiv.appendChild(completedSpan);
+
+            gridDiv.appendChild(totalDiv);
+            gridDiv.appendChild(completedDiv);
+
+            // Assemble the complete run element
+            runDiv.appendChild(headerDiv);
+            runDiv.appendChild(gridDiv);
+
+            // Add to container
+            container.appendChild(runDiv);
+        });
+
     } catch (e) {
         console.error('Failed to load runs:', e);
+        // Show error in UI
+        const container = document.getElementById('results-panel');
+        container.innerHTML = '';
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'text-center text-red-400 py-12';
+        errorDiv.textContent = 'Failed to load benchmark runs';
+        container.appendChild(errorDiv);
     }
 }
 

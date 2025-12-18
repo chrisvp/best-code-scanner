@@ -203,7 +203,7 @@ function runDetailApp() {
 
         async loadRunDetail() {
             try {
-                const response = await fetch(`/api/tuning/runs/${this.runId}/detail`);
+                const response = await fetch(`/api/v1/tuning/runs/${this.runId}/detail`);
                 const data = await response.json();
 
                 this.run = data.run;
