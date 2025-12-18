@@ -16,6 +16,8 @@ from app.models.tuning_models import TuningPromptTemplate, TuningTestCase, Tunin
 from app.models.scanner_models import ModelConfig
 from app.services.orchestration.model_orchestrator import ModelPool
 from app.services.tuning.run_controller import TuningRunController
+from app.services.intelligence.context_retriever import ContextRetriever
+from app.services.analysis.output_formats import get_output_format
 
 
 class PromptTuner:
@@ -268,7 +270,8 @@ class PromptTuner:
                     raise ValueError(f"Missing model, prompt, or test case")
 
                 # Get test case data with ALL fields for real verification format
-                test_data = self._get_test_case_data(test_case)
+                # This now fetches REAL file context just like production verifiers
+                test_data = await self._get_test_case_data(test_case)
 
                 # Fill in prompt placeholders with comprehensive data
                 full_prompt = prompt_template.template.format(**test_data)
@@ -338,10 +341,13 @@ class PromptTuner:
                 self.db.commit()
                 raise
 
-    def _get_test_case_data(self, test_case: TuningTestCase) -> dict:
+    async def _get_test_case_data(self, test_case: TuningTestCase) -> dict:
         """
         Get test case data in the EXACT format used by real verification.
-        Returns dict matching the context passed to verifier _format_prompt()
+        Fetches REAL file context just like production verifiers.
+
+        If the file doesn't exist or context retrieval fails, the exception
+        will propagate and be caught by _run_single_test, marking the test as error.
 
         Args:
             test_case: The test case
@@ -349,7 +355,7 @@ class PromptTuner:
         Returns:
             Dict with all placeholders for prompt formatting
         """
-        # If draft_finding_id is set, load from draft_finding
+        # If draft_finding_id is set, load from draft_finding AND fetch real context
         if test_case.draft_finding_id:
             from app.models.scanner_models import DraftFinding
             draft = self.db.query(DraftFinding).filter(
@@ -359,6 +365,16 @@ class PromptTuner:
             if draft:
                 file_path = draft.file_path or "Unknown"
                 language = self._get_language_from_path(file_path)
+
+                # Fetch REAL context just like production verifiers
+                # If file doesn't exist or retrieval fails, let it raise - test will be marked as error
+                context = ""
+                if draft.scan_id and file_path != "Unknown" and draft.line_number:
+                    context_retriever = ContextRetriever(draft.scan_id, self.db)
+                    context = await context_retriever.get_context_for_file(file_path, draft.line_number)
+
+                # Generate output_format exactly like production verifiers
+                output_format = get_output_format("verifier", "markers")
 
                 return {
                     # Primary placeholders (real verification format):
@@ -370,7 +386,8 @@ class PromptTuner:
                     'finding_line': draft.line_number or 0,
                     'finding_reason': draft.reason or "",
                     'code_snippet': draft.snippet or "",
-                    'code_context': "",  # Would need context retriever
+                    'code_context': context,
+                    'output_format': output_format,
 
                     # Aliases for flexibility:
                     'title': draft.title or "Unknown",
@@ -382,7 +399,7 @@ class PromptTuner:
                     'snippet': draft.snippet or "",
                     'reason': draft.reason or "",
                     'details': draft.reason or "",
-                    'context': "",
+                    'context': context,
 
                     # Backwards compat (old format):
                     'code': draft.snippet or "",
@@ -393,6 +410,8 @@ class PromptTuner:
 
         # Fall back to test_case fields (with new column names)
         file_path = test_case.file_path or test_case.file or "unknown"
+        output_format = get_output_format("verifier", "markers")
+
         return {
             # Primary placeholders:
             'file_path': file_path,
@@ -404,6 +423,7 @@ class PromptTuner:
             'finding_reason': test_case.reason or test_case.claim or "",
             'code_snippet': test_case.snippet or test_case.code or "",
             'code_context': "",
+            'output_format': output_format,
 
             # Aliases:
             'title': test_case.title or test_case.issue or "Unknown",
