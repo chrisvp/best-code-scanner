@@ -552,6 +552,12 @@ class PromptTuner:
         """
         Check if predicted vote matches ground truth.
 
+        Evaluation rules:
+        - REAL must match REAL exactly (confirmed vulnerability)
+        - FALSE_POSITIVE and WEAKNESS are interchangeable (both mean "not exploitable")
+        - NEEDS_VERIFIED is only correct if ground truth is also NEEDS_VERIFIED
+          (model punting on a decision is wrong unless the ground truth is genuinely ambiguous)
+
         Args:
             predicted_vote: Model's predicted vote (e.g., "REAL", "FALSE_POSITIVE")
             ground_truth: Ground truth verdict from test case
@@ -566,7 +572,7 @@ class PromptTuner:
         predicted = predicted_vote.upper().strip()
         truth = ground_truth.upper().strip()
 
-        # Direct match
+        # Direct match (handles REAL, NEEDS_VERIFIED, and exact matches)
         if predicted == truth:
             return True
 
@@ -582,6 +588,9 @@ class PromptTuner:
 
         if predicted in not_exploitable and truth in not_exploitable:
             return True
+
+        # NEEDS_VERIFIED is only correct if ground truth is also NEEDS_VERIFIED
+        # (this is handled by the direct match above, so if we reach here it's wrong)
 
         return False
 
