@@ -1221,9 +1221,7 @@ async function loadBenchmarkRuns() {
 }
 
 function showRunDetails(runId) {
-    // Ideally open a modal, but for now simple alert or redirect
-    // Implementation for detailed view pending
-    alert('Detailed view implementation pending for run ' + runId);
+    window.location.href = `/tuning/run/${runId}`;
 }
 
 // =====================
