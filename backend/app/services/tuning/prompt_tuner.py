@@ -486,9 +486,9 @@ class PromptTuner:
             if match:
                 vote = match.group(1).upper().strip()
                 # Normalize vote values to the 4 supported types
-                if vote in ["REAL"]:
+                if vote in ["REAL", "VERIFY"]:
                     result["vote"] = "REAL"
-                elif vote in ["FALSE_POSITIVE", "FP"]:
+                elif vote in ["FALSE_POSITIVE", "FP", "REJECT"]:
                     result["vote"] = "FALSE_POSITIVE"
                 elif vote in ["WEAKNESS"]:
                     result["vote"] = "WEAKNESS"
