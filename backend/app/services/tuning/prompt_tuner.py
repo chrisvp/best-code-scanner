@@ -576,6 +576,13 @@ class PromptTuner:
         if predicted in fp_aliases and truth in fp_aliases:
             return True
 
+        # Treat WEAKNESS and FALSE_POSITIVE as interchangeable
+        # Both mean "not a real exploitable vulnerability"
+        not_exploitable = {"FALSE_POSITIVE", "FP", "WEAKNESS"}
+
+        if predicted in not_exploitable and truth in not_exploitable:
+            return True
+
         return False
 
     def get_run_analysis(self, run_id: int) -> Dict:
