@@ -927,7 +927,7 @@ def get_result_details(result_id: int, db: Session = Depends(get_db)):
                     "issue": draft.title,
                     "file": draft.file_path,
                     "code": draft.snippet,
-                    "claim": draft.reasoning,
+                    "claim": draft.reason,
                     "draft_finding_id": test_case.draft_finding_id
                 }
         else:
