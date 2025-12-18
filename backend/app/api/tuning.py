@@ -826,3 +826,164 @@ def get_result_details(result_id: int, db: Session = Depends(get_db)):
         "tokens_out": result.tokens_out,
         "created_at": result.created_at.isoformat() if result.created_at else None,
     }
+
+
+# ============================================================================
+# Bulk Import Endpoints
+# ============================================================================
+
+class BulkImportRequest(BaseModel):
+    scan_ids: List[int]
+    target_count: int = 100
+    balance_classes: bool = True
+    min_confidence: float = 0.7
+
+
+@router.post("/test-cases/bulk-import")
+def bulk_import_test_cases(
+    request: BulkImportRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk import test cases from historical scans.
+
+    Extracts real draft findings with full context (code chunks, verification votes)
+    to create realistic test cases that mirror actual scan verification workload.
+    """
+    from app.services.tuning.test_case_extractor import extract_and_import
+
+    try:
+        result = extract_and_import(
+            db=db,
+            scan_ids=request.scan_ids,
+            target_count=request.target_count,
+            balance=request.balance_classes,
+            min_confidence=request.min_confidence
+        )
+
+        return {
+            "success": True,
+            **result
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scans/list")
+def list_available_scans(db: Session = Depends(get_db)):
+    """List all completed scans available for test case extraction"""
+    from app.models.models import Scan
+
+    scans = db.query(
+        Scan.id,
+        Scan.target_url,
+        Scan.status,
+        Scan.created_at
+    ).filter(
+        Scan.status.in_(["completed", "paused"])
+    ).order_by(
+        Scan.id.desc()
+    ).limit(50).all()
+
+    return {
+        "scans": [
+            {
+                "id": s.id,
+                "name": s.target_url or f"Scan {s.id}",
+                "status": s.status,
+                "created_at": s.created_at.isoformat() if s.created_at else None
+            }
+            for s in scans
+        ]
+    }
+
+
+@router.get("/scans/{scan_id}/preview")
+def preview_scan_test_cases(
+    scan_id: int,
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Preview what test cases would be extracted from a scan"""
+    from app.models.scanner_models import DraftFinding
+
+    # Get sample draft findings from this scan
+    drafts = db.query(DraftFinding).filter(
+        DraftFinding.scan_id == scan_id,
+        DraftFinding.status.in_(["verified", "rejected", "weakness"])
+    ).limit(limit).all()
+
+    return {
+        "scan_id": scan_id,
+        "sample_count": len(drafts),
+        "samples": [
+            {
+                "id": d.id,
+                "title": d.title,
+                "type": d.vulnerability_type,
+                "status": d.status,
+                "line": d.line_number,
+                "file": d.file_path
+            }
+            for d in drafts
+        ]
+    }
+
+
+@router.get("/test-cases/stats")
+def get_test_case_stats(db: Session = Depends(get_db)):
+    """Get statistics about current test case library"""
+    from sqlalchemy import func
+
+    # Total count
+    total = db.query(func.count(TuningTestCase.id)).scalar()
+
+    # By verdict
+    by_verdict = db.query(
+        TuningTestCase.verdict,
+        func.count(TuningTestCase.id).label('count')
+    ).group_by(TuningTestCase.verdict).all()
+
+    # By CWE type
+    by_cwe = db.query(
+        TuningTestCase.cwe_type,
+        func.count(TuningTestCase.id).label('count')
+    ).filter(
+        TuningTestCase.cwe_type.isnot(None)
+    ).group_by(TuningTestCase.cwe_type).all()
+
+    # By source scan
+    by_scan = db.query(
+        TuningTestCase.source_scan_id,
+        TuningTestCase.source_scan_name,
+        func.count(TuningTestCase.id).label('count')
+    ).filter(
+        TuningTestCase.source_scan_id.isnot(None)
+    ).group_by(
+        TuningTestCase.source_scan_id,
+        TuningTestCase.source_scan_name
+    ).all()
+
+    # Synthetic vs real
+    synthetic_count = db.query(func.count(TuningTestCase.id)).filter(
+        TuningTestCase.is_synthetic == True
+    ).scalar()
+
+    real_count = db.query(func.count(TuningTestCase.id)).filter(
+        TuningTestCase.is_synthetic == False
+    ).scalar()
+
+    return {
+        "total": total,
+        "by_verdict": {v: c for v, c in by_verdict},
+        "by_cwe": {cwe: c for cwe, c in by_cwe},
+        "by_scan": [
+            {"scan_id": sid, "scan_name": sname, "count": c}
+            for sid, sname, c in by_scan
+        ],
+        "synthetic": synthetic_count,
+        "real": real_count
+    }

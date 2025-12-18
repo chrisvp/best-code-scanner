@@ -59,6 +59,28 @@ class TuningTestCase(Base):
     file_path = Column(String, nullable=True)  # Full file path
     language = Column(String, nullable=True)  # Programming language
 
+    # Full context (what verifiers actually see during scans)
+    full_code_chunk = Column(Text, nullable=True)  # Complete code chunk from scan
+    chunk_id = Column(Integer, ForeignKey("scan_file_chunks.id"), nullable=True)  # Reference to original chunk
+    surrounding_lines = Column(Integer, default=10, nullable=True)  # How many lines of context
+
+    # Source scan metadata (for provenance)
+    source_scan_id = Column(Integer, ForeignKey("scans.id"), nullable=True, index=True)
+    source_scan_name = Column(String, nullable=True)  # Human-readable scan identifier
+
+    # Historical verification data
+    verification_votes_json = Column(JSON, nullable=True)  # Historical votes from models
+    consensus_vote = Column(String, nullable=True)  # What the final consensus was
+    vote_confidence_avg = Column(Float, nullable=True)  # Average confidence from voters
+
+    # Categorization
+    cwe_type = Column(String, nullable=True, index=True)  # e.g., "CWE-120"
+    is_synthetic = Column(Boolean, default=False, index=True)  # Real vs synthetic test case
+    difficulty_score = Column(Float, nullable=True)  # Estimated difficulty (0-1)
+
+    # Tags for filtering
+    tags = Column(JSON, nullable=True)  # ["buffer-overflow", "pointer-arithmetic", "edge-case"]
+
     # Metadata
     created_at = Column(DateTime(timezone=True), default=local_now)
     updated_at = Column(DateTime(timezone=True), onupdate=local_now)
