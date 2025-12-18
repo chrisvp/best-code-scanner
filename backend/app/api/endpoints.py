@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Request, Form, BackgroundTasks, UploadFile, File, HTTPException, Body
-from typing import Optional
+from typing import Optional, List
 import os
 import tempfile
 from fastapi.templating import Jinja2Templates
@@ -12,7 +12,8 @@ from app.models.scanner_models import (
     ModelConfig, ScanConfig, ScanFile, ScanFileChunk,
     DraftFinding, VerifiedFinding, StaticRule, LLMCallMetric, ScanErrorLog,
     ScanProfile, ProfileAnalyzer, ProfileVerifier, WebhookConfig, WebhookDeliveryLog,
-    RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote, AgentSession
+    RepoWatcher, MRReview, LLMRequestLog, GlobalSetting, VerificationVote, AgentSession,
+    ScanReport
 )
 from app.models.auth_models import User, UserSession, FindingComment
 from app.api.deps import get_current_user_optional, get_current_user
@@ -1304,6 +1305,180 @@ async def delete_scan(scan_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return {"status": "deleted", "scan_id": scan_id}
+
+
+# Report endpoints
+@router.get("/scan/{scan_id}/report")
+async def get_scan_report(
+    scan_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get latest report for a scan"""
+    report = db.query(ScanReport).filter(
+        ScanReport.scan_id == scan_id,
+        ScanReport.report_type == 'quality_analysis'
+    ).order_by(ScanReport.generated_at.desc()).first()
+
+    # Check if HTMX request (return HTML)
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    if is_htmx:
+        if not report:
+            return templates.TemplateResponse("partials/quality_report.html", {
+                "request": request,
+                "error": True,
+                "scan_id": scan_id
+            })
+
+        # Format generated_at for display
+        generated_at_str = None
+        if report.generated_at:
+            from datetime import datetime
+            now = datetime.now(report.generated_at.tzinfo)
+            diff = now - report.generated_at
+            if diff.days > 0:
+                generated_at_str = f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+            elif diff.seconds > 3600:
+                hours = diff.seconds // 3600
+                generated_at_str = f"{hours} hour{'s' if hours > 1 else ''} ago"
+            elif diff.seconds > 60:
+                mins = diff.seconds // 60
+                generated_at_str = f"{mins} minute{'s' if mins > 1 else ''} ago"
+            else:
+                generated_at_str = "just now"
+
+        return templates.TemplateResponse("partials/quality_report.html", {
+            "request": request,
+            "scan_id": scan_id,
+            "report_type": report.report_type,
+            "overall_grade": report.overall_grade,
+            "draft_count": report.draft_count,
+            "verified_count": report.verified_count,
+            "false_positive_rate": report.false_positive_rate,
+            "title": report.title,
+            "summary": report.summary,
+            "report_data": report.report_data,
+            "generated_at": generated_at_str
+        })
+
+    # Return JSON for API calls
+    if not report:
+        return {"error": "No report found", "scan_id": scan_id}
+
+    return {
+        "id": report.id,
+        "scan_id": report.scan_id,
+        "report_type": report.report_type,
+        "overall_grade": report.overall_grade,
+        "draft_count": report.draft_count,
+        "verified_count": report.verified_count,
+        "false_positive_rate": report.false_positive_rate,
+        "title": report.title,
+        "summary": report.summary,
+        "report_data": report.report_data,
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None
+    }
+
+
+@router.post("/scan/{scan_id}/report/generate")
+async def generate_scan_report(
+    scan_id: int,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Generate quality analysis report for a scan"""
+    from app.services.analysis.report_generator import ReportGenerator
+
+    generator = ReportGenerator(db)
+    report = await generator.generate_scan_report(scan_id)
+
+    # Check if HTMX request (return HTML)
+    is_htmx = request.headers.get("HX-Request") == "true"
+
+    if is_htmx:
+        # Format generated_at for display
+        generated_at_str = "just now"
+
+        return templates.TemplateResponse("partials/quality_report.html", {
+            "request": request,
+            "scan_id": scan_id,
+            "report_type": report.report_type,
+            "overall_grade": report.overall_grade,
+            "draft_count": report.draft_count,
+            "verified_count": report.verified_count,
+            "false_positive_rate": report.false_positive_rate,
+            "title": report.title,
+            "summary": report.summary,
+            "report_data": report.report_data,
+            "generated_at": generated_at_str
+        })
+
+    # Return JSON for API calls
+    return {
+        "id": report.id,
+        "scan_id": report.scan_id,
+        "overall_grade": report.overall_grade,
+        "message": "Report generated successfully"
+    }
+
+
+@router.post("/reports/compare")
+async def generate_comparative_report(
+    scan_ids: List[int] = Body(...),
+    db: Session = Depends(get_db)
+):
+    """Generate comparative report for multiple scans"""
+    if len(scan_ids) < 2:
+        return {"error": "Need at least 2 scans for comparison"}
+
+    from app.services.analysis.report_generator import ReportGenerator
+
+    generator = ReportGenerator(db)
+    report = await generator.generate_comparative_report(scan_ids)
+
+    return {
+        "id": report.id,
+        "scan_ids": scan_ids,
+        "message": "Comparative report generated successfully"
+    }
+
+
+@router.get("/reports")
+async def list_reports(
+    scan_id: int = None,
+    report_type: str = None,
+    min_grade: str = None,
+    db: Session = Depends(get_db)
+):
+    """List reports with optional filters"""
+    query = db.query(ScanReport)
+
+    if scan_id:
+        query = query.filter(ScanReport.scan_id == scan_id)
+    if report_type:
+        query = query.filter(ScanReport.report_type == report_type)
+    if min_grade:
+        grade_order = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'F': 5}
+        min_val = grade_order.get(min_grade, 5)
+        query = query.filter(ScanReport.overall_grade.in_(
+            [g for g, v in grade_order.items() if v <= min_val]
+        ))
+
+    reports = query.order_by(ScanReport.generated_at.desc()).limit(50).all()
+
+    return [
+        {
+            "id": r.id,
+            "scan_id": r.scan_id,
+            "report_type": r.report_type,
+            "overall_grade": r.overall_grade,
+            "title": r.title,
+            "summary": r.summary,
+            "generated_at": r.generated_at.isoformat() if r.generated_at else None
+        }
+        for r in reports
+    ]
 
 
 # Model configuration endpoints

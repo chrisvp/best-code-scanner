@@ -1,0 +1,205 @@
+{% if error %}
+<!-- No Report Found - Show Generate Button -->
+<div class="flex flex-col items-center justify-center h-full">
+    <div class="max-w-lg text-center">
+        <svg class="w-16 h-16 mx-auto mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+        </svg>
+        <h3 class="text-lg font-medium text-gray-300 mb-2">No Quality Report Generated</h3>
+        <p class="text-sm text-gray-500 mb-6">Generate a quality analysis report to see scan metrics, grades, and issues.</p>
+        <button hx-post="/scan/{{ scan_id }}/report/generate"
+                hx-swap="outerHTML"
+                hx-target="#content-quality > div"
+                class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-2 mx-auto">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+            </svg>
+            Generate Quality Report
+        </button>
+    </div>
+</div>
+{% else %}
+<!-- Quality Report Display -->
+<div class="max-w-7xl mx-auto space-y-6">
+    <!-- Header with Grade -->
+    <div class="flex items-start justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-white mb-2">Quality Analysis Report</h2>
+            <p class="text-sm text-gray-400">{{ summary }}</p>
+            {% if generated_at %}
+            <p class="text-xs text-gray-500 mt-1">Generated {{ generated_at }}</p>
+            {% endif %}
+        </div>
+        <div class="text-center">
+            <div class="inline-flex flex-col items-center justify-center w-24 h-24 rounded-2xl border-4
+                {% if overall_grade == 'A' %}bg-green-500/10 border-green-500 text-green-400
+                {% elif overall_grade == 'B' %}bg-blue-500/10 border-blue-500 text-blue-400
+                {% elif overall_grade == 'C' %}bg-yellow-500/10 border-yellow-500 text-yellow-400
+                {% elif overall_grade == 'D' %}bg-orange-500/10 border-orange-500 text-orange-400
+                {% else %}bg-red-500/10 border-red-500 text-red-400{% endif %}">
+                <div class="text-4xl font-bold">{{ overall_grade }}</div>
+                <div class="text-xs uppercase tracking-wide opacity-70">Grade</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Key Metrics Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {% if report_data.get('draft_metrics') %}
+        <!-- Draft Precision -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-medium text-gray-400">Draft Precision</h3>
+                <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <div class="text-3xl font-bold text-white">{{ "%.1f"|format(report_data.get('draft_metrics', {}).get('draft_precision', 0) * 100) }}%</div>
+                <div class="text-xs text-gray-500">{{ report_data.get('draft_metrics', {}).get('drafts_verified', 0) }}/{{ report_data.get('draft_metrics', {}).get('total_drafts', 0) }}</div>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">Verified drafts</p>
+        </div>
+
+        <!-- False Positive Rate -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-medium text-gray-400">False Positive Rate</h3>
+                <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <div class="text-3xl font-bold text-white">{{ "%.1f"|format(false_positive_rate * 100) }}%</div>
+                <div class="text-xs text-gray-500">{{ report_data.get('draft_metrics', {}).get('drafts_rejected', 0) }}/{{ report_data.get('draft_metrics', {}).get('total_drafts', 0) }}</div>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">Rejected drafts</p>
+        </div>
+        {% endif %}
+
+        {% if report_data.get('verification_metrics') %}
+        <!-- Verification Consensus -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-medium text-gray-400">Consensus Rate</h3>
+                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                </svg>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <div class="text-3xl font-bold text-white">{{ "%.1f"|format(report_data.get('verification_metrics', {}).get('consensus_rate', 0) * 100) }}%</div>
+                <div class="text-xs text-gray-500">Avg: {{ "%.0f"|format(report_data.get('verification_metrics', {}).get('avg_confidence', 0)) }}%</div>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">Verifier agreement</p>
+        </div>
+        {% endif %}
+
+        {% if report_data.get('cwe_metrics') %}
+        <!-- CWE Diversity -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-sm font-medium text-gray-400">CWE Diversity</h3>
+                <svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"></path>
+                </svg>
+            </div>
+            <div class="flex items-baseline gap-2">
+                <div class="text-3xl font-bold text-white">{{ "%.2f"|format(report_data.get('cwe_metrics', {}).get('diversity_score', 0)) }}</div>
+                <div class="text-xs text-gray-500">{{ report_data.get('cwe_metrics', {}).get('unique_cwes', 0) }} types</div>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">Vulnerability variety</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Quality Issues -->
+    {% if report_data.get('quality_issues') %}
+    <div class="bg-orange-950/30 border border-orange-900/50 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-orange-400 mb-3 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+            Quality Issues Detected ({{ report_data.get('quality_issues', [])|length }})
+        </h3>
+        <ul class="space-y-2">
+            {% for issue in report_data.get('quality_issues', []) %}
+            <li class="flex items-start gap-2 text-sm">
+                <span class="text-orange-400 mt-0.5">•</span>
+                <span class="text-gray-300">{{ issue }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- CWE Distribution -->
+    {% if report_data.get('cwe_metrics') %}
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-5">
+        <h3 class="text-lg font-semibold text-white mb-4">CWE Distribution</h3>
+        {% if report_data.get('cwe_metrics', {}).get('top_cwes') %}
+        <div class="space-y-3">
+            {% for cwe_type, count in report_data.get('cwe_metrics', {}).get('top_cwes', []) %}
+            <div>
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-sm text-gray-300">{{ cwe_type }}</span>
+                    <span class="text-sm font-medium text-white">{{ count }} findings</span>
+                </div>
+                <div class="w-full bg-gray-900 rounded-full h-2">
+                    {% set total = report_data.get('draft_metrics', {}).get('total_drafts', 1) %}
+                    <div class="bg-blue-500 h-2 rounded-full" style="width: {{ (count / total * 100)|round|int }}%"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-sm text-gray-500">No CWE data available</p>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Performance Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Scan Speed -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <h4 class="text-sm font-medium text-gray-400 mb-2">Scan Speed</h4>
+            {% if report_data.get('performance_metrics', {}).get('duration_minutes', 0) > 0 %}
+            <div class="text-2xl font-bold text-white">{{ "%.1f"|format(report_data.get('performance_metrics', {}).get('findings_per_minute', 0)) }}</div>
+            <p class="text-xs text-gray-500 mt-1">findings/minute</p>
+            {% else %}
+            <div class="text-sm text-gray-500">Not available</div>
+            {% endif %}
+        </div>
+
+        <!-- Total Duration -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <h4 class="text-sm font-medium text-gray-400 mb-2">Total Duration</h4>
+            {% if report_data.get('performance_metrics', {}).get('duration_minutes', 0) > 0 %}
+            <div class="text-2xl font-bold text-white">{{ "%.1f"|format(report_data.get('performance_metrics', {}).get('duration_minutes', 0)) }}</div>
+            <p class="text-xs text-gray-500 mt-1">minutes</p>
+            {% else %}
+            <div class="text-sm text-gray-500">Not available</div>
+            {% endif %}
+        </div>
+
+        <!-- Files Scanned -->
+        <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+            <h4 class="text-sm font-medium text-gray-400 mb-2">Files Scanned</h4>
+            <div class="text-2xl font-bold text-white">{{ report_data.get('performance_metrics', {}).get('files_scanned', 0) }}</div>
+            <p class="text-xs text-gray-500 mt-1">total files</p>
+        </div>
+    </div>
+
+    <!-- Regenerate Button -->
+    <div class="flex justify-center pt-4">
+        <button hx-post="/scan/{{ scan_id }}/report/generate"
+                hx-swap="outerHTML"
+                hx-target="#content-quality > div"
+                class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Regenerate Report
+        </button>
+    </div>
+</div>
+{% endif %}

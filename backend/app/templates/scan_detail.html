@@ -127,6 +127,10 @@
             class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300">
             Drafts ({{ draft_data|length }})
         </button>
+        <button onclick="switchTab('quality')" id="tab-quality"
+            class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300">
+            Quality Report
+        </button>
         <button onclick="switchTab('logs')" id="tab-logs"
             class="px-6 py-3 text-sm font-medium transition-colors border-b-2 border-transparent text-gray-400 hover:text-gray-300">
             Logs ({{ logs|length }})
@@ -438,6 +442,23 @@
                     <p class="text-sm">No draft findings yet</p>
                 </div>
                 {% endif %}
+            </div>
+        </div>
+
+        <!-- Quality Report Tab -->
+        <div id="content-quality" class="h-full flex-col hidden">
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-6"
+                 hx-get="/scan/{{ scan.id }}/report"
+                 hx-trigger="load"
+                 hx-swap="innerHTML">
+                <div class="flex items-center justify-center h-full">
+                    <div class="text-gray-400 flex items-center gap-2">
+                        <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" fill="none" stroke-dasharray="30 60"></circle>
+                        </svg>
+                        Loading quality report...
+                    </div>
+                </div>
             </div>
         </div>
 
