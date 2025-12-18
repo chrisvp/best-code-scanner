@@ -504,11 +504,11 @@ class ReportGenerator:
         # Enricher breakdown
         # Find which model did enrichment (look at findings)
         enricher_info = self.db.query(
-            Finding.model_used,
+            Finding.source_model,
             func.count(Finding.id).label('findings_enriched')
         ).filter(
             Finding.scan_id == scan_id
-        ).group_by(Finding.model_used).first()
+        ).group_by(Finding.source_model).first()
 
         if enricher_info:
             model_name, findings_enriched = enricher_info
