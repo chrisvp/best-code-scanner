@@ -140,9 +140,8 @@
                             <th>Action</th>
                         </tr>
                     </thead>
-                    <tbody>
-                        <template x-for="result in filteredResults" :key="result.id">
-                            <>
+                    <template x-for="result in filteredResults" :key="result.id">
+                        <tbody>
                             <tr @click="toggleResultDetails(result.id)" class="cursor-pointer hover:bg-gray-800/30 transition-colors">
                                 <td class="text-gray-200" x-text="result.model_name"></td>
                                 <td class="text-gray-300 text-xs" x-text="result.prompt_name"></td>
@@ -272,9 +271,8 @@
                                     </div>
                                 </td>
                             </tr>
-                            </>
-                        </template>
-                    </tbody>
+                        </tbody>
+                    </template>
                 </table>
             </div>
         </div>
