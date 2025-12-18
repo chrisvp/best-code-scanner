@@ -475,6 +475,9 @@ class ScanMetrics(Base):
     max_chunk_tokens = Column(Integer, nullable=True)
     chunk_size_setting = Column(Integer)  # The configured chunk_size
 
+    # File metrics
+    files_scanned = Column(Integer, default=0)
+
     # Timing metrics
     total_time_ms = Column(Float, nullable=True)
     ingestion_time_ms = Column(Float, nullable=True)

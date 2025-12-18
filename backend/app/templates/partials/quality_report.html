@@ -290,6 +290,93 @@
         </div>
     </div>
 
+    <!-- Cost & Token Metrics -->
+    {% if report_data.get('cost_metrics') %}
+    <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-5 mt-6">
+        <h3 class="text-lg font-semibold text-white mb-4">💰 Cost & Token Analysis</h3>
+
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <!-- Self-Hosted Cost -->
+            <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                <div class="text-xs text-gray-400 mb-1">Self-Hosted Cost</div>
+                <div class="text-2xl font-bold text-green-400">${{ "%.4f"|format(report_data.get('cost_metrics', {}).get('total_cost_usd_self_hosted', 0)) }}</div>
+                <div class="text-xs text-gray-500 mt-1">estimated</div>
+            </div>
+
+            <!-- Public API Cost -->
+            <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                <div class="text-xs text-gray-400 mb-1">Public API Cost</div>
+                <div class="text-2xl font-bold text-red-400">${{ "%.2f"|format(report_data.get('cost_metrics', {}).get('total_cost_usd_public_api', 0)) }}</div>
+                <div class="text-xs text-gray-500 mt-1">GPT-4 pricing</div>
+            </div>
+
+            <!-- Cost Savings -->
+            <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                <div class="text-xs text-gray-400 mb-1">Cost Savings</div>
+                <div class="text-2xl font-bold text-blue-400">${{ "%.2f"|format(report_data.get('cost_metrics', {}).get('cost_savings', 0)) }}</div>
+                <div class="text-xs text-gray-500 mt-1">vs public API</div>
+            </div>
+
+            <!-- Cost per Finding -->
+            <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                <div class="text-xs text-gray-400 mb-1">Cost per Finding</div>
+                <div class="text-2xl font-bold text-purple-400">${{ "%.4f"|format(report_data.get('cost_metrics', {}).get('cost_per_finding', 0)) }}</div>
+                <div class="text-xs text-gray-500 mt-1">self-hosted</div>
+            </div>
+        </div>
+
+        <!-- Token Usage -->
+        <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700 mb-6">
+            <h4 class="text-sm font-medium text-gray-400 mb-3">Total Token Usage</h4>
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <div class="text-2xl font-bold text-blue-400">{{ "{:,}".format(report_data.get('cost_metrics', {}).get('total_tokens_in', 0)) }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Input Tokens</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-green-400">{{ "{:,}".format(report_data.get('cost_metrics', {}).get('total_tokens_out', 0)) }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Output Tokens</div>
+                </div>
+                <div>
+                    <div class="text-2xl font-bold text-white">{{ "{:,}".format(report_data.get('cost_metrics', {}).get('total_tokens', 0)) }}</div>
+                    <div class="text-xs text-gray-500 mt-1">Total Tokens</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Per-Model Breakdown -->
+        {% if report_data.get('cost_metrics', {}).get('model_breakdown') %}
+        <div>
+            <h4 class="text-sm font-medium text-gray-400 mb-3">Cost Breakdown by Model</h4>
+            <div class="space-y-2">
+                {% for model_name, model_data in report_data.get('cost_metrics', {}).get('model_breakdown', {}).items() %}
+                <div class="bg-gray-800/50 rounded-lg border border-gray-700 p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-white font-medium text-sm">{{ model_name }}</span>
+                        <span class="text-green-400 font-semibold">${{ "%.4f"|format(model_data.get('total', 0)) }}</span>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-xs">
+                        <div class="text-gray-400">
+                            <span class="text-white font-medium">{{ "{:,}".format(model_data.get('tokens_in', 0)) }}</span> in
+                        </div>
+                        <div class="text-gray-400">
+                            <span class="text-white font-medium">{{ "{:,}".format(model_data.get('tokens_out', 0)) }}</span> out
+                        </div>
+                        <div class="text-gray-400">
+                            <span class="text-white font-medium">{{ model_data.get('phases', {})|length }}</span> phases
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <p class="text-xs text-gray-500 mt-4 italic">{{ report_data.get('cost_metrics', {}).get('pricing_note', '') }}</p>
+    </div>
+    {% endif %}
+
     <!-- Regenerate Button -->
     <div class="flex justify-center pt-4">
         <button hx-post="/scan/{{ scan_id }}/report/generate"

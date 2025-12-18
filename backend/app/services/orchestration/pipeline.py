@@ -262,6 +262,13 @@ class ScanPipeline:
         try:
             # Get scan and determine where to resume from
             scan = self.db.query(Scan).filter(Scan.id == self.scan_id).first()
+
+            # Track scan start time (only if not already set - for resume support)
+            if not scan.started_at:
+                from datetime import datetime
+                scan.started_at = datetime.now().astimezone()
+                self.db.commit()
+
             target = scan.target_url
             scan_dir = f"sandbox/{self.scan_id}"
             current_phase = scan.current_phase or "queued"
@@ -354,6 +361,29 @@ class ScanPipeline:
 
             # Mark as completed
             self._update_phase("completed")
+
+            # Track completion time and update metrics
+            from datetime import datetime
+            scan.completed_at = datetime.now().astimezone()
+            total_duration_ms = (time.time() - total_start) * 1000
+
+            # Update ScanMetrics with timing and file count
+            metrics = self.db.query(ScanMetrics).filter(
+                ScanMetrics.scan_id == self.scan_id
+            ).first()
+            if not metrics:
+                metrics = ScanMetrics(scan_id=self.scan_id)
+                self.db.add(metrics)
+
+            metrics.total_time_ms = total_duration_ms
+
+            # Count files scanned
+            files_scanned = self.db.query(func.count(ScanFile.id)).filter(
+                ScanFile.scan_id == self.scan_id
+            ).scalar()
+            metrics.files_scanned = files_scanned
+
+            self.db.commit()
 
         finally:
             await self.model_orchestrator.shutdown()
@@ -1331,7 +1361,7 @@ class ScanPipeline:
                         remediation_steps=result.get('remediation_steps', ''),
                         references=result.get('references', ''),
                         detected_at=datetime.now().astimezone(),
-                        source_model=result.get('enricher_model', 'unknown')
+                        source_model=enricher_pool.config.name
                     )
                     self.db.add(finding)
                     v.status = "complete"

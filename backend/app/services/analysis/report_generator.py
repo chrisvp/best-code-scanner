@@ -16,7 +16,7 @@ from sqlalchemy import func, case
 
 from app.models.scanner_models import (
     ScanReport, DraftFinding, VerifiedFinding, VerificationVote,
-    ScanMetrics, ProfileAnalyzer
+    ScanMetrics, ProfileAnalyzer, LLMCallMetric, ScanFile
 )
 from app.models.models import Scan, Finding
 
@@ -57,6 +57,7 @@ class ReportGenerator:
         cwe_metrics = self._compute_cwe_metrics(scan_id)
         performance_metrics = self._compute_performance_metrics(scan_id)
         model_breakdown = self._compute_model_breakdown(scan_id)
+        cost_metrics = self._compute_cost_metrics(scan_id)
 
         # Calculate overall grade
         grade, grade_score = self._calculate_grade({
@@ -69,7 +70,7 @@ class ReportGenerator:
 
         # Detect quality issues
         quality_issues = self._detect_quality_issues(
-            scan_id, draft_metrics, cwe_metrics, verification_metrics
+            scan_id, draft_metrics, cwe_metrics, verification_metrics, model_breakdown
         )
 
         # Generate summary
@@ -98,6 +99,7 @@ class ReportGenerator:
             "cwe_metrics": cwe_metrics,
             "performance_metrics": performance_metrics,
             "model_breakdown": model_breakdown,
+            "cost_metrics": cost_metrics,
             "quality_issues": quality_issues,
             "grade": grade,
             "grade_score": grade_score
@@ -499,6 +501,38 @@ class ReportGenerator:
             agreement_rate = agreements / total_votes if total_votes > 0 else 0.0
             verifier_vote_map[model_name]["agreement_rate"] = round(agreement_rate, 3)
 
+            # Calculate vote percentages to detect biased verifiers
+            total = verifier_vote_map[model_name]["total_votes"]
+            if total > 0:
+                votes = verifier_vote_map[model_name]["votes"]
+                verifier_vote_map[model_name]["vote_percentages"] = {
+                    "REAL": round((votes.get("REAL", 0) / total) * 100, 1),
+                    "FALSE_POSITIVE": round((votes.get("FALSE_POSITIVE", 0) / total) * 100, 1),
+                    "WEAKNESS": round((votes.get("WEAKNESS", 0) / total) * 100, 1),
+                    "NEEDS_VERIFIED": round((votes.get("NEEDS_VERIFIED", 0) / total) * 100, 1),
+                    "ABSTAIN": round((votes.get("ABSTAIN", 0) / total) * 100, 1)
+                }
+
+                # Flag suspicious voting patterns
+                flags = []
+                vote_pct = verifier_vote_map[model_name]["vote_percentages"]
+
+                if vote_pct["REAL"] == 100:
+                    flags.append("always_verifies")
+                elif vote_pct["REAL"] >= 95:
+                    flags.append("heavily_biased_verify")
+
+                if vote_pct["FALSE_POSITIVE"] == 100:
+                    flags.append("always_rejects")
+                elif vote_pct["FALSE_POSITIVE"] >= 95:
+                    flags.append("heavily_biased_reject")
+
+                if vote_pct.get("NEEDS_VERIFIED", 0) >= 50 or vote_pct.get("ABSTAIN", 0) >= 50:
+                    flags.append("excessive_abstention")
+
+                if flags:
+                    verifier_vote_map[model_name]["flags"] = flags
+
         breakdown["verifiers"] = list(verifier_vote_map.values())
 
         # Enricher breakdown
@@ -578,7 +612,8 @@ class ReportGenerator:
         scan_id: int,
         draft_metrics: Dict,
         cwe_metrics: Dict,
-        verification_metrics: Dict
+        verification_metrics: Dict,
+        model_breakdown: Dict
     ) -> List[Dict]:
         """Detect common quality issues in scan results"""
 
@@ -622,6 +657,42 @@ class ReportGenerator:
                 "severity": "low",
                 "message": "Low CWE diversity. Model may be biased toward certain vulnerability types."
             })
+
+        # Issue 5: Biased verifiers
+        for verifier in model_breakdown.get("verifiers", []):
+            flags = verifier.get("flags", [])
+            if "always_verifies" in flags:
+                issues.append({
+                    "type": "biased_verifier",
+                    "severity": "high",
+                    "message": f"Model {verifier['model']} voted REAL 100% of the time - likely broken or misconfigured."
+                })
+            elif "always_rejects" in flags:
+                issues.append({
+                    "type": "biased_verifier",
+                    "severity": "high",
+                    "message": f"Model {verifier['model']} voted FALSE_POSITIVE 100% of the time - likely broken or misconfigured."
+                })
+            elif "heavily_biased_verify" in flags:
+                issues.append({
+                    "type": "biased_verifier",
+                    "severity": "medium",
+                    "message": f"Model {verifier['model']} heavily biased toward REAL ({verifier['vote_percentages']['REAL']}%) - check configuration."
+                })
+            elif "heavily_biased_reject" in flags:
+                issues.append({
+                    "type": "biased_verifier",
+                    "severity": "medium",
+                    "message": f"Model {verifier['model']} heavily biased toward FALSE_POSITIVE ({verifier['vote_percentages']['FALSE_POSITIVE']}%) - check configuration."
+                })
+
+            if "excessive_abstention" in flags:
+                abstain_pct = verifier['vote_percentages'].get('NEEDS_VERIFIED', 0) or verifier['vote_percentages'].get('ABSTAIN', 0)
+                issues.append({
+                    "type": "excessive_abstention",
+                    "severity": "medium",
+                    "message": f"Model {verifier['model']} abstains {abstain_pct}% of the time - may need better prompting."
+                })
 
         return issues
 
@@ -667,6 +738,99 @@ class ReportGenerator:
         )
 
         return entropy
+
+    def _compute_cost_metrics(self, scan_id: int) -> Dict:
+        """Calculate token usage and estimated costs"""
+
+        # Model pricing (USD per 1M tokens) - based on typical open-source LLM costs
+        # These are rough estimates for self-hosted models (electricity, hardware amortization)
+        # vs public API pricing
+        MODEL_PRICING = {
+            # Self-hosted costs (electricity + hardware amortization per 1M tokens)
+            "llama-3.3-70b": {"input": 0.05, "output": 0.10},
+            "qwen-2.5-coder-32b": {"input": 0.03, "output": 0.06},
+            "devstral-small-2-24b-instruct-test": {"input": 0.02, "output": 0.04},
+            "gpt-oss-120b": {"input": 0.08, "output": 0.15},
+            "gpt-oss Analyzer": {"input": 0.08, "output": 0.15},
+            "Devstral Analyzer": {"input": 0.02, "output": 0.04},
+
+            # Public API pricing (for comparison)
+            "gpt-4o": {"input": 2.50, "output": 10.00},
+            "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+            "claude-sonnet-3.5": {"input": 3.00, "output": 15.00},
+        }
+
+        # Default pricing for unknown models
+        DEFAULT_PRICING = {"input": 0.50, "output": 0.50}
+
+        token_stats = self.db.query(
+            LLMCallMetric.model_name,
+            LLMCallMetric.phase,
+            func.sum(LLMCallMetric.tokens_in).label('total_in'),
+            func.sum(LLMCallMetric.tokens_out).label('total_out')
+        ).filter(
+            LLMCallMetric.scan_id == scan_id
+        ).group_by(
+            LLMCallMetric.model_name,
+            LLMCallMetric.phase
+        ).all()
+
+        total_cost_self_hosted = 0.0
+        total_cost_public = 0.0  # Hypothetical cost if using public APIs
+        total_tokens_in = 0
+        total_tokens_out = 0
+        model_costs = {}
+
+        findings_count = self.db.query(func.count(Finding.id)).filter(
+            Finding.scan_id == scan_id
+        ).scalar() or 1
+
+        for model, phase, tokens_in, tokens_out in token_stats:
+            tokens_in = tokens_in or 0
+            tokens_out = tokens_out or 0
+            total_tokens_in += tokens_in
+            total_tokens_out += tokens_out
+
+            # Get pricing for this specific model, fallback to default
+            pricing = MODEL_PRICING.get(model, DEFAULT_PRICING)
+
+            # Calculate cost
+            cost = (tokens_in * pricing["input"] + tokens_out * pricing["output"]) / 1_000_000
+
+            if model not in model_costs:
+                model_costs[model] = {"phases": {}, "total": 0.0, "tokens_in": 0, "tokens_out": 0}
+
+            model_costs[model]["phases"][phase] = {
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "cost_usd": round(cost, 4)
+            }
+            model_costs[model]["total"] += cost
+            model_costs[model]["tokens_in"] += tokens_in
+            model_costs[model]["tokens_out"] += tokens_out
+            total_cost_self_hosted += cost
+
+        # Calculate hypothetical public API cost (using GPT-4 pricing as reference)
+        gpt4_pricing = MODEL_PRICING.get("gpt-4o", DEFAULT_PRICING)
+        total_cost_public = (
+            (total_tokens_in * gpt4_pricing["input"] + total_tokens_out * gpt4_pricing["output"]) / 1_000_000
+        )
+
+        # Round model totals
+        for model in model_costs:
+            model_costs[model]["total"] = round(model_costs[model]["total"], 4)
+
+        return {
+            "total_cost_usd_self_hosted": round(total_cost_self_hosted, 4),
+            "total_cost_usd_public_api": round(total_cost_public, 4),
+            "cost_savings": round(total_cost_public - total_cost_self_hosted, 4),
+            "cost_per_finding": round(total_cost_self_hosted / findings_count, 4) if findings_count > 0 else 0,
+            "total_tokens_in": total_tokens_in,
+            "total_tokens_out": total_tokens_out,
+            "total_tokens": total_tokens_in + total_tokens_out,
+            "model_breakdown": model_costs,
+            "pricing_note": "Self-hosted costs are estimates based on electricity and hardware amortization. Public API costs are based on GPT-4 pricing for comparison."
+        }
 
     def _compute_comparative_metrics(self, scan_ids: List[int]) -> Dict:
         """Compute metrics that only make sense in comparative context"""

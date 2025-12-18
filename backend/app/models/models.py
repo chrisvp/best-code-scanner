@@ -40,6 +40,8 @@ class Scan(Base):
     logs = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), default=local_now)
     updated_at = Column(DateTime(timezone=True), onupdate=local_now)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     findings = relationship("Finding", back_populates="scan")
 
