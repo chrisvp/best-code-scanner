@@ -539,6 +539,146 @@ def get_run_results(run_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.get("/runs/{run_id}/detail")
+def get_run_detail(run_id: int, db: Session = Depends(get_db)):
+    """Get comprehensive detailed results for a specific run including performance matrix"""
+    run = db.query(TuningRun).filter(TuningRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # Get all results
+    results = db.query(TuningResult).filter(TuningResult.run_id == run_id).all()
+
+    # Calculate performance matrix (model x prompt combinations)
+    matrix = {}
+    for result in results:
+        key = f"{result.model_name}||{result.prompt_id}"
+
+        if key not in matrix:
+            # Get prompt name
+            prompt = db.query(TuningPromptTemplate).filter(
+                TuningPromptTemplate.id == result.prompt_id
+            ).first()
+
+            matrix[key] = {
+                "model_name": result.model_name,
+                "prompt_id": result.prompt_id,
+                "prompt_name": prompt.name if prompt else f"Prompt {result.prompt_id}",
+                "total": 0,
+                "correct": 0,
+                "parse_success": 0,
+                "confidences": [],
+                "durations": [],
+            }
+
+        matrix[key]["total"] += 1
+        if result.correct:
+            matrix[key]["correct"] += 1
+        if result.parse_success:
+            matrix[key]["parse_success"] += 1
+        if result.confidence is not None:
+            matrix[key]["confidences"].append(result.confidence)
+        if result.duration_ms is not None:
+            matrix[key]["durations"].append(result.duration_ms)
+
+    # Calculate final metrics for each combo
+    performance_matrix = []
+    for key, stats in matrix.items():
+        accuracy = (stats["correct"] / stats["total"] * 100) if stats["total"] > 0 else 0
+        parse_rate = (stats["parse_success"] / stats["total"] * 100) if stats["total"] > 0 else 0
+        avg_confidence = sum(stats["confidences"]) / len(stats["confidences"]) if stats["confidences"] else 0
+        avg_duration = sum(stats["durations"]) / len(stats["durations"]) if stats["durations"] else 0
+
+        # Calculate precision, recall, F1 for each combo
+        tp = fp = fn = tn = 0
+        for result in results:
+            if result.model_name != stats["model_name"] or result.prompt_id != stats["prompt_id"]:
+                continue
+
+            # Get ground truth
+            test_case = db.query(TuningTestCase).filter(
+                TuningTestCase.id == result.test_case_id
+            ).first()
+            if not test_case:
+                continue
+
+            ground_truth = test_case.verdict.upper()
+            prediction = (result.predicted_vote or "").upper()
+
+            # Count true positives, false positives, false negatives, true negatives
+            is_vuln_truth = ground_truth in ["REAL", "VERIFY"]
+            is_vuln_pred = prediction in ["REAL", "VERIFY"]
+
+            if is_vuln_truth and is_vuln_pred:
+                tp += 1
+            elif not is_vuln_truth and is_vuln_pred:
+                fp += 1
+            elif is_vuln_truth and not is_vuln_pred:
+                fn += 1
+            elif not is_vuln_truth and not is_vuln_pred:
+                tn += 1
+
+        precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0
+        recall = (tp / (tp + fn)) if (tp + fn) > 0 else 0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0
+
+        performance_matrix.append({
+            "model_name": stats["model_name"],
+            "prompt_id": stats["prompt_id"],
+            "prompt_name": stats["prompt_name"],
+            "accuracy": round(accuracy, 1),
+            "precision": round(precision * 100, 1),
+            "recall": round(recall * 100, 1),
+            "f1": round(f1, 2),
+            "avg_confidence": round(avg_confidence, 0),
+            "avg_duration_ms": round(avg_duration, 0),
+            "parse_rate": round(parse_rate, 1),
+            "total_tests": stats["total"],
+        })
+
+    # Sort by F1 score (descending)
+    performance_matrix.sort(key=lambda x: x["f1"], reverse=True)
+
+    # Get test case details for results table
+    test_results = []
+    for result in results:
+        test_case = db.query(TuningTestCase).filter(
+            TuningTestCase.id == result.test_case_id
+        ).first()
+        prompt = db.query(TuningPromptTemplate).filter(
+            TuningPromptTemplate.id == result.prompt_id
+        ).first()
+
+        test_results.append({
+            "id": result.id,
+            "model_name": result.model_name,
+            "prompt_name": prompt.name if prompt else f"Prompt {result.prompt_id}",
+            "test_case_name": test_case.name if test_case else f"Test {result.test_case_id}",
+            "ground_truth": test_case.verdict if test_case else "Unknown",
+            "predicted_vote": result.predicted_vote,
+            "confidence": result.confidence,
+            "correct": result.correct,
+            "parse_success": result.parse_success,
+            "duration_ms": result.duration_ms,
+        })
+
+    return {
+        "run": {
+            "id": run.id,
+            "name": run.name,
+            "description": run.description,
+            "status": run.status,
+            "total_tests": run.total_tests,
+            "completed_tests": run.completed_tests,
+            "total_duration_ms": run.total_duration_ms,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        },
+        "performance_matrix": performance_matrix,
+        "test_results": test_results,
+    }
+
+
 @router.delete("/runs/{run_id}")
 def delete_run(run_id: int, db: Session = Depends(get_db)):
     """Delete a tuning run and all its results"""

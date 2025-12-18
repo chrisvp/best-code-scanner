@@ -145,10 +145,25 @@
                     </button>
                 </div>
 
-                <!-- Results Section -->
+                <!-- Live Progress Section (fixed, always visible when running) -->
+                <div id="live-progress-section" class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden hidden">
+                    <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-green-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            Live Progress
+                        </h2>
+                    </div>
+                    <div class="p-4" id="live-progress-content">
+                        <!-- Live progress updates inserted here -->
+                    </div>
+                </div>
+
+                <!-- Run History Section -->
                 <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
                     <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
-                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Results</h2>
+                        <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider">Run History</h2>
                         <span class="text-xs text-gray-500">Auto-refreshing every 5s</span>
                     </div>
                     <div class="p-4 max-h-96 overflow-y-auto" id="results-panel">
@@ -1352,21 +1367,33 @@ function renderTuningRuns() {
     const statusColors = {
         'completed': 'text-green-400',
         'running': 'text-yellow-400',
-        'failed': 'text-red-400'
+        'failed': 'text-red-400',
+        'cancelled': 'text-gray-400',
+        'paused': 'text-orange-400'
     };
 
     panel.innerHTML = `
         <div class="space-y-3">
             ${tuningRuns.map(run => `
-                <div class="bg-gray-900 border border-gray-700 rounded-lg p-3 cursor-pointer hover:border-blue-500" onclick="viewTuningRunResults(${run.id})">
-                    <div class="flex items-center justify-between">
+                <div class="bg-gray-900 border border-gray-700 rounded-lg p-3 hover:border-blue-500 transition-colors">
+                    <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-white">${escapeHtml(run.name || `Run #${run.id}`)}</div>
-                        <span class="text-xs ${statusColors[run.status]}">${run.status}</span>
+                        <span class="text-xs ${statusColors[run.status] || 'text-gray-400'}">${run.status}</span>
                     </div>
-                    <div class="text-xs text-gray-400 mt-1">
-                        ${run.completed_tests} / ${run.total_tests} tests
+                    <div class="text-xs text-gray-400 mb-2">
+                        ${run.completed_tests} / ${run.total_tests} tests completed
                     </div>
-                    <div class="text-xs text-gray-500 mt-1">${new Date(run.created_at).toLocaleString()}</div>
+                    <div class="text-xs text-gray-500 mb-3">${new Date(run.created_at).toLocaleString()}</div>
+                    <div class="flex gap-2">
+                        <a href="/tuning/run/${run.id}"
+                           class="flex-1 text-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors">
+                            View Detail
+                        </a>
+                        <button onclick="viewTuningRunResults(${run.id}); event.stopPropagation();"
+                                class="flex-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded transition-colors">
+                            Quick View
+                        </button>
+                    </div>
                 </div>
             `).join('')}
         </div>
@@ -1377,12 +1404,22 @@ async function viewTuningRunResults(runId) {
     const res = await fetch(`/api/v1/tuning/runs/${runId}/results`);
     const data = await res.json();
 
+    // Also fetch the performance matrix from detail endpoint
+    const detailRes = await fetch(`/api/v1/tuning/runs/${runId}/detail`);
+    const detailData = await detailRes.json();
+
     const panel = document.getElementById('results-panel');
     const analysis = data.analysis;
 
     const getAccuracyClass = (accuracy) => {
         if (accuracy >= 80) return 'text-green-400';
         if (accuracy >= 60) return 'text-yellow-400';
+        return 'text-red-400';
+    };
+
+    const getMetricClass = (value) => {
+        if (value >= 85) return 'text-green-400';
+        if (value >= 70) return 'text-yellow-400';
         return 'text-red-400';
     };
 
@@ -1424,10 +1461,14 @@ async function viewTuningRunResults(runId) {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
                     </svg>
                 </button>
-                <div>
+                <div class="flex-1">
                     <h3 class="text-lg font-bold text-white">${escapeHtml(data.run.name || `Run #${data.run.id}`)}</h3>
                     <div class="text-xs text-gray-400">${new Date(data.run.created_at).toLocaleString()}</div>
                 </div>
+                <a href="/tuning/run/${runId}"
+                   class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors">
+                    View Full Detail
+                </a>
             </div>
 
             <!-- Overall Stats -->
@@ -1447,6 +1488,38 @@ async function viewTuningRunResults(runId) {
                 <div class="bg-gray-900 border border-gray-700 rounded p-2 text-center">
                     <div class="text-xl font-bold text-white">${(analysis.overall.avg_duration || 0).toFixed(0)}ms</div>
                     <div class="text-xs text-gray-400 uppercase">Avg Time</div>
+                </div>
+            </div>
+
+            <!-- Performance Matrix (Top 5) -->
+            <div class="bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
+                <div class="px-3 py-2 bg-gray-800 text-xs font-semibold text-gray-400 uppercase flex items-center justify-between">
+                    <span>Top Model×Prompt Combinations</span>
+                    <a href="/tuning/run/${runId}" class="text-blue-400 hover:text-blue-300 normal-case font-normal">View All</a>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs">
+                        <thead class="bg-gray-800 border-b border-gray-700">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Model</th>
+                                <th class="px-3 py-2 text-left">Prompt</th>
+                                <th class="px-3 py-2 text-right">Acc</th>
+                                <th class="px-3 py-2 text-right">F1</th>
+                                <th class="px-3 py-2 text-right">Conf</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${(detailData.performance_matrix || []).slice(0, 5).map(row => `
+                                <tr class="border-b border-gray-800">
+                                    <td class="px-3 py-2 text-gray-300">${escapeHtml(row.model_name)}</td>
+                                    <td class="px-3 py-2 text-gray-400">${escapeHtml(row.prompt_name)}</td>
+                                    <td class="px-3 py-2 text-right ${getMetricClass(row.accuracy)}">${row.accuracy}%</td>
+                                    <td class="px-3 py-2 text-right ${getMetricClass(row.f1 * 100)}">${row.f1.toFixed(2)}</td>
+                                    <td class="px-3 py-2 text-right text-gray-300">${row.avg_confidence}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
                 </div>
             </div>
 
@@ -1962,6 +2035,11 @@ function handleStreamEvent(event) {
             benchmarkRunInProgress = false;
             const btn = document.getElementById('run-benchmark-tests-btn');
             if (btn) btn.disabled = false;
+
+            // Hide the live progress section after completion
+            const liveSection = document.getElementById('live-progress-section');
+            if (liveSection) liveSection.classList.add('hidden');
+
             loadPromptTuningRuns();
             showToast('Benchmark completed!', 'success');
             break;
@@ -1973,67 +2051,74 @@ function handleStreamEvent(event) {
 }
 
 function initializeResultsUI(runData) {
-    const resultsPanel = document.getElementById('results-panel');
-    resultsPanel.innerHTML = `
-        <div class="space-y-4">
-            <div id="run-controls" class="flex gap-2">
-                <button onclick="pauseRun()" id="pause-btn"
-                    class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded flex items-center gap-1">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
-                    </svg>
-                    Pause
-                </button>
-                <button onclick="resumeRun()" id="resume-btn"
-                    class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded hidden flex items-center gap-1">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
-                    </svg>
-                    Resume
-                </button>
-                <button onclick="cancelRun()" id="cancel-btn"
-                    class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded flex items-center gap-1">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/>
-                    </svg>
-                    Cancel
-                </button>
-            </div>
+    // Show the live progress section
+    const liveSection = document.getElementById('live-progress-section');
+    const liveContent = document.getElementById('live-progress-content');
 
-            <div class="bg-gray-900 rounded-lg p-3">
-                <div class="flex justify-between text-xs text-gray-400 mb-1">
-                    <span>Progress</span>
-                    <span id="progress-text">0 / ${runData.total_tests}</span>
-                </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                         style="width: 0%"></div>
-                </div>
-            </div>
+    if (liveSection) liveSection.classList.remove('hidden');
 
-            <div class="bg-gray-900 rounded-lg overflow-hidden">
-                <div class="px-3 py-2 bg-gray-800 text-xs font-semibold text-gray-400 uppercase flex items-center justify-between">
-                    <span>Live Results</span>
-                    <span id="live-count" class="text-blue-400">0 results</span>
+    if (liveContent) {
+        liveContent.innerHTML = `
+            <div class="space-y-4">
+                <div id="run-controls" class="flex gap-2">
+                    <button onclick="pauseRun()" id="pause-btn"
+                        class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                        </svg>
+                        Pause
+                    </button>
+                    <button onclick="resumeRun()" id="resume-btn"
+                        class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded hidden flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"/>
+                        </svg>
+                        Resume
+                    </button>
+                    <button onclick="cancelRun()" id="cancel-btn"
+                        class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/>
+                        </svg>
+                        Cancel
+                    </button>
                 </div>
-                <div class="overflow-x-auto max-h-96 overflow-y-auto">
-                    <table class="w-full text-xs">
-                        <thead class="sticky top-0 bg-gray-800">
-                            <tr class="border-b border-gray-700">
-                                <th class="px-3 py-2 text-left">Model</th>
-                                <th class="px-3 py-2 text-left">Prompt</th>
-                                <th class="px-3 py-2 text-left">Test</th>
-                                <th class="px-3 py-2 text-left">Predicted</th>
-                                <th class="px-3 py-2 text-center">Result</th>
-                                <th class="px-3 py-2 text-right">Time</th>
-                            </tr>
-                        </thead>
-                        <tbody id="results-tbody"></tbody>
-                    </table>
+
+                <div class="bg-gray-900 rounded-lg p-3">
+                    <div class="flex justify-between text-xs text-gray-400 mb-1">
+                        <span>Progress</span>
+                        <span id="progress-text">0 / ${runData.total_tests}</span>
+                    </div>
+                    <div class="w-full bg-gray-700 rounded-full h-2">
+                        <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                             style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-900 rounded-lg overflow-hidden">
+                    <div class="px-3 py-2 bg-gray-800 text-xs font-semibold text-gray-400 uppercase flex items-center justify-between">
+                        <span>Live Results</span>
+                        <span id="live-count" class="text-blue-400">0 results</span>
+                    </div>
+                    <div class="overflow-x-auto max-h-96 overflow-y-auto">
+                        <table class="w-full text-xs">
+                            <thead class="sticky top-0 bg-gray-800">
+                                <tr class="border-b border-gray-700">
+                                    <th class="px-3 py-2 text-left">Model</th>
+                                    <th class="px-3 py-2 text-left">Prompt</th>
+                                    <th class="px-3 py-2 text-left">Test</th>
+                                    <th class="px-3 py-2 text-left">Predicted</th>
+                                    <th class="px-3 py-2 text-center">Result</th>
+                                    <th class="px-3 py-2 text-right">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-tbody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
-        </div>
-    `;
+        `;
+    }
 }
 
 function addResultToLiveTable(result, animate = true) {

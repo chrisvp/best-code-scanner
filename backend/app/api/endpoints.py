@@ -5252,6 +5252,15 @@ async def tuning_page(request: Request, db: Session = Depends(get_db), current_u
     })
 
 
+@router.get("/tuning/run/{run_id}", response_class=HTMLResponse)
+async def tuning_run_detail_page(run_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Detail page for a specific tuning run"""
+    return templates.TemplateResponse("tuning_run_detail.html", {
+        "request": request,
+        "run_id": run_id,
+    })
+
+
 @router.post("/tuning/test-format")
 async def test_output_format(request: Request, db: Session = Depends(get_db)):
     """Test a specific model with a given output format and code sample"""

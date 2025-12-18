@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .perf-matrix-table { width: 100%; border-collapse: collapse; }
+    .perf-matrix-table th { background: rgba(31, 41, 55, 0.8); text-align: left; padding: 12px; font-weight: 600; font-size: 0.875rem; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; user-select: none; }
+    .perf-matrix-table th:hover { background: rgba(31, 41, 55, 1); }
+    .perf-matrix-table td { padding: 12px; border-bottom: 1px solid #374151; font-size: 0.875rem; }
+    .perf-matrix-table tbody tr:hover { background: rgba(59, 130, 246, 0.05); }
+    .sortable::after { content: ' ↕'; color: #6b7280; }
+    .sorted-asc::after { content: ' ↑'; color: #3b82f6; }
+    .sorted-desc::after { content: ' ↓'; color: #3b82f6; }
+
+    .metric-good { color: #10b981; font-weight: 500; }
+    .metric-medium { color: #f59e0b; font-weight: 500; }
+    .metric-bad { color: #ef4444; font-weight: 500; }
+
+    .filter-input { width: 100%; background: #1f2937; border: 1px solid #374151; border-radius: 0.375rem; padding: 0.5rem 0.75rem; color: white; font-size: 0.875rem; }
+    .filter-input:focus { outline: none; border-color: #3b82f6; }
+</style>
+
+<div class="p-6 h-full overflow-auto custom-scrollbar" x-data="runDetailApp()">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header with back button -->
+        <div class="mb-6 flex items-center gap-4">
+            <a href="/tuning" class="text-blue-400 hover:text-blue-300 flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                </svg>
+                Back to Tuning
+            </a>
+            <div>
+                <h1 class="text-2xl font-bold text-white" x-text="run.name || `Run #${run.id}`"></h1>
+                <p class="text-gray-400 text-sm mt-1" x-text="run.description || 'Benchmark Results'"></p>
+            </div>
+        </div>
+
+        <!-- Run Metadata -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Status</div>
+                <div class="text-lg font-semibold" :class="getStatusClass(run.status)" x-text="run.status"></div>
+            </div>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Total Tests</div>
+                <div class="text-lg font-semibold text-white" x-text="`${run.completed_tests} / ${run.total_tests}`"></div>
+            </div>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Duration</div>
+                <div class="text-lg font-semibold text-white" x-text="formatDuration(run.total_duration_ms)"></div>
+            </div>
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Created</div>
+                <div class="text-sm text-gray-300" x-text="formatDate(run.created_at)"></div>
+            </div>
+        </div>
+
+        <!-- Performance Matrix -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden mb-6">
+            <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                    Performance Matrix
+                </h2>
+                <button @click="downloadCSV('matrix')" class="text-blue-400 hover:text-blue-300 text-sm">Download CSV</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="perf-matrix-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable" @click="sortMatrix('model_name')">Model</th>
+                            <th class="sortable" @click="sortMatrix('prompt_name')">Prompt</th>
+                            <th class="sortable" @click="sortMatrix('accuracy')">Accuracy</th>
+                            <th class="sortable" @click="sortMatrix('precision')">Precision</th>
+                            <th class="sortable" @click="sortMatrix('recall')">Recall</th>
+                            <th class="sortable" @click="sortMatrix('f1')">F1</th>
+                            <th class="sortable" @click="sortMatrix('avg_confidence')">Avg Conf</th>
+                            <th class="sortable" @click="sortMatrix('avg_duration_ms')">Avg Duration</th>
+                            <th class="sortable" @click="sortMatrix('parse_rate')">Parse Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="row in sortedMatrix" :key="`${row.model_name}-${row.prompt_id}`">
+                            <tr>
+                                <td class="text-gray-200" x-text="row.model_name"></td>
+                                <td class="text-gray-300" x-text="row.prompt_name"></td>
+                                <td :class="getMetricClass(row.accuracy)" x-text="`${row.accuracy}%`"></td>
+                                <td :class="getMetricClass(row.precision)" x-text="`${row.precision}%`"></td>
+                                <td :class="getMetricClass(row.recall)" x-text="`${row.recall}%`"></td>
+                                <td :class="getMetricClass(row.f1 * 100)" x-text="row.f1.toFixed(2)"></td>
+                                <td class="text-gray-300" x-text="row.avg_confidence"></td>
+                                <td class="text-gray-300" x-text="`${row.avg_duration_ms}ms`"></td>
+                                <td :class="getMetricClass(row.parse_rate)" x-text="`${row.parse_rate}%`"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Test Results Table -->
+        <div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+            <div class="px-4 py-3 border-b border-gray-700 bg-gray-800/80 flex items-center justify-between">
+                <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                    </svg>
+                    Individual Test Results
+                    <span class="text-blue-400 ml-2" x-text="`(${filteredResults.length})`"></span>
+                </h2>
+                <button @click="downloadCSV('results')" class="text-blue-400 hover:text-blue-300 text-sm">Download CSV</button>
+            </div>
+
+            <!-- Filters -->
+            <div class="p-4 border-b border-gray-700 bg-gray-900/50 grid grid-cols-1 md:grid-cols-4 gap-3">
+                <input type="text" x-model="filters.model" placeholder="Filter by model..." class="filter-input">
+                <input type="text" x-model="filters.prompt" placeholder="Filter by prompt..." class="filter-input">
+                <input type="text" x-model="filters.testCase" placeholder="Filter by test case..." class="filter-input">
+                <select x-model="filters.correct" class="filter-input">
+                    <option value="">All (Correct/Incorrect)</option>
+                    <option value="true">Correct only</option>
+                    <option value="false">Incorrect only</option>
+                </select>
+            </div>
+
+            <div class="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table class="perf-matrix-table">
+                    <thead class="sticky top-0 z-10">
+                        <tr>
+                            <th>Model</th>
+                            <th>Prompt</th>
+                            <th>Test Case</th>
+                            <th>Ground Truth</th>
+                            <th>Prediction</th>
+                            <th>Confidence</th>
+                            <th>Result</th>
+                            <th>Duration</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="result in filteredResults" :key="result.id">
+                            <tr>
+                                <td class="text-gray-200" x-text="result.model_name"></td>
+                                <td class="text-gray-300 text-xs" x-text="result.prompt_name"></td>
+                                <td class="text-gray-300 text-xs" x-text="result.test_case_name"></td>
+                                <td>
+                                    <span class="px-2 py-1 rounded text-xs font-medium bg-blue-900/30 text-blue-300" x-text="result.ground_truth"></span>
+                                </td>
+                                <td>
+                                    <span class="px-2 py-1 rounded text-xs font-medium"
+                                          :class="result.predicted_vote ? 'bg-purple-900/30 text-purple-300' : 'bg-gray-700 text-gray-400'"
+                                          x-text="result.predicted_vote || 'N/A'"></span>
+                                </td>
+                                <td class="text-gray-300" x-text="result.confidence !== null ? result.confidence : 'N/A'"></td>
+                                <td>
+                                    <span x-show="result.correct" class="text-green-400 flex items-center gap-1">
+                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                                        </svg>
+                                        Correct
+                                    </span>
+                                    <span x-show="!result.correct" class="text-red-400 flex items-center gap-1">
+                                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                                        </svg>
+                                        Incorrect
+                                    </span>
+                                </td>
+                                <td class="text-gray-300" x-text="result.duration_ms ? `${result.duration_ms}ms` : 'N/A'"></td>
+                                <td>
+                                    <a :href="`/tuning/results/${result.id}`" class="text-blue-400 hover:text-blue-300 text-sm">View Details</a>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function runDetailApp() {
+    return {
+        runId: {{ run_id }},
+        run: {},
+        performanceMatrix: [],
+        testResults: [],
+        matrixSort: { column: 'f1', direction: 'desc' },
+        filters: {
+            model: '',
+            prompt: '',
+            testCase: '',
+            correct: ''
+        },
+
+        init() {
+            this.loadRunDetail();
+        },
+
+        async loadRunDetail() {
+            try {
+                const response = await fetch(`/api/tuning/runs/${this.runId}/detail`);
+                const data = await response.json();
+
+                this.run = data.run;
+                this.performanceMatrix = data.performance_matrix;
+                this.testResults = data.test_results;
+            } catch (error) {
+                console.error('Failed to load run detail:', error);
+            }
+        },
+
+        get sortedMatrix() {
+            const matrix = [...this.performanceMatrix];
+            const col = this.matrixSort.column;
+            const dir = this.matrixSort.direction;
+
+            matrix.sort((a, b) => {
+                let aVal = a[col];
+                let bVal = b[col];
+
+                // Handle string comparisons
+                if (typeof aVal === 'string') {
+                    return dir === 'asc'
+                        ? aVal.localeCompare(bVal)
+                        : bVal.localeCompare(aVal);
+                }
+
+                // Handle numeric comparisons
+                return dir === 'asc' ? aVal - bVal : bVal - aVal;
+            });
+
+            return matrix;
+        },
+
+        get filteredResults() {
+            return this.testResults.filter(result => {
+                if (this.filters.model && !result.model_name.toLowerCase().includes(this.filters.model.toLowerCase())) {
+                    return false;
+                }
+                if (this.filters.prompt && !result.prompt_name.toLowerCase().includes(this.filters.prompt.toLowerCase())) {
+                    return false;
+                }
+                if (this.filters.testCase && !result.test_case_name.toLowerCase().includes(this.filters.testCase.toLowerCase())) {
+                    return false;
+                }
+                if (this.filters.correct !== '' && result.correct.toString() !== this.filters.correct) {
+                    return false;
+                }
+                return true;
+            });
+        },
+
+        sortMatrix(column) {
+            if (this.matrixSort.column === column) {
+                this.matrixSort.direction = this.matrixSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.matrixSort.column = column;
+                this.matrixSort.direction = 'desc';
+            }
+        },
+
+        getMetricClass(value) {
+            if (value >= 85) return 'metric-good';
+            if (value >= 70) return 'metric-medium';
+            return 'metric-bad';
+        },
+
+        getStatusClass(status) {
+            if (status === 'completed') return 'text-green-400';
+            if (status === 'running') return 'text-blue-400';
+            if (status === 'failed') return 'text-red-400';
+            if (status === 'cancelled') return 'text-yellow-400';
+            return 'text-gray-400';
+        },
+
+        formatDuration(ms) {
+            if (!ms) return 'N/A';
+            const seconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const remainingSeconds = seconds % 60;
+            if (minutes > 0) {
+                return `${minutes}m ${remainingSeconds}s`;
+            }
+            return `${seconds}s`;
+        },
+
+        formatDate(dateStr) {
+            if (!dateStr) return 'N/A';
+            return new Date(dateStr).toLocaleString();
+        },
+
+        downloadCSV(type) {
+            if (type === 'matrix') {
+                this.downloadMatrixCSV();
+            } else if (type === 'results') {
+                this.downloadResultsCSV();
+            }
+        },
+
+        downloadMatrixCSV() {
+            const headers = ['Model', 'Prompt', 'Accuracy', 'Precision', 'Recall', 'F1', 'Avg Confidence', 'Avg Duration', 'Parse Rate', 'Total Tests'];
+            const rows = this.performanceMatrix.map(row => [
+                row.model_name,
+                row.prompt_name,
+                row.accuracy,
+                row.precision,
+                row.recall,
+                row.f1,
+                row.avg_confidence,
+                row.avg_duration_ms,
+                row.parse_rate,
+                row.total_tests
+            ]);
+
+            const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+            this.triggerDownload(csv, `run_${this.runId}_performance_matrix.csv`);
+        },
+
+        downloadResultsCSV() {
+            const headers = ['Model', 'Prompt', 'Test Case', 'Ground Truth', 'Prediction', 'Confidence', 'Correct', 'Parse Success', 'Duration'];
+            const rows = this.filteredResults.map(row => [
+                row.model_name,
+                row.prompt_name,
+                row.test_case_name,
+                row.ground_truth,
+                row.predicted_vote || '',
+                row.confidence !== null ? row.confidence : '',
+                row.correct,
+                row.parse_success,
+                row.duration_ms || ''
+            ]);
+
+            const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+            this.triggerDownload(csv, `run_${this.runId}_test_results.csv`);
+        },
+
+        triggerDownload(content, filename) {
+            const blob = new Blob([content], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    };
+}
+</script>
+{% endblock %}
