@@ -269,20 +269,32 @@ class PromptTuner:
                 if not model or not prompt_template or not test_case:
                     raise ValueError(f"Missing model, prompt, or test case")
 
+                # Get output mode from model config's response_format (EXACT same logic as production)
+                model_response_format = model.response_format or "markers"
+                if model_response_format == "json_schema":
+                    output_mode = "guided_json"
+                    json_schema = model.json_schema if hasattr(model, 'json_schema') else None
+                else:
+                    output_mode = model_response_format
+                    json_schema = None
+
                 # Get test case data with ALL fields for real verification format
                 # This now fetches REAL file context just like production verifiers
-                test_data = await self._get_test_case_data(test_case)
+                test_data = await self._get_test_case_data(test_case, output_mode=output_mode)
 
                 # Fill in prompt placeholders with comprehensive data
                 full_prompt = prompt_template.template.format(**test_data)
 
                 # Make direct LLM call (bypass queues)
+                # Pass output_mode and json_schema just like production verifiers do
                 messages = [{"role": "user", "content": full_prompt}]
                 response = await ModelPool.simple_chat_completion(
                     messages=messages,
                     model=model.name,
                     temperature=0.1,
                     max_tokens=2048,
+                    output_mode=output_mode,
+                    json_schema=json_schema,
                 )
 
                 raw_response = response.get("content", "")
@@ -341,7 +353,7 @@ class PromptTuner:
                 self.db.commit()
                 raise
 
-    async def _get_test_case_data(self, test_case: TuningTestCase) -> dict:
+    async def _get_test_case_data(self, test_case: TuningTestCase, output_mode: str = "markers") -> dict:
         """
         Get test case data in the EXACT format used by real verification.
         Fetches REAL file context just like production verifiers.
@@ -351,6 +363,7 @@ class PromptTuner:
 
         Args:
             test_case: The test case
+            output_mode: Output format mode (markers, guided_json, etc.)
 
         Returns:
             Dict with all placeholders for prompt formatting
@@ -373,8 +386,8 @@ class PromptTuner:
                     context_retriever = ContextRetriever(draft.scan_id, self.db)
                     context = await context_retriever.get_context_for_file(file_path, draft.line_number)
 
-                # Generate output_format exactly like production verifiers
-                output_format = get_output_format("verifier", "markers")
+                # Generate output_format exactly like production verifiers (respects output_mode)
+                output_format = get_output_format("verifier", output_mode)
 
                 return {
                     # Primary placeholders (real verification format):
@@ -410,7 +423,7 @@ class PromptTuner:
 
         # Fall back to test_case fields (with new column names)
         file_path = test_case.file_path or test_case.file or "unknown"
-        output_format = get_output_format("verifier", "markers")
+        output_format = get_output_format("verifier", output_mode)
 
         return {
             # Primary placeholders:
