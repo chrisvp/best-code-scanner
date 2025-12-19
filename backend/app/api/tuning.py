@@ -1182,3 +1182,111 @@ def get_test_case_stats(db: Session = Depends(get_db)):
         "synthetic": synthetic_count,
         "real": real_count
     }
+
+
+# ============================================================================
+# Single Test Endpoint
+# ============================================================================
+
+class SingleTestRequest(BaseModel):
+    model_id: int
+    test_case_id: int
+    custom_prompt: str
+
+
+@router.post("/single-test")
+async def run_single_test(
+    request: SingleTestRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Run a single prompt test against one model and one test case.
+    Used for interactive prompt testing in the Single-Bench tab.
+    """
+    import time
+    from app.services.tuning.prompt_tuner import PromptTuner
+
+    # Get model
+    model = db.query(ModelConfig).filter(ModelConfig.id == request.model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    # Get test case
+    test_case = db.query(TuningTestCase).filter(TuningTestCase.id == request.test_case_id).first()
+    if not test_case:
+        raise HTTPException(status_code=404, detail="Test case not found")
+
+    # Get test case data (handle draft finding reference)
+    test_case_data = {}
+    if test_case.draft_finding_id:
+        from app.models.scanner_models import DraftFinding
+        draft = db.query(DraftFinding).filter(DraftFinding.id == test_case.draft_finding_id).first()
+        if draft:
+            test_case_data = {
+                "title": draft.title,
+                "vulnerability_type": draft.vulnerability_type,
+                "severity": draft.severity,
+                "file_path": draft.file_path,
+                "line_number": draft.line_number,
+                "snippet": draft.snippet,
+                "reason": draft.reason,
+                "code_context": draft.code_context,
+            }
+    else:
+        test_case_data = {
+            "title": test_case.title,
+            "vulnerability_type": test_case.vulnerability_type,
+            "severity": test_case.severity,
+            "file_path": test_case.file_path,
+            "line_number": test_case.line_number,
+            "snippet": test_case.snippet,
+            "reason": test_case.reason,
+            "code_context": test_case.full_code_chunk,
+        }
+
+    # Call the LLM with custom prompt
+    tuner = PromptTuner(db)
+    start_time = time.time()
+
+    try:
+        response = await tuner.call_model_for_verification(
+            model=model,
+            prompt=request.custom_prompt
+        )
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Parse the response
+        parsed = tuner.parse_verification_response(response)
+
+        # Check correctness
+        ground_truth = test_case.verdict.upper()
+        prediction = (parsed.get("vote") or "").upper()
+
+        # Normalize predictions
+        is_correct = False
+        if ground_truth in ["REAL", "VERIFY"]:
+            is_correct = prediction in ["REAL", "VERIFY"]
+        elif ground_truth in ["FALSE_POSITIVE", "REJECT"]:
+            is_correct = prediction in ["FALSE_POSITIVE", "REJECT"]
+        elif ground_truth in ["WEAKNESS"]:
+            is_correct = prediction in ["WEAKNESS"]
+
+        return {
+            "success": True,
+            "raw_response": response,
+            "parsed": {
+                "vote": parsed.get("vote"),
+                "confidence": parsed.get("confidence"),
+                "reasoning": parsed.get("reasoning"),
+            },
+            "parse_success": parsed.get("parse_success", False),
+            "parse_error": parsed.get("parse_error"),
+            "correct": is_correct,
+            "ground_truth": test_case.verdict,
+            "duration_ms": duration_ms,
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error calling model: {str(e)}")
