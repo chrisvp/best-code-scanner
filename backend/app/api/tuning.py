@@ -42,19 +42,39 @@ class PromptTemplateUpdate(BaseModel):
 class TestCaseCreate(BaseModel):
     name: str
     verdict: str
-    issue: str
-    file: str
-    code: str
-    claim: str
+    # Old schema fields (backwards compat, mapped to new fields)
+    issue: Optional[str] = None
+    file: Optional[str] = None
+    code: Optional[str] = None
+    claim: Optional[str] = None
+    # New schema fields
+    title: Optional[str] = None
+    vulnerability_type: Optional[str] = None
+    severity: Optional[str] = None
+    line_number: Optional[int] = None
+    snippet: Optional[str] = None
+    reason: Optional[str] = None
+    file_path: Optional[str] = None
+    full_code_chunk: Optional[str] = None
 
 
 class TestCaseUpdate(BaseModel):
     name: Optional[str] = None
     verdict: Optional[str] = None
+    # Old schema fields (backwards compat)
     issue: Optional[str] = None
     file: Optional[str] = None
     code: Optional[str] = None
     claim: Optional[str] = None
+    # New schema fields
+    title: Optional[str] = None
+    vulnerability_type: Optional[str] = None
+    severity: Optional[str] = None
+    line_number: Optional[int] = None
+    snippet: Optional[str] = None
+    reason: Optional[str] = None
+    file_path: Optional[str] = None
+    full_code_chunk: Optional[str] = None
 
 
 class TuningRunRequest(BaseModel):
@@ -179,6 +199,7 @@ def get_test_cases(db: Session = Depends(get_db)):
             "reason": c.reason,
             "file_path": c.file_path,
             "language": c.language,
+            "full_code_chunk": c.full_code_chunk,  # Add this field
             "created_at": c.created_at.isoformat() if c.created_at else None,
         }
         for c in cases
@@ -193,13 +214,23 @@ def create_test_case(request: TestCaseCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Test case with this name already exists")
 
+    # Map old schema to new (backwards compat)
+    title = request.title if request.title is not None else request.issue
+    file_path = request.file_path if request.file_path is not None else request.file
+    snippet = request.snippet if request.snippet is not None else request.code
+    reason = request.reason if request.reason is not None else request.claim
+
     test_case = TuningTestCase(
         name=request.name,
         verdict=request.verdict,
-        issue=request.issue,
-        file=request.file,
-        code=request.code,
-        claim=request.claim,
+        title=title,
+        vulnerability_type=request.vulnerability_type,
+        severity=request.severity,
+        line_number=request.line_number,
+        snippet=snippet,
+        reason=reason,
+        file_path=file_path,
+        full_code_chunk=request.full_code_chunk,
     )
     db.add(test_case)
     db.commit()
@@ -226,14 +257,34 @@ def update_test_case(case_id: int, request: TestCaseUpdate, db: Session = Depend
 
     if request.verdict is not None:
         test_case.verdict = request.verdict
+
+    # Map old schema fields to new ones (backwards compat)
     if request.issue is not None:
-        test_case.issue = request.issue
+        test_case.title = request.issue  # issue -> title
     if request.file is not None:
-        test_case.file = request.file
+        test_case.file_path = request.file  # file -> file_path
     if request.code is not None:
-        test_case.code = request.code
+        test_case.snippet = request.code  # code -> snippet
     if request.claim is not None:
-        test_case.claim = request.claim
+        test_case.reason = request.claim  # claim -> reason
+
+    # Handle new schema fields (these take precedence if both are provided)
+    if request.title is not None:
+        test_case.title = request.title
+    if request.vulnerability_type is not None:
+        test_case.vulnerability_type = request.vulnerability_type
+    if request.severity is not None:
+        test_case.severity = request.severity
+    if request.line_number is not None:
+        test_case.line_number = request.line_number
+    if request.snippet is not None:
+        test_case.snippet = request.snippet
+    if request.reason is not None:
+        test_case.reason = request.reason
+    if request.file_path is not None:
+        test_case.file_path = request.file_path
+    if request.full_code_chunk is not None:
+        test_case.full_code_chunk = request.full_code_chunk
 
     db.commit()
     return {"id": test_case.id, "name": test_case.name}
