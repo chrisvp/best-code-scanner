@@ -1930,13 +1930,13 @@ function editTestCase(id) {
 
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-300 mb-2">Title / Issue</label>
-                        <input type="text" id="testcase-title-input" value="${escapeHtml(tc.title || tc.issue || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Title</label>
+                        <input type="text" id="testcase-title-input" value="${escapeHtml(tc.title || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
                         <p class="text-xs text-gray-500 mt-1">Short description of the vulnerability</p>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-300 mb-2">File Path</label>
-                        <input type="text" id="testcase-filepath-input" value="${escapeHtml(tc.file_path || tc.file || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
+                        <input type="text" id="testcase-filepath-input" value="${escapeHtml(tc.file_path || '')}" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white">
                         <p class="text-xs text-gray-500 mt-1">e.g., BootManagerDxe/Legacy.c</p>
                     </div>
                 </div>
@@ -1960,14 +1960,14 @@ function editTestCase(id) {
 
                 <div>
                     <label class="block text-sm font-medium text-gray-300 mb-2">Code Snippet</label>
-                    <textarea id="testcase-snippet-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm">${escapeHtml(tc.snippet || tc.code || '')}</textarea>
+                    <textarea id="testcase-snippet-input" rows="6" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white font-mono text-sm">${escapeHtml(tc.snippet || '')}</textarea>
                     <p class="text-xs text-gray-500 mt-1">The vulnerable code fragment</p>
                 </div>
 
                 <div>
-                    <label class="block text-sm font-medium text-gray-300 mb-2">Vulnerability Reason / Claim</label>
-                    <textarea id="testcase-reason-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">${escapeHtml(tc.reason || tc.claim || '')}</textarea>
-                    <p class="text-xs text-gray-500 mt-1">Why this is vulnerable or what the claim is</p>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">Vulnerability Reason</label>
+                    <textarea id="testcase-reason-input" rows="3" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm">${escapeHtml(tc.reason || '')}</textarea>
+                    <p class="text-xs text-gray-500 mt-1">Why this is vulnerable</p>
                 </div>
 
                 <div>

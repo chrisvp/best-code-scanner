@@ -43,13 +43,6 @@ class TuningTestCase(Base):
     draft_finding_id = Column(Integer, ForeignKey("draft_findings.id"), nullable=True, index=True)
 
     # Test case content (nullable when draft_finding_id is set)
-    # Old format (backwards compat):
-    issue = Column(Text, nullable=True)  # e.g., "Integer Overflow in ROM Size Calculation"
-    file = Column(String, nullable=True)  # e.g., "BootManagerDxe/Legacy.c:4450"
-    code = Column(Text, nullable=True)   # The code snippet to test
-    claim = Column(Text, nullable=True)  # The vulnerability claim to verify
-
-    # New format (matches real verification):
     title = Column(String, nullable=True)  # Finding title
     vulnerability_type = Column(String, nullable=True)  # e.g., "CWE-120 Buffer Overflow"
     severity = Column(String, nullable=True)  # Critical/High/Medium/Low

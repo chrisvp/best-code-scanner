@@ -171,12 +171,6 @@ def get_test_cases(db: Session = Depends(get_db)):
             "id": c.id,
             "name": c.name,
             "verdict": c.verdict,
-            # Old format fields (backwards compat)
-            "issue": c.issue,
-            "file": c.file,
-            "code": c.code,
-            "claim": c.claim,
-            # New format fields
             "title": c.title,
             "vulnerability_type": c.vulnerability_type,
             "severity": c.severity,
