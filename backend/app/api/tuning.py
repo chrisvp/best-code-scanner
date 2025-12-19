@@ -968,10 +968,11 @@ def get_result_details(result_id: int, db: Session = Depends(get_db)):
         ModelConfig.id == result.model_id
     ).first()
 
-    # If test case references a draft finding, load data from there
+    # Build test case data from new schema
     test_case_data = {}
     if test_case:
         if test_case.draft_finding_id:
+            # Load from draft finding
             draft = db.query(DraftFinding).filter(
                 DraftFinding.id == test_case.draft_finding_id
             ).first()
@@ -979,20 +980,29 @@ def get_result_details(result_id: int, db: Session = Depends(get_db)):
                 test_case_data = {
                     "name": test_case.name,
                     "verdict": test_case.verdict,
-                    "issue": draft.title,
-                    "file": draft.file_path,
-                    "code": draft.snippet,
-                    "claim": draft.reason,
+                    "title": draft.title,
+                    "vulnerability_type": draft.vulnerability_type,
+                    "severity": draft.severity,
+                    "file_path": draft.file_path,
+                    "snippet": draft.snippet,
+                    "reason": draft.reason,
+                    "full_code_chunk": test_case.full_code_chunk,
                     "draft_finding_id": test_case.draft_finding_id
                 }
         else:
+            # Use test case fields directly (new schema)
             test_case_data = {
                 "name": test_case.name,
                 "verdict": test_case.verdict,
-                "issue": test_case.issue,
-                "file": test_case.file,
-                "code": test_case.code,
-                "claim": test_case.claim,
+                "title": test_case.title,
+                "vulnerability_type": test_case.vulnerability_type,
+                "severity": test_case.severity,
+                "file_path": test_case.file_path,
+                "snippet": test_case.snippet,
+                "reason": test_case.reason,
+                "full_code_chunk": test_case.full_code_chunk,
+                "language": test_case.language,
+                "line_number": test_case.line_number,
             }
 
     return {
