@@ -5246,8 +5246,40 @@ async def cleanup_agent_sessions(older_than_days: int = 7, db: Session = Depends
 
 @router.get("/tuning", response_class=HTMLResponse)
 async def tuning_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """Tuning page for testing output formats and viewing LLM logs"""
-    return templates.TemplateResponse("tuning.html", {
+    """Main tuning landing page with links to sub-pages"""
+    return templates.TemplateResponse("tuning/index.html", {
+        "request": request,
+    })
+
+
+@router.get("/tuning/format-tester", response_class=HTMLResponse)
+async def tuning_format_tester_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Output format tester page"""
+    return templates.TemplateResponse("tuning/format_tester.html", {
+        "request": request,
+    })
+
+
+@router.get("/tuning/llm-logs", response_class=HTMLResponse)
+async def tuning_llm_logs_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """LLM logs viewer page"""
+    return templates.TemplateResponse("tuning/llm_logs.html", {
+        "request": request,
+    })
+
+
+@router.get("/tuning/benchmark", response_class=HTMLResponse)
+async def tuning_benchmark_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Benchmark runner page"""
+    return templates.TemplateResponse("tuning/benchmark.html", {
+        "request": request,
+    })
+
+
+@router.get("/tuning/import", response_class=HTMLResponse)
+async def tuning_import_page(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Import test cases wizard page"""
+    return templates.TemplateResponse("tuning/import_wizard.html", {
         "request": request,
     })
 

@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="p-6 h-full overflow-auto custom-scrollbar">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-3xl font-bold text-white">Tuning & Testing</h1>
+            <p class="text-gray-400 text-sm mt-2">Tools for testing, benchmarking, and tuning LLM configurations</p>
+        </div>
+
+        <!-- Tool Cards Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Format Tester Card -->
+            <a href="/tuning/format-tester" class="block group">
+                <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-blue-500 transition-all duration-200 hover:shadow-lg hover:shadow-blue-500/10">
+                    <div class="flex items-start gap-4">
+                        <div class="p-3 bg-blue-500/10 rounded-lg group-hover:bg-blue-500/20 transition-colors">
+                            <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-xl font-semibold text-white mb-2 group-hover:text-blue-400 transition-colors">Output Format Tester</h3>
+                            <p class="text-gray-400 text-sm mb-3">Test different output formats (markers, JSON, guided JSON) with various models and code samples.</p>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Format Testing</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Parser Validation</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Model Comparison</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </a>
+
+            <!-- LLM Logs Card -->
+            <a href="/tuning/llm-logs" class="block group">
+                <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-green-500 transition-all duration-200 hover:shadow-lg hover:shadow-green-500/10">
+                    <div class="flex items-start gap-4">
+                        <div class="p-3 bg-green-500/10 rounded-lg group-hover:bg-green-500/20 transition-colors">
+                            <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-xl font-semibold text-white mb-2 group-hover:text-green-400 transition-colors">LLM Request Logs</h3>
+                            <p class="text-gray-400 text-sm mb-3">View and analyze all LLM API requests, responses, and parsing results. Debug failed parses and optimize prompts.</p>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Request History</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Parse Analysis</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Debug Tools</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Benchmark Card -->
+            <a href="/tuning/benchmark" class="block group">
+                <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-yellow-500 transition-all duration-200 hover:shadow-lg hover:shadow-yellow-500/10">
+                    <div class="flex items-start gap-4">
+                        <div class="p-3 bg-yellow-500/10 rounded-lg group-hover:bg-yellow-500/20 transition-colors">
+                            <svg class="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-xl font-semibold text-white mb-2 group-hover:text-yellow-400 transition-colors">Benchmark Runner</h3>
+                            <p class="text-gray-400 text-sm mb-3">Test prompt templates and models against labeled test cases. Compare accuracy and performance across configurations.</p>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Prompt Testing</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Accuracy Metrics</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Model Comparison</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Import Test Cases Card -->
+            <a href="/tuning/import" class="block group">
+                <div class="bg-gray-800 rounded-lg border border-gray-700 p-6 hover:border-purple-500 transition-all duration-200 hover:shadow-lg hover:shadow-purple-500/10">
+                    <div class="flex items-start gap-4">
+                        <div class="p-3 bg-purple-500/10 rounded-lg group-hover:bg-purple-500/20 transition-colors">
+                            <svg class="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                            </svg>
+                        </div>
+                        <div class="flex-1">
+                            <h3 class="text-xl font-semibold text-white mb-2 group-hover:text-purple-400 transition-colors">Import Test Cases</h3>
+                            <p class="text-gray-400 text-sm mb-3">Import findings from previous scans as labeled test cases for benchmarking. Build your ground truth dataset.</p>
+                            <div class="flex flex-wrap gap-2">
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Bulk Import</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Class Balancing</span>
+                                <span class="px-2 py-1 bg-gray-700 text-gray-300 text-xs rounded">Dataset Building</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+
+        <!-- Quick Stats -->
+        <div class="mt-8 p-6 bg-gray-800/50 rounded-lg border border-gray-700">
+            <h3 class="text-lg font-semibold text-gray-300 mb-4">Quick Stats</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-blue-400" id="models-count">-</div>
+                    <div class="text-xs text-gray-500 uppercase mt-1">Models Configured</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-green-400" id="test-cases-count">-</div>
+                    <div class="text-xs text-gray-500 uppercase mt-1">Test Cases</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-yellow-400" id="prompts-count">-</div>
+                    <div class="text-xs text-gray-500 uppercase mt-1">Prompt Templates</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-purple-400" id="runs-count">-</div>
+                    <div class="text-xs text-gray-500 uppercase mt-1">Benchmark Runs</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Load quick stats
+async function loadQuickStats() {
+    try {
+        // Load model count
+        fetch('/models').then(r => r.json()).then(models => {
+            document.getElementById('models-count').textContent = models.length;
+        });
+
+        // Load test cases count
+        fetch('/api/v1/tuning/test-cases/stats').then(r => r.json()).then(stats => {
+            document.getElementById('test-cases-count').textContent = stats.total || 0;
+        });
+
+        // Load prompts count
+        fetch('/api/v1/tuning/prompts').then(r => r.json()).then(prompts => {
+            document.getElementById('prompts-count').textContent = prompts.length;
+        });
+
+        // Load runs count
+        fetch('/api/v1/tuning/runs').then(r => r.json()).then(runs => {
+            document.getElementById('runs-count').textContent = runs.length;
+        });
+    } catch (e) {
+        console.error('Failed to load stats:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadQuickStats);
+</script>
+{% endblock %}
