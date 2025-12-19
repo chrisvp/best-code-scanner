@@ -28,7 +28,18 @@ CREATE TABLE tuning_test_cases_new (
     source_scan_id INTEGER REFERENCES scans(id),
     source_scan_name VARCHAR,
 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    verification_votes_json JSON,
+    consensus_vote VARCHAR,
+    vote_confidence_avg REAL,
+
+    cwe_type VARCHAR,
+    is_synthetic BOOLEAN DEFAULT 0,
+    difficulty_score REAL,
+
+    tags JSON,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
 );
 
 -- 2. Copy data
@@ -38,7 +49,10 @@ SELECT
     title, vulnerability_type, severity, line_number, snippet, reason, file_path, language,
     full_code_chunk, chunk_id, surrounding_lines,
     source_scan_id, source_scan_name,
-    created_at
+    verification_votes_json, consensus_vote, vote_confidence_avg,
+    cwe_type, is_synthetic, difficulty_score,
+    tags,
+    created_at, updated_at
 FROM tuning_test_cases;
 
 -- 3. Drop old table and rename
@@ -50,3 +64,5 @@ CREATE UNIQUE INDEX idx_tuning_test_cases_name ON tuning_test_cases(name);
 CREATE INDEX idx_tuning_test_cases_verdict ON tuning_test_cases(verdict);
 CREATE INDEX idx_tuning_test_cases_draft_finding_id ON tuning_test_cases(draft_finding_id);
 CREATE INDEX idx_tuning_test_cases_source_scan_id ON tuning_test_cases(source_scan_id);
+CREATE INDEX idx_tuning_test_cases_cwe_type ON tuning_test_cases(cwe_type);
+CREATE INDEX idx_tuning_test_cases_is_synthetic ON tuning_test_cases(is_synthetic);
