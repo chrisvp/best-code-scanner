@@ -5,6 +5,11 @@ from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Floa
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
+# Import for relationships (avoid circular imports by importing after Base)
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models.scanner_models import DraftFinding
+
 
 def local_now():
     """Return current local datetime for database defaults."""
@@ -80,7 +85,8 @@ class TuningTestCase(Base):
 
     # Relationships
     results = relationship("TuningResult", back_populates="test_case")
-    draft_finding = relationship("DraftFinding", foreign_keys=[draft_finding_id])
+    # Disabled - causes circular import issues. Access via draft_finding_id FK if needed.
+    # draft_finding = relationship("DraftFinding", foreign_keys=[draft_finding_id], viewonly=True)
 
 
 class TuningRun(Base):
@@ -153,7 +159,7 @@ class TuningResult(Base):
 
     # Relationships
     run = relationship("TuningRun", back_populates="results")
-    # Use string reference for ModelConfig to avoid circular import
-    model = relationship("ModelConfig", foreign_keys=[model_id])
+    # Disabled - causes circular import. Access via model_id FK if needed.
+    # model = relationship("ModelConfig", foreign_keys=[model_id])
     prompt_template = relationship("TuningPromptTemplate", back_populates="results")
     test_case = relationship("TuningTestCase", back_populates="results")
